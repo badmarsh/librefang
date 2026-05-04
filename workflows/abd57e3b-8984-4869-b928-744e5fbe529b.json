@@ -11,13 +11,33 @@
       "mode": "fan_out",
       "timeout_secs": 120,
       "error_mode": "continue",
-      "output_var": "raw_data"
+      "output_var": "raw_feeds"
+    },
+    {
+      "name": "ingest-dennikn",
+      "agent": { "name": "dennikn" },
+      "model": "qwen3.5-flash",
+      "prompt_template": "Fetch the latest fact-check articles and investigative reports from Denn\u00edk N (dennikn.sk). Focus on misinformation coverage, corrections, and editorial fact-checks published in the last 24 hours. Extract claim_text, author, url, publish_date for each item.",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "continue",
+      "output_var": "dennikn_data"
+    },
+    {
+      "name": "merge-sources",
+      "agent": { "name": "analyst" },
+      "model": "qwen3.5-flash",
+      "prompt_template": "Merge and deduplicate the feed data {{raw_feeds}} and Denn\u00edk N data {{dennikn_data}} into a unified source list. Remove exact duplicates by URL fingerprint. Output merged array.",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "error_mode": "continue",
+      "output_var": "merged_raw"
     },
     {
       "name": "translate-content",
       "agent": { "name": "translator" },
       "model": "qwen-mt-plus",
-      "prompt_template": "Translate all non-English content in {{raw_data}} to English. Preserve original text alongside the translation. Source languages include Slovak (SK), Czech (CZ), and Hungarian (HU).",
+      "prompt_template": "Translate all non-English content in {{merged_raw}} to English. Preserve original text alongside the translation. Source languages include Slovak (SK), Czech (CZ), and Hungarian (HU).",
       "mode": "sequential",
       "timeout_secs": 120,
       "error_mode": "continue",
@@ -44,20 +64,40 @@
       "output_var": "flagged_statements"
     },
     {
+      "name": "analyze-visual-claims",
+      "agent": { "name": "visual-analyst" },
+      "model": "qwen-vl-max-latest",
+      "prompt_template": "For any items in {{flagged_statements}} that contain image URLs, embedded screenshots, or meme content, perform visual analysis. Detect manipulated images, misleading infographics, or deepfake indicators. Append visual_analysis field to each flagged item where applicable.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "continue",
+      "output_var": "visually_enriched_statements"
+    },
+    {
       "name": "enrich-with-context",
       "agent": { "name": "researcher-hand" },
       "model": "qwen3.5-397b-a17b",
-      "prompt_template": "For each flagged statement in {{flagged_statements}}, search Wikidata and authoritative news archives to add context and verified entity information. Cross-reference with dennikn.sk fact-check archive.",
+      "prompt_template": "For each flagged statement in {{visually_enriched_statements}}, search Wikidata and authoritative news archives to add context and verified entity information. Cross-reference with dennikn.sk fact-check archive.",
       "mode": "fan_out",
       "timeout_secs": 300,
       "error_mode": "continue",
       "output_var": "enriched_graph"
     },
     {
+      "name": "qa-review",
+      "agent": { "name": "reviewer-qa" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "Review the enriched graph {{enriched_graph}} for quality and consistency. Verify that each flagged statement has sufficient evidence, that confidence scores are calibrated, and that visual analysis results are incorporated. Remove or downgrade items with insufficient evidence before response drafting.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "continue",
+      "output_var": "qa_approved"
+    },
+    {
       "name": "prepare-responses",
       "agent": { "name": "social-media" },
       "model": "qwen-plus-latest",
-      "prompt_template": "Based on the enriched context: {{enriched_graph}}, draft polite but factual corrections in both Slovak and English. Prepare as alerts for Slack and drafts for social media platforms.",
+      "prompt_template": "Based on the QA-approved enriched context: {{qa_approved}}, draft polite but factual corrections in both Slovak and English. Prepare as alerts for Slack and drafts for social media platforms.",
       "mode": "sequential",
       "timeout_secs": 120,
       "error_mode": "fail",
