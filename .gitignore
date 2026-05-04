@@ -1,15 +1,48 @@
+# Environment and secrets
 .env
 secrets.env
 *.env
-*.log
-*.pid
+secrets/
+
+# Backup files
 *.bak
 *.backup
 config.toml.bak
-secrets/
+
+# Runtime state files (change on every restart — do not commit)
+daemon.json
+hand_state.json
+
+# TLS / certificate files
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.cer
+*.csr
+
+# Logs, pids
+*.log
+*.pid
+
+# Nginx temp directories
 nginx_body/
 nginx_fastcgi/
 nginx_proxy/
 nginx_scgi/
 nginx_uwsgi/
+
+# Data directories
 data/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# OS artifacts
+.DS_Store
+Thumbs.db
