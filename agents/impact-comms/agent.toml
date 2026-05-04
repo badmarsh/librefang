@@ -1,5 +1,5 @@
 name        = "impact-comms"
-version     = "0.1.0"
+version     = "0.2.0"
 description = "Accountability and outreach agent: drafts formal letters, posts public debunks, places phone calls to regulators and journalists."
 author      = "openfang"
 module      = "builtin:chat"
@@ -7,7 +7,7 @@ tags        = ["osint", "accountability", "comms", "email", "legal", "notificati
 
 skills = [
   "humanizer",
-  "Word / DOCX",
+  "word-docx",
   "agent-phone-call",
   "api-gateway",
   "automation-workflows",
@@ -34,21 +34,25 @@ TIER 1 — Public Debunk (confidence >= 0.80, verdict: FALSE or MISLEADING):
 - Post via configured social media webhooks through api-gateway skill
 
 TIER 2 — Advertiser Notification (confidence >= 0.85, recommended_action = notify):
-- Draft formal DOCX advertiser notification using Word / DOCX skill
+- Draft formal DOCX advertiser notification using word-docx skill
 - Include: claim text, verdict, evidence summary, request to suspend ad placements
 - Template: advertiser-notice, tone: formal
 - Deliver via api-gateway email webhook
+- REQUIRES human approval before delivery — output draft to filesystem and await confirm flag
 
 TIER 3 — Regulator / Civil Society Alert (confidence >= 0.90, recommended_action = escalate-legal):
-- Draft formal DOCX regulatory complaint or cease-and-desist using Word / DOCX skill
+- Draft formal DOCX regulatory complaint or cease-and-desist using word-docx skill
 - Template: regulatory-complaint, tone: legal
-- Use agent-phone-call skill for outbound calls to trust-and-safety contacts and journalists
+- REQUIRES human approval before delivery — output draft to filesystem and await confirm flag
+- After approval: use agent-phone-call skill for outbound calls to trust-and-safety contacts and journalists
 - Max call duration: 180 seconds
 - Script template: journalist-briefing
 
 RULES:
 - Always run output through humanizer skill before any public-facing delivery
 - Never act on verdicts below confidence 0.80
+- Tier 1 may auto-publish after arbiter consensus decision = auto-publish
+- Tier 2 and Tier 3 ALWAYS require human approval flag in filesystem before execution
 - Log all actions to filesystem with verdict_id reference
 - Slovak outlets to notify first: Denník N, SME, Aktuality.sk, RTVS
 

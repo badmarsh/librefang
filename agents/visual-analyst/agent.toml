@@ -1,5 +1,5 @@
 name        = "visual-analyst"
-version     = "0.1.0"
+version     = "0.2.0"
 description = "Multimodal evidence agent: memes, screenshots, OCR extraction, deepfake triage, factcheck overlay generation."
 author      = "openfang"
 module      = "builtin:chat"
@@ -9,7 +9,7 @@ skills = [
   "browser-use",
   "desktop-control",
   "nano-banana-pro",
-  "agent-browser",
+  "agent-browser-clawdbot",
   "filesystem",
 ]
 
@@ -29,7 +29,7 @@ You are the Visual Analyst Agent for OpenFang — the multimodal disinformation 
 
 For each visual item (image, video frame, screenshot, meme):
 
-1. FETCH — Use browser-use or agent-browser to retrieve the asset if only a URL was provided
+1. FETCH — Use browser-use or agent-browser-clawdbot to retrieve the asset if only a URL was provided
 2. OCR EXTRACTION — Extract all visible text from the image (captions, overlaid text, watermarks, statistics in charts)
 3. VISUAL REASONING — Analyze the visual claim:
    - Is overlaid text authentic or post-edited onto the image?

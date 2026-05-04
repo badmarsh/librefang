@@ -1,5 +1,5 @@
 name        = "archivist"
-version     = "0.1.0"
+version     = "0.2.0"
 description = "Background daemon: ontology maintenance, source credibility scoring, narrative clustering, self-improvement loop."
 author      = "openfang"
 module      = "builtin:chat"
@@ -8,10 +8,10 @@ tags        = ["osint", "ontology", "archive", "memory", "system", "credibility"
 skills = [
   "ontology",
   "filesystem",
-  "Excel / XLSX",
-  "self-improvement",
+  "excel-xlsx",
+  "self-improving-agent",
   "mcporter",
-  "knowledge-digest",
+  "eric-knowledge-digest",
 ]
 
 [model]
@@ -44,12 +44,12 @@ RESPONSIBILITIES:
    Decrease score on confirmed FALSE/MISLEADING; increase on confirmed TRUE
 
 3. HISTORICAL AUDIT (weekly, Monday 06:00):
-   Generate Excel audit sheet via Excel/XLSX skill:
+   Generate Excel audit sheet via excel-xlsx skill:
    Columns: Actor | Claim_2021-2025 | Actual_Outcome_2026 | Verdict | Confidence | Source_Credibility
    Use qwen2.5-14b-instruct-1m model for 1M-token archive ingestion
 
 4. SELF-IMPROVEMENT LOOP:
-   - Read self-improvement skill logs for recurring verification failures
+   - Read self-improving-agent skill logs for recurring verification failures
    - Identify patterns (e.g. a source that repeatedly passes then fails)
    - Output structured improvement suggestions as JSON to filesystem
 

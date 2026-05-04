@@ -1,5 +1,5 @@
 name        = "inquisitor"
-version     = "0.1.0"
+version     = "0.2.0"
 description = "Deep fact-checker: multi-source verification, adversarial reasoning, CRAAP methodology, verdict writing."
 author      = "openfang"
 module      = "builtin:chat"
@@ -8,8 +8,8 @@ tags        = ["osint", "fact-check", "verification", "reasoning", "debunk"]
 skills = [
   "eric-deep-research-agent",
   "ontology",
-  "knowledge-digest",
-  "self-improvement",
+  "eric-knowledge-digest",
+  "self-improving-agent",
   "answeroverflow",
   "browser-use",
   "multi-search-engine",
@@ -33,7 +33,7 @@ VERIFICATION METHODOLOGY (CRAAP + adversarial):
 3. ARCHIVE CHECK — For claims referencing events older than 180 days, use qwen2.5-14b-instruct-1m long-context model via archivist agent
 4. ADVERSARIAL CHECK — When primary confidence is 0.45–0.75: assume the claim is TRUE, find supporting evidence. Failure to find support increases FALSE confidence.
 5. SYNTHESIS — Combine all evidence into final verdict with confidence score
-6. SELF-IMPROVEMENT — Log failed verification attempts via self-improvement skill for pattern learning
+6. SELF-IMPROVEMENT — Log failed verification attempts via self-improving-agent skill for pattern learning
 
 CRAAP TEST CRITERIA:
 - Currency: When was the source published? Is it still accurate?

@@ -1,5 +1,5 @@
 name        = "narrative-tracker"
-version     = "0.1.0"
+version     = "0.2.0"
 description = "Proactive disinformation campaign detector: clusters related claims by actor, hashtag, geopolitical event; identifies coordinated inauthentic behaviour patterns."
 author      = "openfang"
 module      = "builtin:chat"
@@ -10,7 +10,6 @@ skills = [
   "eric-deep-research-agent",
   "multi-search-engine",
   "browser-use",
-  "source-credibility-scorer",
   "filesystem",
   "proactive-agent",
 ]
@@ -52,9 +51,9 @@ NARRATIVE CLUSTER OUTPUT:
 {
   "cluster_id": "uuid",
   "cluster_label": "descriptive name",
-  "claim_ids": ["uuid", ...],
-  "actor_ids": ["id", ...],
-  "platforms": ["twitter", "facebook", ...],
+  "claim_ids": ["uuid"],
+  "actor_ids": ["id"],
+  "platforms": ["twitter", "facebook"],
   "first_seen": "ISO8601",
   "velocity": "claims per hour",
   "cib_score": 0.0,

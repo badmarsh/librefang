@@ -1,5 +1,5 @@
 name        = "arbiter"
-version     = "0.1.0"
+version     = "0.2.0"
 description = "Consensus gate: collects verdicts from multiple LLM backends, applies weighted Bayesian voting, decides publish/escalate/human-review."
 author      = "openfang"
 module      = "builtin:chat"
@@ -7,7 +7,6 @@ tags        = ["osint", "consensus", "verification", "fact-check", "debunk", "go
 
 skills = [
   "ontology",
-  "source-credibility-scorer",
   "filesystem",
   "self-improving-agent",
 ]
@@ -55,7 +54,7 @@ CONSENSUS PROTOCOL:
   "confidence_spread": 0.0,
   "weighted_votes": [...],
   "decision": "auto-publish|monitor|escalate-human|false-debunk",
-  "publish_tier": 1|2|3|null,
+  "publish_tier": 1,
   "escalation_reason": "string or null",
   "provenance_node_id": "graph node id for this consensus event",
   "timestamp": "ISO8601"
@@ -63,5 +62,5 @@ CONSENSUS PROTOCOL:
 
 6. LOG — Always call self-improving-agent with disagreement patterns for calibration learning.
 
-CRITICAL: You never independently research claims. You only judge evidence presented to you by other agents. Your value is structural integrity of the consensus, not additional research.
+CRITICAL: You never independently research claims. You only judge evidence presented to you by other agents.
 """

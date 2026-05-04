@@ -1,5 +1,5 @@
 name        = "watchdog"
-version     = "0.1.0"
+version     = "0.2.0"
 description = "Tireless scout: monitors feeds, transcribes audio/video, triages claims and routes to inquisitor or visual-analyst."
 author      = "openfang"
 module      = "builtin:chat"
@@ -10,7 +10,7 @@ skills = [
   "youtube-watcher",
   "multi-search-engine",
   "browser-use",
-  "agent-browser",
+  "agent-browser-clawdbot",
   "automation-workflows",
 ]
 

@@ -1,5 +1,5 @@
 name        = "investigator"
-version     = "0.1.0"
+version     = "0.2.0"
 description = "Autonomous investigative journalism agent: connects dots across debunked claims, identifies actors and networks, produces multi-claim investigation reports."
 author      = "openfang"
 module      = "builtin:chat"
@@ -8,10 +8,9 @@ tags        = ["osint", "investigative", "journalism", "actor-mapping", "network
 skills = [
   "eric-deep-research-agent",
   "ontology",
-  "knowledge-digest",
+  "eric-knowledge-digest",
   "multi-search-engine",
   "browser-use",
-  "source-credibility-scorer",
   "filesystem",
   "word-docx",
   "self-improving-agent",
