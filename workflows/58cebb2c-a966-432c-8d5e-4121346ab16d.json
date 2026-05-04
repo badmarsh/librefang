@@ -36,11 +36,22 @@
     {
       "name": "impact-scoring",
       "agent": { "name": "research-analyst" },
-      "model": "qwen3.6-35b-a3b",
+      "model": "qwen3.5-397b-a17b",
+      "extra_body": { "enable_thinking": true },
       "prompt_template": "For each flagged claim in {{flagged_claims}}, assign an impact score (0-100) based on the reach of the author, platform virality potential, and the potential for social disruption in the Slovak/Central European context. Filter for claims with a score > 75 and output them as a structured JSON list with fields: claim_text, author, source_url, impact_score, flag_reason.",
       "mode": "sequential",
       "timeout_secs": 180,
       "error_mode": "fail",
+      "output_var": "scored_claims"
+    },
+    {
+      "name": "qa-review",
+      "agent": { "name": "reviewer-qa" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "Review the scored claims {{scored_claims}} for scoring consistency, evidence quality, and flag accuracy. Verify that high-impact_score claims (>75) genuinely warrant escalation in the Slovak/Central European context. Correct or remove any mis-scored claims.",
+      "mode": "sequential",
+      "timeout_secs": 90,
+      "error_mode": "continue",
       "output_var": "high_priority_claims",
       "output_path": "{{output.dir}}/high-impact-misinfo-monitor/{{run.id}}/high_priority_claims.json"
     }
