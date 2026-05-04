@@ -1,59 +1,24 @@
 {
   "id": "b609beef-5d94-4fb8-8211-38f280874983",
   "name": "msm-archive-audit",
-  "description": "Audits mainstream media archives by comparing historical predictions and narratives with actual historical outcomes.",
   "steps": [
     {
+      "id": "search-archives",
       "name": "archive-search",
-      "agent": { "name": "archivist" },
+      "agent": { "name": "researcher" },
       "model": "qwen2.5-14b-instruct-1m",
       "prompt_template": "Search Slovak and international mainstream media archives (SME, Pravda, Denník N, NYT, BBC) for predictions and core narratives regarding {{input}} from the specific historical period requested. Retrieve full article texts where available.",
       "mode": "fan_out",
-      "timeout_secs": 600,
-      "error_mode": "continue",
-      "output_var": "historical_narratives"
-    },
-    {
-      "name": "outcome-verification",
-      "agent": { "name": "researcher" },
-      "model": "qwen2.5-14b-instruct-1m",
-      "prompt_template": "Gather factual data and historical records on what actually transpired regarding the topic: {{input}}. Use primary historical sources, EU/UN statistical datasets, and peer-reviewed research. Cross-reference with Slovak national statistics (štatistiky.sk, ŠÚ SR).",
-      "mode": "sequential",
       "timeout_secs": 300,
-      "error_mode": "fail",
-      "output_var": "actual_outcomes"
+      "error_mode": "skip"
     },
     {
-      "name": "gap-analysis",
+      "id": "narrative-verification",
+      "name": "cross-reference-narratives",
       "agent": { "name": "analyst" },
-      "model": "qwen3.6-35b-a3b",
-      "prompt_template": "Compare the historical narratives: {{historical_narratives}} with the actual outcomes: {{actual_outcomes}}. Identify specific instances of accurate foresight, failed predictions, or systemic bias in the original reporting. Score each instance on a directional accuracy scale.",
-      "mode": "sequential",
-      "timeout_secs": 300,
-      "error_mode": "fail",
-      "output_var": "audit_findings"
-    },
-    {
-      "name": "qa-review",
-      "agent": { "name": "reviewer-qa" },
-      "model": "qwen3.6-35b-a3b",
-      "prompt_template": "Review the audit findings {{audit_findings}} for methodological soundness, source quality, and scoring consistency. Verify that gap analysis conclusions are supported by the evidence in {{historical_narratives}} and {{actual_outcomes}}. Flag any unsupported claims or scoring anomalies.",
-      "mode": "sequential",
-      "timeout_secs": 180,
-      "error_mode": "continue",
-      "output_var": "reviewed_findings"
-    },
-    {
-      "name": "accountability-report",
-      "agent": { "name": "writer" },
-      "model": "qwen-plus-latest",
-      "prompt_template": "Synthesize the reviewed findings {{reviewed_findings}} into an 'Accountability Audit' report. Score the media outlets on their predictive accuracy and narrative integrity for this topic.",
-      "mode": "sequential",
-      "timeout_secs": 240,
-      "error_mode": "fail",
-      "output_var": "accountability_report",
-      "output_path": "{{output.dir}}/msm-audit/{{run.id}}/report.md"
+      "model": "qwen2.5-72b-instruct",
+      "prompt_template": "Analyze the retrieved media archives for {{input}}. Compare the published predictions against the verified outcomes provided in the current OSINT context. Identify narrative shifts, omissions, and successful forecasts. Focus on the accountability of specific outlets.",
+      "mode": "sequential"
     }
-  ],
-  "created_at": "2026-05-03T16:23:15.011957396Z"
+  ]
 }

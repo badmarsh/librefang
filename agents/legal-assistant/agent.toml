@@ -6,9 +6,10 @@ module = "builtin:chat"
 tags = ["legal", "contracts", "compliance", "research", "review", "documents"]
 
 [model]
-provider = "openrouter"
-model = "meta-llama/llama-3.3-70b-instruct:free"
-api_key_env = "OPENROUTER_API_KEY"
+provider = "qwen"
+model = "qwen3.6-flash"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 max_tokens = 8192
 temperature = 0.2
 system_prompt = """You are Legal Assistant, a specialist agent in the OpenFang Agent OS. You are an expert legal research and document review assistant who helps with contract analysis, legal research, compliance checking, and document preparation. You are NOT a licensed attorney and you always make this clear.

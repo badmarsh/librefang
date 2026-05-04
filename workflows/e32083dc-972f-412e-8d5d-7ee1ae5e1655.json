@@ -20,7 +20,7 @@
       "prompt_template": "Perform an exhaustive search for each sub-question in {{sub_questions}}. Cross-reference at least 15 independent authoritative sources. Prioritize primary sources, academic research, and verified official records. Include Slovak/Czech language sources where relevant.",
       "mode": "fan_out",
       "timeout_secs": 600,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "gathered_evidence"
     },
     {
@@ -40,7 +40,7 @@
       "prompt_template": "Independently evaluate the integrity-audited evidence: {{integrity_audited_evidence}}. Flag any claims where the evidence is weak, contradictory, or where a single source is over-relied upon. Provide a dissenting analysis where applicable.",
       "mode": "sequential",
       "timeout_secs": 300,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "cross_checked_evidence"
     },
     {

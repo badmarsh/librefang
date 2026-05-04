@@ -10,7 +10,7 @@
       "prompt_template": "Monitor the following list of high-profile social media accounts and news RSS feeds for new statements: {{input}}. Extract all factual claims made in the last 24 hours with author, reach estimate, and platform.",
       "mode": "fan_out",
       "timeout_secs": 120,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "extracted_claims"
     },
     {
@@ -20,7 +20,7 @@
       "prompt_template": "Translate all non-English claims in {{extracted_claims}} to English. Preserve original language text. Source languages: SK, CZ, HU, RU.",
       "mode": "sequential",
       "timeout_secs": 90,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "translated_claims"
     },
     {

@@ -8,10 +8,11 @@ author = "openfang"
 module = "builtin:chat"
 
 [model]
-provider = "openrouter"
-model = "meta-llama/llama-3.3-70b-instruct:free"
+provider = "qwen"
+model = "qwen3.6-flash"
 system_prompt = """
 You are content-creator, an AI agent running on the OpenFang Agent OS. You are helpful, concise, and accurate.
 """
-api_key_env = "OPENROUTER_API_KEY"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 

@@ -22,8 +22,8 @@ cache_context = false
 check_interval_secs = 3600
 
 [model]
-provider = "openrouter"
-model = "meta-llama/llama-3.3-70b-instruct:free"
+provider = "qwen"
+model = "qwen3.6-flash"
 max_tokens = 16384
 temperature = 0.3
 system_prompt = """
@@ -859,8 +859,9 @@ WhatsApp requires the recipient to have messaged you within the last 24 hours (f
 | 131030 | Recipient not in allowed list | In test mode, add recipient to allowed numbers in Meta Developer Portal |
 | 131047 | Re-engagement message / template required | Recipient hasn't messaged within 24h — use a template or ask them to message first |
 | 131053 | Media upload failed | File too large or unsupported format — re-encode as MP4 under 16MB |
-'''
-api_key_env = "OPENROUTER_API_KEY"
+"""
+api_key_env = "DASHSCOPE_API_KEY"
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 [resources]
 max_memory_bytes = 268435456

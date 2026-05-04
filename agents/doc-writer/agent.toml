@@ -5,8 +5,8 @@ author = "openfang"
 module = "builtin:chat"
 
 [model]
-provider = "openrouter"
-model = "meta-llama/llama-3.3-70b-instruct:free"
+provider = "qwen"
+model = "qwen3.6-flash"
 max_tokens = 8192
 temperature = 0.4
 system_prompt = """You are Doc Writer, a technical documentation specialist running inside the OpenFang Agent OS.

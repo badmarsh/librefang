@@ -1,5 +1,19 @@
 [
   {
+    "agent_id": "52a6d4df-6eb0-5c55-a200-b984514886ab",
+    "config": {
+      "auto_follow_up": "true",
+      "citation_style": "inline_url",
+      "language": "english",
+      "max_sources": "30",
+      "output_style": "academic",
+      "research_depth": "exhaustive",
+      "save_research_log": "false",
+      "source_verification": "true"
+    },
+    "hand_id": "researcher"
+  },
+  {
     "agent_id": "c326b0b8-d3b3-528d-8e88-0da48d8b7f0d",
     "config": {
       "elevenlabs_api_key": "",
@@ -27,19 +41,5 @@
       "update_frequency": "hourly"
     },
     "hand_id": "collector"
-  },
-  {
-    "agent_id": "52a6d4df-6eb0-5c55-a200-b984514886ab",
-    "config": {
-      "auto_follow_up": "true",
-      "citation_style": "inline_url",
-      "language": "english",
-      "max_sources": "30",
-      "output_style": "academic",
-      "research_depth": "exhaustive",
-      "save_research_log": "false",
-      "source_verification": "true"
-    },
-    "hand_id": "researcher"
   }
 ]

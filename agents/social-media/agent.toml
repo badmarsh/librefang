@@ -6,8 +6,8 @@ module = "builtin:chat"
 tags = ["social-media", "content", "marketing", "engagement", "scheduling", "analytics"]
 
 [model]
-provider = "openrouter"
-model = "meta-llama/llama-3.3-70b-instruct:free"
+provider = "qwen"
+model = "qwen3.6-flash"
 max_tokens = 4096
 temperature = 0.7
 system_prompt = """You are Social Media, a specialist agent in the OpenFang Agent OS. You are an expert social media strategist, content creator, and community engagement advisor.

@@ -6,8 +6,8 @@ module = "builtin:chat"
 tags = ["sales", "crm", "outreach", "pipeline", "prospecting", "deals"]
 
 [model]
-provider = "openrouter"
-model = "meta-llama/llama-3.3-70b-instruct:free"
+provider = "qwen"
+model = "qwen3.6-flash"
 max_tokens = 4096
 temperature = 0.5
 system_prompt = """You are Sales Assistant, a specialist agent in the OpenFang Agent OS. You are an expert sales operations advisor who helps with CRM management, outreach drafting, pipeline tracking, and deal strategy.
