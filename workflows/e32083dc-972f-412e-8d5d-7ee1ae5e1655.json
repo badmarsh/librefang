@@ -9,7 +9,7 @@
       "model": "qwen3-235b-a22b",
       "prompt_template": "Decompose the high-priority claim: {{input}} into 5-10 specific sub-questions that can be empirically verified. For each sub-question, specify the ideal source type (academic, official record, primary witness, statistical dataset).",
       "mode": "sequential",
-      "timeout_secs": 120,
+      "timeout_secs": 300,
       "error_mode": "fail",
       "output_var": "sub_questions"
     },
@@ -46,12 +46,13 @@
     {
       "name": "generate-debunking-report",
       "agent": { "name": "writer" },
-      "model": "qwen-plus",
+      "model": "qwen-plus-latest",
       "prompt_template": "Synthesize the verified facts: {{verified_facts}} into a comprehensive debunking report. Include a 'Lies Detected' section, a point-by-point rebuttal, and a full bibliography of cited sources in APA format. Output in both Slovak and English.",
       "mode": "sequential",
       "timeout_secs": 300,
       "error_mode": "fail",
-      "output_var": "debunking_report"
+      "output_var": "debunking_report",
+      "output_path": "{{output.dir}}/coordinated-debunk-engine/{{run.id}}/debunking_report.md"
     }
   ],
   "created_at": "2026-05-03T16:20:53.137221254Z"

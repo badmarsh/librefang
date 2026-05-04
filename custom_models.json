@@ -4,11 +4,7 @@
     "display_name": "Qwen 3.6 Flash (Thinking)",
     "provider": "qwen",
     "tier": "fast",
-    "aliases": [
-      "monitor-agent-primary",
-      "feed-triage",
-      "fast"
-    ],
+    "aliases": ["monitor-agent-primary", "feed-triage", "fast"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
@@ -50,14 +46,9 @@
     "display_name": "Qwen Plus Latest",
     "provider": "qwen",
     "tier": "standard",
-    "aliases": [
-      "qwen-plus",
-      "outreach-agent-primary",
-      "reply-drafter",
-      "standard"
-    ],
+    "aliases": ["qwen-plus", "outreach-agent-primary", "reply-drafter", "standard"],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
@@ -69,17 +60,15 @@
     "display_name": "Qwen 3.6 35B A3B (Thinking)",
     "provider": "qwen",
     "tier": "reasoning",
-    "aliases": [
-      "misinfo-classifier",
-      "reasoning"
-    ],
+    "aliases": ["misinfo-classifier", "reasoning"],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
     "supports_vision": false,
-    "supports_streaming": true
+    "supports_streaming": true,
+    "extra_body": { "enable_thinking": true }
   },
   {
     "id": "qwen3.6-27b",
@@ -88,45 +77,43 @@
     "tier": "reasoning",
     "aliases": [],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
     "supports_vision": false,
-    "supports_streaming": true
+    "supports_streaming": true,
+    "extra_body": { "enable_thinking": true }
   },
   {
     "id": "qwen3-235b-a22b",
-    "display_name": "Qwen 3 235B A22B",
+    "display_name": "Qwen 3 235B A22B (Thinking)",
     "provider": "qwen",
     "tier": "flagship-reasoning",
-    "aliases": [
-      "orchestrator-primary",
-      "investigator-agent-primary",
-      "debunk-engine-primary",
-      "flagship-reasoning"
-    ],
+    "aliases": ["orchestrator-primary", "investigator-agent-primary", "debunk-engine-primary", "flagship-reasoning"],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
     "supports_vision": false,
-    "supports_streaming": true
+    "supports_streaming": true,
+    "extra_body": { "enable_thinking": true }
   },
   {
     "id": "qwen3.5-397b-a17b",
-    "display_name": "Qwen 3.5 397B A17B",
+    "display_name": "Qwen 3.5 397B A17B (Thinking)",
     "provider": "qwen",
     "tier": "flagship-reasoning",
-    "aliases": [],
+    "aliases": ["deep-investigator"],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
     "supports_vision": false,
-    "supports_streaming": true
+    "supports_streaming": true,
+    "extra_body": { "enable_thinking": true }
   },
   {
     "id": "qwen3-next-80b-thinking",
@@ -135,23 +122,22 @@
     "tier": "flagship-reasoning",
     "aliases": [],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
     "supports_vision": false,
-    "supports_streaming": true
+    "supports_streaming": true,
+    "extra_body": { "enable_thinking": true }
   },
   {
     "id": "qwen-max",
     "display_name": "Qwen Max",
     "provider": "qwen",
     "tier": "flagship",
-    "aliases": [
-      "flagship"
-    ],
+    "aliases": ["flagship"],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
@@ -165,7 +151,7 @@
     "tier": "flagship",
     "aliases": [],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
@@ -177,12 +163,9 @@
     "display_name": "Qwen 3 Coder 30B A3B Instruct",
     "provider": "qwen",
     "tier": "coding",
-    "aliases": [
-      "code-agent",
-      "coding"
-    ],
+    "aliases": ["code-agent", "coding"],
     "context_window": 128000,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
@@ -191,14 +174,11 @@
   },
   {
     "id": "qwen-vl-max-latest",
-    "display_name": "Qwen VL Max Latest",
+    "display_name": "Qwen VL Max Latest (Vision Fast)",
     "provider": "qwen",
-    "tier": "vision",
-    "aliases": [
-      "visual-analyst-primary",
-      "vision"
-    ],
-    "context_window": 128000,
+    "tier": "vision-fast",
+    "aliases": ["visual-analyst-fast", "vision-fast"],
+    "context_window": 32768,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
@@ -208,13 +188,11 @@
   },
   {
     "id": "qwen3-vl-235b-a22b-instruct",
-    "display_name": "Qwen 3 VL 235B A22B Instruct",
+    "display_name": "Qwen 3 VL 235B A22B Instruct (Vision Primary)",
     "provider": "qwen",
     "tier": "vision",
-    "aliases": [
-      "visual-analyst-fast"
-    ],
-    "context_window": 128000,
+    "aliases": ["visual-analyst-primary", "vision"],
+    "context_window": 32768,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
@@ -227,10 +205,7 @@
     "display_name": "Qwen MT Plus",
     "provider": "qwen",
     "tier": "translation",
-    "aliases": [
-      "translation-agent-primary",
-      "translation"
-    ],
+    "aliases": ["translation-agent-primary", "translation"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
@@ -244,9 +219,7 @@
     "display_name": "Qwen MT Turbo",
     "provider": "qwen",
     "tier": "translation",
-    "aliases": [
-      "translation-agent-fallback"
-    ],
+    "aliases": ["translation-agent-fallback"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
@@ -274,12 +247,9 @@
     "display_name": "Qwen 2.5 14B Instruct 1M",
     "provider": "qwen",
     "tier": "long-context",
-    "aliases": [
-      "archive-agent-primary",
-      "long-context"
-    ],
-    "context_window": 128000,
-    "max_output_tokens": 4096,
+    "aliases": ["archive-agent-primary", "long-context"],
+    "context_window": 1000000,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
@@ -291,9 +261,9 @@
     "display_name": "Qwen 2.5 7B Instruct 1M",
     "provider": "qwen",
     "tier": "long-context",
-    "aliases": [],
-    "context_window": 128000,
-    "max_output_tokens": 4096,
+    "aliases": ["archive-agent-fallback"],
+    "context_window": 1000000,
+    "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
     "supports_tools": true,
@@ -305,17 +275,14 @@
     "display_name": "Text Embedding V4",
     "provider": "qwen",
     "tier": "embedding",
-    "aliases": [
-      "default-embedding",
-      "embedding"
-    ],
-    "context_window": 128000,
-    "max_output_tokens": 4096,
+    "aliases": ["default-embedding", "embedding"],
+    "context_window": 8192,
+    "max_output_tokens": 0,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
-    "supports_tools": true,
+    "supports_tools": false,
     "supports_vision": false,
-    "supports_streaming": true
+    "supports_streaming": false
   },
   {
     "id": "text-embedding-v3",
@@ -323,22 +290,20 @@
     "provider": "qwen",
     "tier": "embedding",
     "aliases": [],
-    "context_window": 128000,
-    "max_output_tokens": 4096,
+    "context_window": 8192,
+    "max_output_tokens": 0,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
-    "supports_tools": true,
+    "supports_tools": false,
     "supports_vision": false,
-    "supports_streaming": true
+    "supports_streaming": false
   },
   {
     "id": "gemma2",
     "display_name": "Gemma 2 (Ollama)",
     "provider": "ollama",
     "tier": "local",
-    "aliases": [
-      "local"
-    ],
+    "aliases": ["local"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
@@ -352,8 +317,8 @@
     "display_name": "Qwen 2.5 VL (Ollama)",
     "provider": "ollama",
     "tier": "local",
-    "aliases": [],
-    "context_window": 128000,
+    "aliases": ["local-vision"],
+    "context_window": 32768,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
@@ -366,9 +331,7 @@
     "display_name": "NVIDIA NIM Giant (Llama 405B)",
     "provider": "nvidia",
     "tier": "nvidia",
-    "aliases": [
-      "nvidia"
-    ],
+    "aliases": ["nvidia", "diversity-checker"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
@@ -396,10 +359,7 @@
     "display_name": "Gemma 2 9B (Free)",
     "provider": "openrouter",
     "tier": "free",
-    "aliases": [
-      "openrouter-free",
-      "free"
-    ],
+    "aliases": ["openrouter-free", "free"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
@@ -427,9 +387,7 @@
     "display_name": "GPT-4o (Paid)",
     "provider": "openrouter",
     "tier": "paid",
-    "aliases": [
-      "paid"
-    ],
+    "aliases": ["paid"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
@@ -437,20 +395,5 @@
     "supports_tools": true,
     "supports_vision": false,
     "supports_streaming": true
-  }
-  },
-  {
-    "id": "qwen3.6-plus",
-    "display_name": "Qwen 3.6 Plus",
-    "provider": "qwen",
-    "tier": "custom",
-    "context_window": 262144,
-    "max_output_tokens": 65536,
-    "input_cost_per_m": 0.0,
-    "output_cost_per_m": 0.0,
-    "supports_tools": true,
-    "supports_vision": false,
-    "supports_streaming": true,
-    "aliases": []
   }
 ]

@@ -6,17 +6,17 @@
     {
       "name": "archive-search",
       "agent": { "name": "researcher" },
-      "model": "qwen3-next-80b-a3b-instruct",
+      "model": "qwen2.5-14b-instruct-1m",
       "prompt_template": "Search Slovak and international mainstream media archives (SME, Pravda, Denník N, NYT, BBC) for predictions and core narratives regarding {{input}} from the specific historical period requested. Retrieve full article texts where available.",
       "mode": "fan_out",
-      "timeout_secs": 300,
+      "timeout_secs": 600,
       "error_mode": "continue",
       "output_var": "historical_narratives"
     },
     {
       "name": "outcome-verification",
       "agent": { "name": "researcher" },
-      "model": "qwen3-next-80b-a3b-instruct",
+      "model": "qwen2.5-14b-instruct-1m",
       "prompt_template": "Gather factual data and historical records on what actually transpired regarding the topic: {{input}}. Use primary historical sources, EU/UN statistical datasets, and peer-reviewed research. Cross-reference with Slovak national statistics (štatistiky.sk, ŠÚ SR).",
       "mode": "sequential",
       "timeout_secs": 300,
@@ -36,12 +36,13 @@
     {
       "name": "accountability-report",
       "agent": { "name": "writer" },
-      "model": "qwen-plus",
-      "prompt_template": "Synthesize the findings {{audit_findings}} into an 'Accountability Audit' report. Score the media outlets on their predictive accuracy and narrative integrity for this topic. Output to {{output.dir}}/msm-audit/{{run.id}}/report.md",
+      "model": "qwen-plus-latest",
+      "prompt_template": "Synthesize the findings {{audit_findings}} into an 'Accountability Audit' report. Score the media outlets on their predictive accuracy and narrative integrity for this topic.",
       "mode": "sequential",
       "timeout_secs": 240,
       "error_mode": "fail",
-      "output_var": "accountability_report"
+      "output_var": "accountability_report",
+      "output_path": "{{output.dir}}/msm-audit/{{run.id}}/report.md"
     }
   ],
   "created_at": "2026-05-03T16:23:15.011957396Z"

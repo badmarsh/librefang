@@ -16,7 +16,7 @@
     {
       "name": "translate-content",
       "agent": { "name": "translator" },
-      "model": "qwen-plus",
+      "model": "qwen-mt-plus",
       "prompt_template": "Translate all non-English content in {{raw_data}} to English. Preserve original text alongside the translation. Source languages include Slovak (SK), Czech (CZ), and Hungarian (HU).",
       "mode": "sequential",
       "timeout_secs": 120,
@@ -56,12 +56,13 @@
     {
       "name": "prepare-responses",
       "agent": { "name": "social-media" },
-      "model": "qwen-plus",
-      "prompt_template": "Based on the enriched context: {{enriched_graph}}, draft polite but factual corrections in both Slovak and English. Prepare as alerts for Slack and drafts for social media platforms. Store output to disk.",
+      "model": "qwen-plus-latest",
+      "prompt_template": "Based on the enriched context: {{enriched_graph}}, draft polite but factual corrections in both Slovak and English. Prepare as alerts for Slack and drafts for social media platforms.",
       "mode": "sequential",
       "timeout_secs": 120,
       "error_mode": "fail",
-      "output_var": "response_drafts"
+      "output_var": "response_drafts",
+      "output_path": "{{output.dir}}/osint-dezinformacia-monitor/{{run.id}}/response_drafts.json"
     }
   ],
   "created_at": "2026-05-03T16:30:10.999842169Z"

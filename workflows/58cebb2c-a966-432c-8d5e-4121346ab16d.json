@@ -16,7 +16,7 @@
     {
       "name": "translate-claims",
       "agent": { "name": "translator" },
-      "model": "qwen-plus",
+      "model": "qwen-mt-plus",
       "prompt_template": "Translate all non-English claims in {{extracted_claims}} to English. Preserve original language text. Source languages: SK, CZ, HU, RU.",
       "mode": "sequential",
       "timeout_secs": 90,
@@ -41,7 +41,8 @@
       "mode": "sequential",
       "timeout_secs": 180,
       "error_mode": "fail",
-      "output_var": "high_priority_claims"
+      "output_var": "high_priority_claims",
+      "output_path": "{{output.dir}}/high-impact-misinfo-monitor/{{run.id}}/high_priority_claims.json"
     }
   ],
   "created_at": "2026-05-03T16:20:53.128055154Z"

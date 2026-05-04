@@ -1,17 +1,17 @@
-api_listen = "127.0.0.1:4200"
+api_listen = "127.0.0.1:50051"
 cors_origin = "*"
-security_headers = false
+security_headers = true
 
 [default_model]
 api_key_env = "DASHSCOPE_API_KEY"
-model = "qwen3.6-plus"
+model = "qwen-plus-latest"
 provider = "qwen"
 
 [memory]
 decay_rate = 0.05
 
 [network]
-listen_addr = "127.0.0.1:4200"
+listen_addr = "127.0.0.1:50051"
 
 [knowledge_graph]
 enabled = true
