@@ -14,6 +14,20 @@
     "hand_id": "researcher"
   },
   {
+    "agent_id": "5bb35868-43b9-5452-956d-cd6d908d5ded",
+    "config": {
+      "alert_on_changes": "true",
+      "collection_depth": "exhaustive",
+      "focus_area": "general",
+      "max_sources_per_cycle": "50",
+      "report_format": "markdown",
+      "target_subject": "https://dennikn.sk/",
+      "track_sentiment": "false",
+      "update_frequency": "hourly"
+    },
+    "hand_id": "collector"
+  },
+  {
     "agent_id": "c326b0b8-d3b3-528d-8e88-0da48d8b7f0d",
     "config": {
       "elevenlabs_api_key": "",
@@ -27,19 +41,5 @@
       "whatsapp_token": ""
     },
     "hand_id": "clip"
-  },
-  {
-    "agent_id": "5bb35868-43b9-5452-956d-cd6d908d5ded",
-    "config": {
-      "alert_on_changes": "true",
-      "collection_depth": "exhaustive",
-      "focus_area": "general",
-      "max_sources_per_cycle": "50",
-      "report_format": "markdown",
-      "target_subject": "https://dennikn.sk/",
-      "track_sentiment": "false",
-      "update_frequency": "hourly"
-    },
-    "hand_id": "collector"
   }
 ]
