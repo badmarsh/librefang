@@ -35,6 +35,24 @@
     "description": "Rapid high-reach claim detection from high-profile Slovak political actors and disinformation hubs. Runs every 5 minutes."
   },
   {
+    "id": "cron-watchdog-osint-full-pipeline-5min",
+    "workflow_id": "e8d5c310-7f2a-4b96-8d41-3c0e5a1f9b72",
+    "name": "Watchdog OSINT Full Pipeline — every 5 minutes",
+    "schedule": "*/5 * * * *",
+    "enabled": true,
+    "input": {
+      "sources": [
+        "https://hlavnespravy.sk/feed/",
+        "https://infovojna.sk/feed/",
+        "https://parlamentnelisty.sk/rss/",
+        "https://dennikn.sk/feed/",
+        "https://www.sme.sk/rss/",
+        "https://www.aktuality.sk/rss/"
+      ]
+    },
+    "description": "Full end-to-end OSINT watchdog pipeline: ingest -> translate -> classify -> visual triage -> fact-check -> graph update -> debunk delivery. Runs every 5 minutes."
+  },
+  {
     "id": "cron-msm-archive-audit-nightly",
     "workflow_id": "b609beef-5d94-4fb8-8211-38f280874983",
     "name": "MSM Archive Audit — nightly 02:00",
