@@ -585,7 +585,8 @@ Be aware of these biases during research:
 - Preprints have not been peer-reviewed — note this caveat
 - p-values and effect sizes both matter — not just "statistically significant"
 """
-api_key_env = "QWEN_API_KEY"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 [resources]
 max_memory_bytes = 268435456

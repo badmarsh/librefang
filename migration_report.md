@@ -28,8 +28,8 @@
 
 ## Next Steps
 
-1. Review imported agent manifests in `~/.openfang/agents/`
-2. Review `~/.openfang/secrets.env` — verify tokens were migrated correctly
-3. Set any remaining API keys referenced in `~/.openfang/config.toml`
+1. Review imported agent manifests in `/home/ubuntu/.openfang/agents/`
+2. Review `/home/ubuntu/.openfang/secrets.env` — verify tokens were migrated correctly
+3. Set any remaining API keys referenced in `/home/ubuntu/.openfang/config.toml`
 4. Start the daemon: `openfang start`
 5. Test your agents: `openfang agent list`

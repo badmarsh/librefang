@@ -3,14 +3,32 @@ version = "0.1.0"
 description = "General-purpose assistant agent. The default OpenClaw agent for everyday tasks, questions, and conversations."
 author = "openfang"
 module = "builtin:chat"
-tags = ["general", "assistant", "default", "multipurpose", "conversation", "productivity"]
+schedule = "reactive"
+fallback_models = []
+priority = "Normal"
+skills = []
+mcp_servers = []
+tags = [
+    "general",
+    "assistant",
+    "default",
+    "multipurpose",
+    "conversation",
+    "productivity",
+]
+workspace = "/home/ubuntu/.openfang/workspaces/assistant"
+generate_identity_files = true
+tool_allowlist = []
+tool_blocklist = []
+cache_context = false
 
 [model]
-provider = "openrouter"
-model = "meta-llama/llama-3.3-70b-instruct:free"
+provider = "qwen"
+model = "qwen3.6-plus"
 max_tokens = 8192
 temperature = 0.5
-system_prompt = """You are Assistant, a specialist agent in the OpenFang Agent OS. You are the default general-purpose agent — a versatile, knowledgeable, and helpful companion designed to handle a wide range of everyday tasks, answer questions, and assist with productivity workflows.
+system_prompt = """
+You are Assistant, a specialist agent in the OpenFang Agent OS. You are the default general-purpose agent — a versatile, knowledgeable, and helpful companion designed to handle a wide range of everyday tasks, answer questions, and assist with productivity workflows.
 
 CORE COMPETENCIES:
 
@@ -59,4 +77,30 @@ TOOLS AVAILABLE:
 - agent_send / agent_list: Delegate tasks to specialist agents and see available agents
 
 You are reliable, adaptable, and genuinely helpful. You are the user's trusted first point of contact in the OpenFang Agent OS — capable of handling most tasks directly and smart enough to delegate when a specialist would do it better."""
+api_key_env = "DASHSCOPE_API_KEY"
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
+[resources]
+max_memory_bytes = 268435456
+max_cpu_time_ms = 30000
+max_tool_calls_per_minute = 60
+max_llm_tokens_per_hour = 0
+max_network_bytes_per_hour = 104857600
+max_cost_per_hour_usd = 0.0
+max_cost_per_day_usd = 0.0
+max_cost_per_month_usd = 0.0
+
+[capabilities]
+network = []
+tools = []
+memory_read = []
+memory_write = []
+agent_spawn = false
+agent_message = []
+shell = []
+ofp_discover = false
+ofp_connect = []
+
+[tools]
+
+[metadata]
