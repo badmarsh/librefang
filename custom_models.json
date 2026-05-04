@@ -1,24 +1,10 @@
 [
   {
-    "id": "qwen3.6-flash",
-    "display_name": "Qwen 3.6 Flash (Thinking)",
-    "provider": "qwen",
-    "tier": "fast",
-    "aliases": ["monitor-agent-primary", "feed-triage", "fast"],
-    "context_window": 128000,
-    "max_output_tokens": 4096,
-    "input_cost_per_m": 0.0,
-    "output_cost_per_m": 0.0,
-    "supports_tools": true,
-    "supports_vision": false,
-    "supports_streaming": true
-  },
-  {
     "id": "qwen3.5-flash",
     "display_name": "Qwen 3.5 Flash",
     "provider": "qwen",
     "tier": "fast",
-    "aliases": [],
+    "aliases": ["monitor-agent-primary", "feed-triage", "fast"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
@@ -71,21 +57,6 @@
     "extra_body": { "enable_thinking": true }
   },
   {
-    "id": "qwen3.6-27b",
-    "display_name": "Qwen 3.6 27B (Thinking)",
-    "provider": "qwen",
-    "tier": "reasoning",
-    "aliases": [],
-    "context_window": 128000,
-    "max_output_tokens": 8192,
-    "input_cost_per_m": 0.0,
-    "output_cost_per_m": 0.0,
-    "supports_tools": true,
-    "supports_vision": false,
-    "supports_streaming": true,
-    "extra_body": { "enable_thinking": true }
-  },
-  {
     "id": "qwen3-235b-a22b",
     "display_name": "Qwen 3 235B A22B (Thinking)",
     "provider": "qwen",
@@ -116,40 +87,11 @@
     "extra_body": { "enable_thinking": true }
   },
   {
-    "id": "qwen3-next-80b-thinking",
-    "display_name": "Qwen 3 Next 80B Thinking",
-    "provider": "qwen",
-    "tier": "flagship-reasoning",
-    "aliases": [],
-    "context_window": 128000,
-    "max_output_tokens": 8192,
-    "input_cost_per_m": 0.0,
-    "output_cost_per_m": 0.0,
-    "supports_tools": true,
-    "supports_vision": false,
-    "supports_streaming": true,
-    "extra_body": { "enable_thinking": true }
-  },
-  {
     "id": "qwen-max",
     "display_name": "Qwen Max",
     "provider": "qwen",
     "tier": "flagship",
     "aliases": ["flagship"],
-    "context_window": 128000,
-    "max_output_tokens": 8192,
-    "input_cost_per_m": 0.0,
-    "output_cost_per_m": 0.0,
-    "supports_tools": true,
-    "supports_vision": false,
-    "supports_streaming": true
-  },
-  {
-    "id": "qwen3-next-80b-instruct",
-    "display_name": "Qwen 3 Next 80B Instruct",
-    "provider": "qwen",
-    "tier": "flagship",
-    "aliases": [],
     "context_window": 128000,
     "max_output_tokens": 8192,
     "input_cost_per_m": 0.0,
@@ -355,8 +297,8 @@
     "supports_streaming": true
   },
   {
-    "id": "openrouter/google/gemma-2-9b-it:free",
-    "display_name": "Gemma 2 9B (Free)",
+    "id": "gemma-4-31b-free",
+    "display_name": "Gemma 4 31B (OpenRouter Free)",
     "provider": "openrouter",
     "tier": "free",
     "aliases": ["openrouter-free", "free"],
@@ -369,11 +311,25 @@
     "supports_streaming": true
   },
   {
-    "id": "openrouter/meta-llama/llama-3.3-70b-instruct",
-    "display_name": "Llama 3.3 70B (OpenRouter)",
+    "id": "llama-3.3-70b-free",
+    "display_name": "Llama 3.3 70B (OpenRouter Free)",
     "provider": "openrouter",
     "tier": "free",
-    "aliases": [],
+    "aliases": ["llama-free"],
+    "context_window": 128000,
+    "max_output_tokens": 4096,
+    "input_cost_per_m": 0.0,
+    "output_cost_per_m": 0.0,
+    "supports_tools": true,
+    "supports_vision": false,
+    "supports_streaming": true
+  },
+  {
+    "id": "nemotron-3-super-free",
+    "display_name": "Nemotron 3 Super (OpenRouter Free)",
+    "provider": "openrouter",
+    "tier": "free",
+    "aliases": ["nemotron-free"],
     "context_window": 128000,
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
