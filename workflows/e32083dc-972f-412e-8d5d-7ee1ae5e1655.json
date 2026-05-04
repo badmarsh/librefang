@@ -60,7 +60,7 @@
       "prompt_template": "Review the verified facts {{verified_facts}} for logical consistency, completeness of rebuttal, and accuracy of CRAAP scores. Verify all cited claims trace back to integrity-checked sources from {{integrity_audited_evidence}}. Flag any logical gaps that would weaken the debunking report.",
       "mode": "sequential",
       "timeout_secs": 180,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "qa_verified_facts"
     },
     {
