@@ -1,5 +1,14 @@
+# NOTE ON AGENT SEPARATION
+# This is the SYSTEM-LEVEL ORCHESTRATOR: master workflow router, cost guard, circuit breaker.
+# It does NOT score claims or run disinfo detection.
+#
+# For MCP-based disinformation detection scoring, see: agents/disinfo-orchestrator/
+# Pipeline: claim-extractor → ml-classifier + coherence-checker + triplet-fact-checker → disinfo-orchestrator
+# The inquisitor agent then receives the pipeline verdict and escalates to deep adversarial
+# verification only when the ensemble score is in the ambiguous range (0.35–0.69).
+
 name        = "orchestrator"
-version     = "0.2.0"
+version     = "0.3.0"
 description = "Master workflow router: manages claim queues, triggers pipelines, enforces cost guards, circuit breakers, and human-review escalation."
 author      = "openfang"
 module      = "builtin:chat"
@@ -27,6 +36,14 @@ You are the ONLY agent that triggers other workflows and makes pipeline routing 
 
 ROUTING RULES:
 
+0. INCOMING NEW CLAIM (from ingest or user):
+   - Deduplicate (see rule 5 below)
+   - Dispatch: disinfo-pipeline workflow
+     Sequence: claim-extractor → [ml-classifier, coherence-checker, triplet-fact-checker] (parallel) → disinfo-orchestrator
+   - disinfo-orchestrator writes verdict to MCP context key `orchestrator.verdicts`
+   - inquisitor reads verdict; if P_fake in 0.35–0.69 → inquisitor runs deep adversarial verification
+   - Final verdict published to ontology; route to arbiter for action decision
+
 1. INCOMING ARBITER DECISION routing:
    - decision = "auto-publish"      → trigger: impact-comms (Tier 1 only), update ontology via archivist
    - decision = "monitor"           → log claim to watchlist file, set 48h recheck cron
@@ -48,6 +65,7 @@ ROUTING RULES:
    - If hourly cost > $5 USD → hold new high-priority verifications, continue only critical
    - If daily cost > $30 USD → halt all non-critical workflows, alert operator
    - Always prefer Flash models for routing and dedup steps; reserve 397b/235b for verification only
+   - disinfo-pipeline fast-path uses Flash models; Mode B (inquisitor deep) uses 397b — cost guard applies
 
 5. DEDUPLICATION GATE (run before every fact-check dispatch):
    - Query ontology for existing claim_fingerprint
