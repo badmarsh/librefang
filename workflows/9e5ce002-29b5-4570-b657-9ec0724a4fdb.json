@@ -6,7 +6,7 @@
     {
       "name": "identify-stakeholders",
       "agent": { "name": "researcher" },
-      "model": "qwen-plus",
+      "model": "qwen-plus-latest",
       "prompt_template": "For the following debunked claim: {{input}}, identify associated stakeholders including the hosting platform, major advertisers on that platform, and relevant regulatory bodies or fact-checking NGOs. Include Slovak/EU-specific bodies: RTVS, Rada pre mediálne služby, AFP Fact Check SK.",
       "mode": "sequential",
       "timeout_secs": 120,
@@ -26,7 +26,7 @@
     {
       "name": "draft-alerts",
       "agent": { "name": "analyst" },
-      "model": "qwen-plus",
+      "model": "qwen-plus-latest",
       "prompt_template": "Using the verified evidence from the debunking report and the legal assessment: {{legal_assessment}}, draft professional but firm 'Misinformation Alerts' tailored for each group in {{stakeholder_list}}. Highlight the breach of social responsibility, legal exposure, and potential reputational blowback for associated brands.",
       "mode": "sequential",
       "timeout_secs": 180,
@@ -41,7 +41,8 @@
       "mode": "sequential",
       "timeout_secs": 120,
       "error_mode": "continue",
-      "output_var": "dissemination_log"
+      "output_var": "dissemination_log",
+      "output_path": "{{output.dir}}/social-impact-accountability/{{run.id}}/dissemination_log.json"
     }
   ],
   "created_at": "2026-05-03T16:23:15.003893196Z"
