@@ -1,1 +1,49 @@
-[]
+[
+  {
+    "id": "cron-osint-dezinformacia-15min",
+    "workflow_id": "abd57e3b-8984-4869-b928-744e5fbe529b",
+    "name": "OSINT Dezinformácia Monitor — every 15 minutes",
+    "schedule": "*/15 * * * *",
+    "enabled": true,
+    "input": {
+      "sources": [
+        "https://dennikn.sk/feed/",
+        "https://www.sme.sk/rss/",
+        "https://spravy.pravda.sk/rss/",
+        "https://www.aktuality.sk/rss/",
+        "https://www.hlavnespravy.sk/feed/",
+        "https://parlamentnelisty.sk/rss/",
+        "https://www.cas.sk/rss/"
+      ]
+    },
+    "description": "Continuous ingestion of Slovak RSS feeds for misinformation detection. Runs every 15 minutes."
+  },
+  {
+    "id": "cron-high-impact-misinfo-5min",
+    "workflow_id": "58cebb2c-a966-432c-8d5e-4121346ab16d",
+    "name": "High-Impact Misinfo Monitor — every 5 minutes",
+    "schedule": "*/5 * * * *",
+    "enabled": true,
+    "input": {
+      "sources": [
+        "https://twitter.com/search?q=Slovakia+dezinformacia&f=live",
+        "https://www.facebook.com/pages/feed/kontrfakt",
+        "https://t.me/s/infovojna",
+        "https://parlamentnelisty.sk/rss/"
+      ]
+    },
+    "description": "Rapid high-reach claim detection from high-profile Slovak political actors and disinformation hubs. Runs every 5 minutes."
+  },
+  {
+    "id": "cron-msm-archive-audit-nightly",
+    "workflow_id": "b609beef-5d94-4fb8-8211-38f280874983",
+    "name": "MSM Archive Audit — nightly 02:00",
+    "schedule": "0 2 * * *",
+    "enabled": true,
+    "input": {
+      "topic": "scheduled_nightly_audit",
+      "outlets": ["SME", "Pravda", "Denník N", "Nový Čas", "Hospodárske noviny"]
+    },
+    "description": "Nightly audit of Slovak mainstream media archives against documented outcomes. Runs at 02:00 UTC."
+  }
+]

@@ -5,34 +5,41 @@
   "steps": [
     {
       "name": "ingest-feeds",
-      "agent": {
-        "name": "collector"
-      },
-      "prompt_template": "Monitor the following list of high-profile social media accounts and news RSS feeds for new statements: {{input}}. Extract all factual claims made in the last 24 hours.",
-      "mode": "sequential",
+      "agent": { "name": "collector-hand" },
+      "model": "qwen3.5-flash",
+      "prompt_template": "Monitor the following list of high-profile social media accounts and news RSS feeds for new statements: {{input}}. Extract all factual claims made in the last 24 hours with author, reach estimate, and platform.",
+      "mode": "fan_out",
       "timeout_secs": 120,
-      "error_mode": "fail",
+      "error_mode": "continue",
       "output_var": "extracted_claims"
     },
     {
-      "name": "identify-demagoguery",
-      "agent": {
-        "name": "analyst"
-      },
-      "prompt_template": "Review the following claims: {{extracted_claims}}. Identify statements that exhibit demagoguery (appealing to prejudices, using inflammatory language) or contain potentially high-impact malicious lies that could cause public harm or misinformation spread.",
+      "name": "translate-claims",
+      "agent": { "name": "translator" },
+      "model": "qwen-plus",
+      "prompt_template": "Translate all non-English claims in {{extracted_claims}} to English. Preserve original language text. Source languages: SK, CZ, HU, RU.",
       "mode": "sequential",
-      "timeout_secs": 120,
+      "timeout_secs": 90,
+      "error_mode": "continue",
+      "output_var": "translated_claims"
+    },
+    {
+      "name": "identify-demagoguery",
+      "agent": { "name": "analyst" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "Review the following claims: {{translated_claims}}. Identify statements that exhibit demagoguery (appealing to prejudices, using inflammatory language) or contain potentially high-impact malicious lies that could cause public harm or misinformation spread. Include a brief reasoning chain for each flag.",
+      "mode": "sequential",
+      "timeout_secs": 180,
       "error_mode": "fail",
       "output_var": "flagged_claims"
     },
     {
       "name": "impact-scoring",
-      "agent": {
-        "name": "analyst"
-      },
-      "prompt_template": "For each flagged claim in {{flagged_claims}}, assign an impact score (0-100) based on the reach of the author and the potential for social disruption. Filter for claims with a score > 75 and output them as a JSON list.",
+      "agent": { "name": "research-analyst" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "For each flagged claim in {{flagged_claims}}, assign an impact score (0-100) based on the reach of the author, platform virality potential, and the potential for social disruption in the Slovak/Central European context. Filter for claims with a score > 75 and output them as a structured JSON list with fields: claim_text, author, source_url, impact_score, flag_reason.",
       "mode": "sequential",
-      "timeout_secs": 120,
+      "timeout_secs": 180,
       "error_mode": "fail",
       "output_var": "high_priority_claims"
     }

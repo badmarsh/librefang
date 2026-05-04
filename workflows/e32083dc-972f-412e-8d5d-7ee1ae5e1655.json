@@ -5,10 +5,9 @@
   "steps": [
     {
       "name": "deconstruct-claim",
-      "agent": {
-        "name": "researcher"
-      },
-      "prompt_template": "Decompose the high-priority claim: {{input}} into 5-10 specific sub-questions that can be empirically verified.",
+      "agent": { "name": "orchestrator" },
+      "model": "qwen3-235b-a22b",
+      "prompt_template": "Decompose the high-priority claim: {{input}} into 5-10 specific sub-questions that can be empirically verified. For each sub-question, specify the ideal source type (academic, official record, primary witness, statistical dataset).",
       "mode": "sequential",
       "timeout_secs": 120,
       "error_mode": "fail",
@@ -16,36 +15,43 @@
     },
     {
       "name": "deep-evidence-gathering",
-      "agent": {
-        "name": "researcher"
-      },
-      "prompt_template": "Perform an exhaustive search for each sub-question in {{sub_questions}}. Cross-reference at least 15 independent authoritative sources. Prioritize primary sources, academic research, and verified official records.",
+      "agent": { "name": "researcher-hand" },
+      "model": "qwen3.5-397b-a17b",
+      "prompt_template": "Perform an exhaustive search for each sub-question in {{sub_questions}}. Cross-reference at least 15 independent authoritative sources. Prioritize primary sources, academic research, and verified official records. Include Slovak/Czech language sources where relevant.",
       "mode": "fan_out",
-      "timeout_secs": 120,
-      "error_mode": "fail",
+      "timeout_secs": 600,
+      "error_mode": "continue",
       "output_var": "gathered_evidence"
     },
     {
-      "name": "craap-verification",
-      "agent": {
-        "name": "analyst"
-      },
-      "prompt_template": "Evaluate the gathered evidence: {{gathered_evidence}} using the CRAAP methodology (Currency, Relevance, Authority, Accuracy, Purpose). Identify contradictions or false premises in the original claim.",
+      "name": "cross-check-diversity",
+      "agent": { "name": "analyst" },
+      "model": "nim-giant",
+      "prompt_template": "Independently evaluate the gathered evidence: {{gathered_evidence}}. Flag any claims where the evidence is weak, contradictory, or where a single source is over-relied upon. Provide a dissenting analysis where applicable.",
       "mode": "sequential",
-      "timeout_secs": 120,
+      "timeout_secs": 300,
+      "error_mode": "continue",
+      "output_var": "cross_checked_evidence"
+    },
+    {
+      "name": "craap-verification",
+      "agent": { "name": "analyst" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "Evaluate the cross-checked evidence: {{cross_checked_evidence}} using the CRAAP methodology (Currency, Relevance, Authority, Accuracy, Purpose). Produce a CRAAP score per source and identify contradictions or false premises in the original claim.",
+      "mode": "sequential",
+      "timeout_secs": 300,
       "error_mode": "fail",
       "output_var": "verified_facts"
     },
     {
       "name": "generate-debunking-report",
-      "agent": {
-        "name": "researcher"
-      },
-      "prompt_template": "Synthesize the verified facts: {{verified_facts}} into a comprehensive debunking report. Include a 'Lies Detected' section, a point-by-point rebuttal, and a full bibliography of cited sources in APA format.",
+      "agent": { "name": "writer" },
+      "model": "qwen-plus",
+      "prompt_template": "Synthesize the verified facts: {{verified_facts}} into a comprehensive debunking report. Include a 'Lies Detected' section, a point-by-point rebuttal, and a full bibliography of cited sources in APA format. Output in both Slovak and English.",
       "mode": "sequential",
-      "timeout_secs": 120,
+      "timeout_secs": 300,
       "error_mode": "fail",
-      "output_var": null
+      "output_var": "debunking_report"
     }
   ],
   "created_at": "2026-05-03T16:20:53.137221254Z"
