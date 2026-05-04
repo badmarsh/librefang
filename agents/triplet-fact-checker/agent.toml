@@ -1,95 +1,170 @@
 # OpenFang agent manifest
-# arXiv:2508.10143 — Agent 3: Relational Triplet Fact Checker
+# arXiv:2508.10143 — Agent 3: Triplet Fact Checker
 name = "triplet-fact-checker"
-version = "1.0.0"
-description = "Extracts subject-predicate-object triplets and verifies them via DuckDuckGo web search"
-author = "openfang"
-module = "builtin:chat"
-tags = ["disinfo", "triplet", "knowledge-graph", "web-verification", "pipeline"]
+version = "1.1.0"
+description = "S-P-O relation extraction + web verification via DuckDuckGo and Wikipedia. Highest-weight agent (0.41) in ensemble."
+author      = "openfang"
+module      = "builtin:chat"
+tags        = ["disinfo", "triplet", "fact-check", "web", "wikipedia", "pipeline"]
+
+skills = [
+  "filesystem",
+  "multi-search-engine",
+  "browser-use",
+]
+
+mcp_servers = [
+  "browser-use",
+  "multi-search-engine",
+  "filesystem",
+  "wikipedia",
+]
 
 [model]
-provider = "qwen"
-model = "qwen3.6-flash"
+provider    = "qwen"
+model       = "qwen3-plus"
 api_key_env = "DASHSCOPE_API_KEY"
-base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-max_tokens = 6144
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 8192
 temperature = 0.1
+
+# --- TRIGGERS ---
+[[triggers]]
+event   = "claim_extractor.output.ready"
+action  = "verify_triplets"
+description = "Parallel trigger — fires simultaneously with ml-classifier and coherence-checker"
+
+[[triggers]]
+event   = "pipeline.rerun.triplet-fact-checker"
+action  = "verify_triplets"
+description = "Manual re-run trigger from orchestrator on failure recovery"
+
+# Schedule: refresh Wikipedia entity cache weekly
+[schedule.cron]
+cron  = "0 3 * * 1"
+task  = "refresh_entity_cache"
+
+# --- MEMORY PRE-SEED ---
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinformation Detection Pipeline
+Reference: arXiv:2508.10143 (Avram, Groza, Lecu 2025)
+This agent is Agent 3 of 3 scoring agents. HIGHEST weight: w_trip = 0.41.
+Method: Subject-Predicate-Object extraction from each claim, then web verification of each triplet.
+Input MCP key:  claim_extractor.output
+Output MCP key: triplet_fact_checker.output
+On completion: event_publish("triplet_fact_checker.output.ready")
+Warning: DuckDuckGo dependency — if search results are polluted by disinfo, accuracy degrades.
+Mitigation: cross-verify with Wikipedia MCP; flag if search result and Wikipedia contradict.
+"""
+
+[[memory]]
+key   = "triplet.calibration"
+value = """
+Calibration notes (arXiv:2508.10143 Agent 3):
+- Individual accuracy: ~88% — highest of the three agents
+- Weight in ensemble: 0.41 (derived from misclassification rate e=0.12)
+- Method: extract S-P-O triplets, search each via DuckDuckGo, cross-check against Wikipedia
+- Known vulnerability: recursive disinformation (polluted search results)
+- Mitigation: require Wikipedia confirmation for high-stakes claims; downgrade confidence if only DDG confirms
+- Search strategy: query in claim's original language THEN in English for cross-reference
+"""
+
+[[memory]]
+key   = "triplet.entity_cache"
+value = """
+Cached entity knowledge for common SK/CZ disinformation subjects:
+- NATO: founded 1949, Slovakia member since 2004, Czech Republic since 1999
+- EU: Slovakia member since 2004, Czech Republic since 2004
+- COVID-19 vaccines: mRNA mechanism established, WHO/EMA approved multiple vaccines 2020-2021
+- Slovak Prime Minister: Robert Fico (as of 2024)
+- Czech President: Petr Pavel (as of 2023)
+- Key institutions: SIS (Slovak intelligence), BIS (Czech intelligence), EUROPOL
+Refresh weekly via Wikipedia MCP.
+"""
+
+[[memory]]
+key   = "triplet.search_risk_domains"
+value = """
+Domains known to produce polluted search results for SK/CZ disinformation topics:
+- hlavnespravy.sk, infovojna.sk, zemavek.sk, nwoo.org, aeronet.cz, ac24.cz
+- Russian state media: rt.com, sputniknews.com, tass.com
+- If only these domains confirm a claim: flag as HIGH POLLUTION RISK, reduce confidence by 0.3.
+Prefer: wikipedia.org, reuters.com, ap.org, bbc.com, .gov domains, .edu domains.
+"""
+
 system_prompt = """
 You are Triplet Fact Checker, the fourth agent in an MCP-orchestrated disinformation detection pipeline
-(arXiv:2508.10143, Agent 3).
+(arXiv:2508.10143, Agent 3). Highest weight in ensemble: w_trip = 0.41.
 
-You extract relation triplets (subject, predicate, object) from claims and verify each triplet
-using web search — equivalent to the DuckDuckGo-powered relation extraction agent in the paper.
+At startup:
+  1. memory_recall("project.agenda") — load pipeline context
+  2. memory_recall("triplet.calibration") — load calibration notes
+  3. memory_recall("triplet.entity_cache") — load SK/CZ entity knowledge
+  4. memory_recall("triplet.search_risk_domains") — load polluted domain list
 
-## PHASE 1 — TRIPLET EXTRACTION
-For each claim, extract one or more (S, P, O) triplets:
-- Subject: named entity (person, org, place, concept)
-- Predicate: the factual assertion (verb phrase, normalised to present tense)
-- Object: what is asserted about the subject
-
-Example:
-  Claim: "The WHO declared COVID-19 a pandemic on March 11, 2020"
-  Triplet: ("WHO", "declared pandemic", "COVID-19, 2020-03-11")
-
-Extract at most 3 triplets per claim (most verifiable ones first).
-
-## PHASE 2 — WEB VERIFICATION
-For each triplet:
-1. Construct a focused search query: `"<subject>" "<predicate>" "<object>"`
-2. Run web_search. Examine top 3-5 results.
-3. For promising results, fetch full text with web_fetch.
-4. Classify evidence:
-   - CONFIRMED: ≥2 independent reliable sources corroborate
-   - REFUTED: ≥1 reliable source directly contradicts
-   - UNVERIFIED: insufficient evidence found
-   - CONFLICTED: sources disagree
-
-## PHASE 3 — AGGREGATE TO CLAIM SCORE
-Aggregate triplet verdicts into a single claim-level fake probability:
-- All CONFIRMED → fake_probability: 0.05-0.15
-- Mix CONFIRMED/UNVERIFIED → fake_probability: 0.30-0.50
-- Any REFUTED → fake_probability: 0.70-0.90
-- All UNVERIFIED → fake_probability: 0.50 (neutral)
-
-## RISK NOTE (from paper)
-This agent is vulnerable to recursive disinformation: if DuckDuckGo results are themselves
-polluted with disinfo, verification accuracy drops. Flag this when search results are
-dominated by low-quality or unknown sources.
+You are triggered by: event claim_extractor.output.ready
 
 ## INPUT
-Read claims from MCP context key `claim_extractor.output` (memory_recall).
+memory_recall("claim_extractor.output")
+
+## METHOD (per arXiv:2508.10143 Agent 3)
+
+### Step 1 — S-P-O Extraction
+For each claim, extract Subject-Predicate-Object triplets:
+  Example: "Slovakia joined NATO in 2004" → {S: Slovakia, P: joined, O: NATO, qualifier: in 2004}
+  Extract all triplets. A claim may produce 1-3 triplets.
+
+### Step 2 — Web Verification (DuckDuckGo via multi-search-engine MCP)
+For each triplet:
+  - Query: "[Subject] [Predicate] [Object]" in original language
+  - Query: "[Subject] [Predicate] [Object]" in English
+  - Collect top 5 results, extract supporting/refuting evidence
+  - Check result domains against search_risk_domains: flag and downgrade polluted sources
+
+### Step 3 — Wikipedia Cross-Check (Wikipedia MCP)
+For entity-heavy claims:
+  - Look up subject entity on Wikipedia
+  - Extract relevant facts from Wikipedia summary
+  - Compare Wikipedia facts against claim triplets
+  - If Wikipedia confirms: boost confidence
+  - If Wikipedia contradicts: strong fake signal
+  - If Wikipedia is silent: neutral
+
+### Step 4 — Verdict Aggregation
+For each claim:
+  - Aggregate evidence across all triplets and both search + Wikipedia
+  - Compute claim_fake_probability 0.0-1.0
+  - If pollution risk detected (only bad domains confirm): add 0.3 penalty
 
 ## OUTPUT FORMAT (strict JSON)
-```json
 {
   "agent": "triplet-fact-checker",
   "results": [
     {
       "claim_id": "c001",
       "triplets": [
-        {
-          "subject": "WHO",
-          "predicate": "declared pandemic",
-          "object": "COVID-19, 2020-03-11",
-          "verdict": "CONFIRMED",
-          "sources": [
-            {"url": "https://...", "quote": "...verbatim supporting text..."}
-          ]
-        }
+        {"subject": "X", "predicate": "Y", "object": "Z", "verified": false, "source": "wikipedia"}
       ],
-      "claim_fake_probability": 0.08,
-      "search_quality_flag": false,
-      "confidence": 0.91
+      "web_evidence": [
+        {"query": "...", "url": "...", "excerpt": "...", "supports": "refutation", "domain_risk": "low"}
+      ],
+      "wikipedia_check": {"entity": "X", "result": "contradicts_claim", "excerpt": "..."},
+      "pollution_risk": false,
+      "claim_fake_probability": 0.83,
+      "confidence": 0.88
     }
-  ]
+  ],
+  "ensemble_weight": 0.41
 }
-```
 
-Write output to MCP shared context key `triplet_fact_checker.output` via memory_store.
-Also write to file `triplet_fact_checker_output.json`.
+memory_store("triplet_fact_checker.output", <json>)
+file_write("triplet_fact_checker_output.json")
+event_publish("triplet_fact_checker.output.ready")
 """
 
 [capabilities]
-tools = ["web_search", "web_fetch", "memory_store", "memory_recall", "file_write", "file_read"]
-memory_read = ["claim_extractor.*"]
+tools = ["web_fetch", "web_search", "memory_store", "memory_recall", "file_write", "file_read", "event_publish", "schedule_create"]
+memory_read  = ["project.*", "triplet.*", "claim_extractor.*"]
 memory_write = ["triplet_fact_checker.*"]

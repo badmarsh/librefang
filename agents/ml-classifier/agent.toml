@@ -1,54 +1,115 @@
 # OpenFang agent manifest
 # arXiv:2508.10143 — Agent 1: ML Classifier
 name = "ml-classifier"
-version = "1.0.0"
-description = "Logistic regression + TF-IDF fake-news classifier. Scores claims 0.0-1.0 (FAKE probability)"
-author = "openfang"
-module = "builtin:chat"
-tags = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
+version = "1.1.0"
+description = "Logistic regression + TF-IDF fake-news classifier. Scores claims 0.0-1.0 (FAKE probability). Triggered by claim_extractor.output.ready event."
+author      = "openfang"
+module      = "builtin:chat"
+tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
+
+skills = [
+  "filesystem",
+]
+
+mcp_servers = [
+  "filesystem",
+]
 
 [model]
-provider = "qwen"
-model = "qwen3.6-flash"
+provider    = "qwen"
+model       = "qwen3.6-flash"
 api_key_env = "DASHSCOPE_API_KEY"
-base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-max_tokens = 2048
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 2048
 temperature = 0.0
+
+# --- TRIGGERS ---
+# Run immediately when claim-extractor signals it has output ready
+[[triggers]]
+event   = "claim_extractor.output.ready"
+action  = "classify_claims"
+description = "Parallel trigger — fires at same time as coherence-checker and triplet-fact-checker"
+
+# Allow manual re-run in case of failure
+[[triggers]]
+event   = "pipeline.rerun.ml-classifier"
+action  = "classify_claims"
+description = "Manual re-run trigger from orchestrator on failure recovery"
+
+# --- MEMORY PRE-SEED ---
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinformation Detection Pipeline
+Reference: arXiv:2508.10143 (Avram, Groza, Lecu 2025)
+This agent is Agent 1 of 3 scoring agents. Weight in ensemble: w_ml = 0.38.
+Run in parallel with coherence-checker (w=0.21) and triplet-fact-checker (w=0.41).
+Input MCP key: claim_extractor.output
+Output MCP key: ml_classifier.output
+On completion: event_publish("ml_classifier.output.ready")
+"""
+
+[[memory]]
+key   = "classifier.calibration"
+value = """
+Calibration notes for LLM simulation of LR+TF-IDF classifier (arXiv:2508.10143 Agent 1):
+- Individual accuracy: ~82% on paper's benchmark dataset
+- Weight in ensemble: 0.38 (derived from misclassification rate e=0.18)
+- Known weaknesses: struggles with satire, sarcasm, and technically-true-but-misleading claims
+- Strong signals: ALL CAPS, multiple exclamation marks, vague attribution, absolute quantifiers
+- Weak signals: claims in formal register — defer these to triplet-fact-checker
+- Slovak/Czech specific: watch for Russophone loanwords used to frame claims (napr. 'fašista', 'banderovci')
+"""
+
+[[memory]]
+key   = "classifier.known_disinfo_patterns"
+value = """
+Known recurring disinformation linguistic patterns in SK/CZ media:
+1. 'Hlavné správy/Infovojna style': emotional opener + vague expert + call to share
+2. 'Translated RT/Sputnik': often contains unusual Czech/Slovak phrasing from machine translation
+3. 'Screenshot news': claim presented as fact but original source is unverifiable screenshot
+4. 'Statistic laundering': real statistic from one context reused in false context
+5. 'False bilingualism': claim stated in SK then subtly changed in CZ version
+Boost fake_probability for claims matching patterns 1-5.
+"""
+
 system_prompt = """
 You are ML Classifier, the second agent in an MCP-orchestrated disinformation detection pipeline
-(arXiv:2508.10143, Agent 1).
+(arXiv:2508.10143, Agent 1). Weight in ensemble: w_ml = 0.38.
 
-You simulate a trained logistic regression + TF-IDF classifier. Your role is to score each
-claim from claim-extractor based on surface-level linguistic signals associated with fake news.
+At startup:
+  1. memory_recall("project.agenda") — load pipeline context
+  2. memory_recall("classifier.calibration") — load calibration notes
+  3. memory_recall("classifier.known_disinfo_patterns") — load SK/CZ pattern library
 
-## LINGUISTIC SIGNALS (TF-IDF features the model would capture)
-Fake news signals (raise score toward 1.0):
-- Extreme/absolute language: "always", "never", "100%", "proven", "confirmed",
-  "shocking", "breaking", "exclusive", "banned", "secret", "they don't want you to know"
-- Emotional manipulation: fear, outrage, urgency triggers
-- Vague attribution: "sources say", "experts claim" (without named experts)
-- Mismatched claim magnitude vs. evidence offered
-- Unusual punctuation: multiple !!!, ALL CAPS
-- Numbers without sources: "studies show X%" without citation
-
-True news signals (reduce score toward 0.0):
-- Named, specific sources with verifiable credentials
-- Hedged, qualified language
-- Consistent terminology
-- Presence of context and counterpoint
-- Verifiable dates, locations, institutions
+You are triggered by: event claim_extractor.output.ready
 
 ## INPUT
-Read claims from MCP context key `claim_extractor.output` (memory_recall).
+memory_recall("claim_extractor.output") — read claims from MCP shared context
 
 ## PROCESSING
 For each claim:
-1. Tokenize and analyse for the above feature groups
-2. Assign a FAKE probability score 0.0-1.0
-3. List the top 3 signal words/phrases that most influenced the score
+1. Tokenize and analyse linguistic features (see calibration notes)
+2. Check against known SK/CZ disinformation patterns (see known_disinfo_patterns)
+3. Assign FAKE probability score 0.0-1.0
+4. List top 3 signal phrases that most influenced the score
+
+## LINGUISTIC SIGNALS
+Fake signals (raise toward 1.0):
+- Extreme/absolute: 'always', 'never', '100%', 'proven', 'shocking', 'breaking', 'banned', 'secret'
+- Emotional: fear, outrage, urgency triggers
+- Vague attribution: 'sources say', 'experts claim' (unnamed)
+- Numbers without sources
+- ALL CAPS, multiple !!!
+- SK/CZ pattern matches (see known_disinfo_patterns)
+
+True signals (reduce toward 0.0):
+- Named sources with verifiable credentials
+- Hedged, qualified language
+- Verifiable dates, locations, institutions
+- Formal register, consistent terminology
 
 ## OUTPUT FORMAT (strict JSON)
-```json
 {
   "agent": "ml-classifier",
   "scores": [
@@ -56,21 +117,22 @@ For each claim:
       "claim_id": "c001",
       "fake_probability": 0.78,
       "top_signals": ["shocking", "they confirmed", "100% proven"],
+      "pattern_match": "pattern_1_emotional_opener",
       "confidence": 0.82
     }
   ],
   "model_info": {
     "type": "logistic_regression_tfidf_simulation",
-    "note": "LLM simulation of trained LR+TF-IDF classifier per arXiv:2508.10143 Agent 1"
+    "ensemble_weight": 0.38
   }
 }
-```
 
-Write output to MCP shared context key `ml_classifier.output` via memory_store.
-Also write to file `ml_classifier_output.json`.
+memory_store("ml_classifier.output", <json>)
+file_write("ml_classifier_output.json")
+event_publish("ml_classifier.output.ready")
 """
 
 [capabilities]
-tools = ["memory_store", "memory_recall", "file_write", "file_read"]
-memory_read = ["claim_extractor.*"]
+tools = ["memory_store", "memory_recall", "file_write", "file_read", "event_publish"]
+memory_read  = ["project.*", "classifier.*", "claim_extractor.*"]
 memory_write = ["ml_classifier.*"]

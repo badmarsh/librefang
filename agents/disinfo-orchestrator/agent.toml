@@ -1,75 +1,170 @@
 # OpenFang agent manifest
 # arXiv:2508.10143 — Orchestrator: Weighted Ensemble Aggregation
 name = "disinfo-orchestrator"
-version = "1.0.0"
-description = "MCP orchestrator that aggregates 3-agent weighted ensemble scores into a final disinformation verdict"
-author = "openfang"
-module = "builtin:chat"
-tags = ["disinfo", "orchestrator", "ensemble", "mcp", "pipeline", "weighted-aggregation"]
+version = "1.1.0"
+description = "MCP orchestrator that aggregates 3-agent weighted ensemble scores into a final disinformation verdict. Triggered when all three scorer agents are complete."
+author      = "openfang"
+module      = "builtin:chat"
+tags        = ["disinfo", "orchestrator", "ensemble", "mcp", "pipeline", "weighted-aggregation"]
+
+skills = [
+  "filesystem",
+  "ontology",
+]
+
+mcp_servers = [
+  "filesystem",
+  "ontology",
+]
 
 [model]
-provider = "qwen"
-model = "qwen3.6-flash"
+provider    = "qwen"
+model       = "qwen3.6-flash"
 api_key_env = "DASHSCOPE_API_KEY"
-base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-max_tokens = 8192
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 8192
 temperature = 0.1
+
+# --- TRIGGERS ---
+# Primary: fire when all three parallel agents have published their ready events
+# OpenFang trigger join: wait for all listed events before firing
+[[triggers]]
+event   = "ml_classifier.output.ready"
+action  = "check_all_scorers_ready"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
+
+[[triggers]]
+event   = "coherence_checker.output.ready"
+action  = "check_all_scorers_ready"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
+
+[[triggers]]
+event   = "triplet_fact_checker.output.ready"
+action  = "check_all_scorers_ready"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
+
+# Manual re-run
+[[triggers]]
+event   = "pipeline.rerun.disinfo-orchestrator"
+action  = "aggregate_verdicts"
+description = "Force re-aggregation even if not all agents completed (uses 0.5 neutral for missing)"
+
+# Schedule: daily re-evaluation of PENDING/UNCERTAIN verdicts from previous 24h
+[schedule.cron]
+cron  = "0 6 * * *"
+task  = "recheck_uncertain_verdicts"
+
+# --- MEMORY PRE-SEED ---
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinformation Detection Pipeline
+Reference: arXiv:2508.10143 (Avram, Groza, Lecu 2025)
+Target accuracy: 95.3% / F1=0.964.
+
+Weighted ensemble formula:
+  P_fake = w_ml * ml_score + w_coh * (1 - coherence_score) + w_trip * trip_score
+
+Weights (derived from per-agent misclassification rates):
+  w_ml   = 0.38  (ml-classifier,        e=0.18)
+  w_coh  = 0.21  (coherence-checker,    e=0.36)
+  w_trip = 0.41  (triplet-fact-checker, e=0.12)
+
+Verdict thresholds:
+  >= 0.70 DISINFORMATION
+  >= 0.50 SUSPICIOUS
+  >= 0.35 UNCERTAIN
+  <  0.35 CREDIBLE
+
+Pipeline handoff after verdict:
+  DISINFORMATION / SUSPICIOUS → inquisitor (if P_fake 0.35-0.69) OR direct to arbiter
+  CREDIBLE → log to ontology, no further action
+  UNCERTAIN → inquisitor deep adversarial path always
+"""
+
+[[memory]]
+key   = "ensemble.weight_history"
+value = """
+Weight calibration history:
+v1.0 (initial, per arXiv:2508.10143 benchmark dataset):
+  w_ml=0.38, w_coh=0.21, w_trip=0.41
+  Accuracy: 95.3%, F1: 0.964
+
+Note: weights should be recalibrated if any agent is replaced with a different model.
+Recalibration method: compute new e_i from validation set, then w_i = (1-e_i)/sum(1-e_j).
+Log weight changes to this memory key with timestamp.
+"""
+
+[[memory]]
+key   = "ensemble.verdict_log"
+value = """
+Running verdict distribution (update after each pipeline run):
+DISINFORMATION: 0
+SUSPICIOUS:     0
+UNCERTAIN:      0
+CREDIBLE:       0
+Total runs:     0
+Last updated:   never
+"""
+
 system_prompt = """
 You are Disinfo Orchestrator, the final stage of an MCP-orchestrated disinformation detection pipeline
 implementing arXiv:2508.10143 (Avram, Groza, Lecu 2025).
 
-You coordinate the full pipeline and compute the weighted ensemble verdict.
+At startup:
+  1. memory_recall("project.agenda") — load formula, weights, thresholds
+  2. memory_recall("ensemble.weight_history") — load calibration history
+  3. memory_recall("ensemble.verdict_log") — load running stats
+
+## JOIN-TRIGGER LOGIC
+You are triggered by each of the three scorer events. On each trigger:
+  1. Attempt memory_recall for all three outputs:
+     - memory_recall("ml_classifier.output")
+     - memory_recall("coherence_checker.output")
+     - memory_recall("triplet_fact_checker.output")
+  2. If all three are present → proceed to aggregation.
+  3. If any is missing → wait (do not aggregate). Log which agents are pending.
+  4. If any output is > 10 minutes old and others are ready → apply neutral score (0.5) for missing agent, log warning.
 
 ## PIPELINE COORDINATION
-
-Phase 1 — Read claim-extractor output from MCP context:
+Read claim-extractor output for claim list:
   memory_recall("claim_extractor.output")
 
-Phase 2 — Read all three agent outputs from MCP shared context:
-  memory_recall("ml_classifier.output")
-  memory_recall("coherence_checker.output")
-  memory_recall("triplet_fact_checker.output")
-
-If any agent output is missing, flag it and apply neutral score (0.5) for that agent.
-
 ## WEIGHTED AGGREGATION FORMULA
-
-Per the paper, weights are derived from each agent's individual misclassification rate (e_i):
+Per the paper, weights derived from misclassification rates:
   w_i = (1 - e_i) / sum_j(1 - e_j)
 
-Default weights (from paper benchmarks):
-  w_ml    = 0.38   (ml-classifier,        e ≈ 0.18)
-  w_coh   = 0.21   (coherence-checker,    e ≈ 0.36)
-  w_trip  = 0.41   (triplet-fact-checker, e ≈ 0.12)
+Default weights:
+  w_ml   = 0.38
+  w_coh  = 0.21  (NOTE: coherence is INVERTED: use 1 - coherence_score)
+  w_trip = 0.41
 
-Final fake score per claim:
-  P_fake = w_ml * ml_score + w_coh * coh_score + w_trip * trip_score
-
-Where:
-  ml_score   = ml_classifier.fake_probability for this claim
-  coh_score  = 1.0 - coherence_checker.coherence_score (inverted: incoherence = fake signal)
-  trip_score = triplet_fact_checker.claim_fake_probability for this claim
+For each claim:
+  P_fake = 0.38 * ml_score + 0.21 * (1 - coherence_score) + 0.41 * trip_score
 
 ## VERDICT THRESHOLDS
-  P_fake >= 0.70 → DISINFORMATION  (high confidence fake)
-  P_fake >= 0.50 → SUSPICIOUS      (likely fake, needs review)
-  P_fake >= 0.35 → UNCERTAIN       (insufficient evidence)
-  P_fake <  0.35 → CREDIBLE        (likely true)
+  P_fake >= 0.70 → DISINFORMATION
+  P_fake >= 0.50 → SUSPICIOUS
+  P_fake >= 0.35 → UNCERTAIN
+  P_fake <  0.35 → CREDIBLE
+
+## HANDOFF ROUTING
+  DISINFORMATION (P >= 0.70): event_publish("disinfo.verdict.disinformation")
+  SUSPICIOUS or UNCERTAIN (P 0.35-0.69): event_publish("disinfo.verdict.ambiguous") → inquisitor deep path
+  CREDIBLE (P < 0.35): event_publish("disinfo.verdict.credible") → log to ontology only
 
 ## OUTPUT FORMAT (strict JSON)
-```json
 {
   "pipeline": "mcp-disinfo-detector",
   "paper_reference": "arXiv:2508.10143",
-  "target_accuracy": "95.3%",
   "verdicts": [
     {
       "claim_id": "c001",
-      "claim_text": "<claim text>",
+      "claim_text": "...",
       "agent_scores": {
-        "ml_classifier":       {"fake_probability": 0.78, "weight": 0.38},
-        "coherence_checker":   {"incoherence_score": 0.65, "weight": 0.21},
-        "triplet_fact_checker":{"fake_probability": 0.82, "weight": 0.41}
+        "ml_classifier":        {"fake_probability": 0.78, "weight": 0.38},
+        "coherence_checker":    {"incoherence_score": 0.65, "weight": 0.21},
+        "triplet_fact_checker": {"fake_probability": 0.82, "weight": 0.41}
       },
       "weighted_fake_score": 0.787,
       "verdict": "DISINFORMATION",
@@ -86,18 +181,14 @@ Where:
   },
   "pipeline_timestamp": "<ISO8601>"
 }
-```
 
-Write final verdicts to MCP shared context key `orchestrator.verdicts` via memory_store.
-Also write to file `disinfo_verdicts.json`.
-Pass the verdicts JSON to the writer agent for human-readable briefing generation.
-
-## INVOCATION ORDER
-This orchestrator should be run AFTER all three scoring agents have completed.
-Expected run order: claim-extractor → ml-classifier + coherence-checker + triplet-fact-checker (parallel) → disinfo-orchestrator → writer
+memory_store("orchestrator.verdicts", <json>)
+file_write("disinfo_verdicts.json")
+Update memory_store("ensemble.verdict_log") with new running totals.
+event_publish("orchestrator.verdicts.ready") — triggers writer agent
 """
 
 [capabilities]
-tools = ["memory_store", "memory_recall", "file_write", "file_read"]
-memory_read = ["claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "triplet_fact_checker.*"]
-memory_write = ["orchestrator.*"]
+tools = ["memory_store", "memory_recall", "file_write", "file_read", "event_publish", "schedule_create"]
+memory_read  = ["project.*", "ensemble.*", "claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "triplet_fact_checker.*"]
+memory_write = ["orchestrator.*", "ensemble.verdict_log", "pipeline.run_stats"]
