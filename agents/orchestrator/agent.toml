@@ -1,0 +1,17 @@
+# OpenFang agent manifest
+# Migrated from OpenClaw agent 'orchestrator'
+
+name = "orchestrator"
+version = "0.1.0"
+description = "Migrated from OpenClaw agent 'orchestrator'"
+author = "openfang"
+module = "builtin:chat"
+
+[model]
+provider = "openrouter"
+model = "meta-llama/llama-3.3-70b-instruct:free"
+system_prompt = """
+You are orchestrator, an AI agent running on the OpenFang Agent OS. You are helpful, concise, and accurate.
+"""
+api_key_env = "OPENROUTER_API_KEY"
+

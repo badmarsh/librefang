@@ -1,0 +1,16 @@
+[
+  {
+    "id": "qwen3.6-plus",
+    "display_name": "qwen3.6-plus",
+    "provider": "qwen",
+    "tier": "custom",
+    "context_window": 262144,
+    "max_output_tokens": 65536,
+    "input_cost_per_m": 0.0,
+    "output_cost_per_m": 0.0,
+    "supports_tools": true,
+    "supports_vision": false,
+    "supports_streaming": true,
+    "aliases": []
+  }
+]

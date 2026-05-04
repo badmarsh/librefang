@@ -1,0 +1,41 @@
+{
+  "id": "9e5ce002-29b5-4570-b657-9ec0724a4fdb",
+  "name": "social-impact-accountability",
+  "description": "Orchestrates notification of third parties (advertisers, regulators, and civil society) regarding confirmed misinformation to achieve social responsibility and blowback against malicious actors.",
+  "steps": [
+    {
+      "name": "identify-stakeholders",
+      "agent": {
+        "name": "researcher"
+      },
+      "prompt_template": "For the following debunked claim: {{input}}, identify associated stakeholders including the hosting platform, major advertisers on that platform, and relevant regulatory bodies or fact-checking NGOs.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "stakeholder_list"
+    },
+    {
+      "name": "draft-alerts",
+      "agent": {
+        "name": "analyst"
+      },
+      "prompt_template": "Using the verified evidence from the debunking report, draft professional but firm 'Misinformation Alerts' tailored for each group in {{stakeholder_list}}. Highlight the breach of social responsibility and potential reputational blowback for associated brands.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "drafted_alerts"
+    },
+    {
+      "name": "disseminate-reports",
+      "agent": {
+        "name": "collector"
+      },
+      "prompt_template": "Prepare the drafted alerts in {{drafted_alerts}} for dissemination. Format them as formal PDF reports for local storage. NOTE: Email delivery is currently DISABLED.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": null
+    }
+  ],
+  "created_at": "2026-05-03T16:23:15.003893196Z"
+}

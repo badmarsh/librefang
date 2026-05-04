@@ -1,0 +1,128 @@
+name = "dennikn"
+version = "0.1.0"
+description = "AI intelligence collector — monitors any target continuously with OSINT techniques, knowledge graphs, and change detection"
+author = ""
+module = "builtin:chat"
+fallback_models = []
+priority = "Normal"
+profile = "custom"
+skills = [
+    "Word / DOCX",
+    "shell-scripting",
+    "self-improvement",
+    "knowledge-digest",
+    "humanizer",
+    "proactive-agent",
+    "azure",
+    "code-reviewer",
+    "git-expert",
+    "linux-networking",
+    "answeroverflow",
+    "mongodb",
+    "wasm-expert",
+    "web-search",
+    "openapi-expert",
+    "filesystem",
+    "figma-expert",
+    "nextjs-expert",
+    "aws",
+    "desktop-control",
+    "project-manager",
+    "security-audit",
+    "sqlite-expert",
+    "kubernetes",
+]
+mcp_servers = []
+tags = [
+    "hand:collector",
+    "hand_instance:a145857f-4373-4149-b851-473c2fdba73a",
+]
+workspace = "/home/ubuntu/.openfang/workspaces/dennikn"
+generate_identity_files = true
+tool_allowlist = []
+tool_blocklist = []
+cache_context = false
+
+[schedule.continuous]
+check_interval_secs = 3600
+
+[model]
+provider = "qwen"
+model = "qwen3.6-plus"
+max_tokens = 16384
+temperature = 0.3
+system_prompt = ""
+api_key_env = "QWEN_API_KEY"
+
+[resources]
+max_memory_bytes = 268435456
+max_cpu_time_ms = 30000
+max_tool_calls_per_minute = 60
+max_llm_tokens_per_hour = 0
+max_network_bytes_per_hour = 104857600
+max_cost_per_hour_usd = 0.0
+max_cost_per_day_usd = 0.0
+max_cost_per_month_usd = 0.0
+
+[capabilities]
+network = []
+tools = [
+    "shell_exec",
+    "file_read",
+    "file_write",
+    "file_list",
+    "web_fetch",
+    "web_search",
+    "memory_store",
+    "memory_recall",
+    "schedule_create",
+    "schedule_list",
+    "schedule_delete",
+    "knowledge_add_entity",
+    "knowledge_add_relation",
+    "knowledge_query",
+    "event_publish",
+]
+memory_read = []
+memory_write = []
+agent_spawn = false
+agent_message = []
+shell = []
+ofp_discover = false
+ofp_connect = []
+
+[tools]
+
+[metadata]
+
+[autonomous]
+max_iterations = 60
+max_restarts = 10
+heartbeat_interval_secs = 120
+
+[exec_policy]
+mode = "full"
+safe_bins = [
+    "sleep",
+    "true",
+    "false",
+    "cat",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "head",
+    "tail",
+    "wc",
+    "date",
+    "echo",
+    "printf",
+    "basename",
+    "dirname",
+    "pwd",
+    "env",
+]
+allowed_commands = []
+timeout_secs = 300
+max_output_bytes = 102400
+no_output_timeout_secs = 120

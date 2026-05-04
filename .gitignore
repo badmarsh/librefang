@@ -1,0 +1,10 @@
+.env
+secrets.env
+*.log
+*.pid
+nginx_body/
+nginx_fastcgi/
+nginx_proxy/
+nginx_scgi/
+nginx_uwsgi/
+data/

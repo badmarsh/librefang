@@ -1,0 +1,41 @@
+{
+  "id": "58cebb2c-a966-432c-8d5e-4121346ab16d",
+  "name": "high-impact-misinfo-monitor",
+  "description": "Continuous monitoring of high-profile actors and news outlets to detect malicious demagoguery and high-impact lies.",
+  "steps": [
+    {
+      "name": "ingest-feeds",
+      "agent": {
+        "name": "collector"
+      },
+      "prompt_template": "Monitor the following list of high-profile social media accounts and news RSS feeds for new statements: {{input}}. Extract all factual claims made in the last 24 hours.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "extracted_claims"
+    },
+    {
+      "name": "identify-demagoguery",
+      "agent": {
+        "name": "analyst"
+      },
+      "prompt_template": "Review the following claims: {{extracted_claims}}. Identify statements that exhibit demagoguery (appealing to prejudices, using inflammatory language) or contain potentially high-impact malicious lies that could cause public harm or misinformation spread.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "flagged_claims"
+    },
+    {
+      "name": "impact-scoring",
+      "agent": {
+        "name": "analyst"
+      },
+      "prompt_template": "For each flagged claim in {{flagged_claims}}, assign an impact score (0-100) based on the reach of the author and the potential for social disruption. Filter for claims with a score > 75 and output them as a JSON list.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "high_priority_claims"
+    }
+  ],
+  "created_at": "2026-05-03T16:20:53.128055154Z"
+}

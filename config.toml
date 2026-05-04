@@ -1,0 +1,30 @@
+api_listen = "127.0.0.1:4200"
+cors_origin = "*"
+security_headers = false
+
+[default_model]
+api_key_env = "OPENROUTER_API_KEY"
+model = "qwen3.6-plus"
+provider = "qwen"
+
+[memory]
+decay_rate = 0.05
+
+[network]
+listen_addr = "127.0.0.1:4200"
+
+[knowledge_graph]
+enabled = true
+backend = "sqlite"
+path    = "~/.openfang/knowledge-graph.db"
+
+[output]
+dir = "/tmp/openfang"
+
+[monitoring]
+prometheus_port  = 9100
+healthcheck_path = "/health"
+
+[skills]
+search_engine = "brave"
+brave_api_key = "BSA_fhKzGSCyLKHHngce8P-V8rvf5qt"

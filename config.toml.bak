@@ -1,0 +1,19 @@
+api_listen = "127.0.0.1:4200"
+
+[default_model]
+api_key_env = "GEMINI_API_KEY"
+model = "gemini-3.1-pro-preview"
+provider = "gemini"
+
+[memory]
+decay_rate = 0.05
+
+[provider_urls]
+qwen-code = "https://dashscope-intl.aliyuncs.com/api/v1"
+
+[routing]
+complex_model = "gemini-3.1-pro-preview"
+complex_threshold = 500
+medium_model = "gemini-3-flash-preview"
+simple_model = "gemini-3.1-flash-lite-preview"
+simple_threshold = 100
