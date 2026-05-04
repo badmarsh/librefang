@@ -1,0 +1,122 @@
+# OpenFang Disinformation Detection Pipeline
+# Full orchestrated workflow: ingestion → parallel verification → consensus → action
+
+name        = "disinfo-pipeline"
+version     = "0.1.0"
+description = "End-to-end disinformation detection: claim extraction, parallel multi-agent verification, Bayesian consensus, and impact comms."
+author      = "openfang"
+tags        = ["osint", "disinformation", "pipeline", "fact-check", "slovak", "czech"]
+
+# ─────────────────────────────────────────────
+# STAGE 1: INGESTION
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "ingest"
+agent       = "claim-extractor"
+description = "Accept raw input (URL, text, social post, media). Extract atomic claims, assign UUIDs, write to ontology, build dispatch queue."
+trigger     = "manual|webhook|watchdog|collector-hand"
+output      = "dispatch_queue"
+
+# ─────────────────────────────────────────────
+# STAGE 2: PARALLEL VERIFICATION (fan-out)
+# All three run simultaneously on the same claim_ids
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "verify-fast"
+agent       = "ml-classifier"
+description = "Fast linguistic + structural first-pass. No web access. Caps confidence at 0.80. Returns verdict JSON for arbiter."
+depends_on  = ["ingest"]
+parallel    = true
+input       = "dispatch_queue.ml_classifier"
+output      = "verdict_ml"
+timeout_s   = 10
+
+[[stages]]
+id          = "verify-deep"
+agent       = "inquisitor"
+description = "Deep CRAAP + adversarial multi-source verification. Min 10 sources. Triggers archivist for claims >180 days."
+depends_on  = ["ingest"]
+parallel    = true
+input       = "dispatch_queue.inquisitor"
+output      = "verdict_inquisitor"
+timeout_s   = 120
+
+[[stages]]
+id          = "verify-visual"
+agent       = "visual-analyst"
+description = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if dispatch_queue.visual_analyst is non-empty."
+depends_on  = ["ingest"]
+parallel    = true
+condition   = "len(dispatch_queue.visual_analyst) > 0"
+input       = "dispatch_queue.visual_analyst"
+output      = "verdict_visual"
+timeout_s   = 60
+
+# ─────────────────────────────────────────────
+# STAGE 2b: NARRATIVE SCAN (optional parallel)
+# Triggered only when cluster threshold is met
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "narrative-scan"
+agent       = "narrative-tracker"
+description = "Campaign detection: cluster related claims, score coordinated inauthentic behaviour, emit CampaignAlert if threshold met."
+depends_on  = ["ingest"]
+parallel    = true
+condition   = "len(dispatch_queue.narrative_tracker) > 0"
+input       = "dispatch_queue.narrative_tracker"
+output      = "narrative_brief"
+timeout_s   = 90
+
+# ─────────────────────────────────────────────
+# STAGE 3: CONSENSUS GATE
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "consensus"
+agent       = "arbiter"
+description = "Bayesian weighted merge of all verdicts. Applies safety override rules. Emits: auto-publish | monitor | escalate-human | false-debunk."
+depends_on  = ["verify-fast", "verify-deep", "verify-visual"]
+wait        = "all_required_parallel_complete"
+input       = ["verdict_ml", "verdict_inquisitor", "verdict_visual"]
+output      = "arbiter_decision"
+timeout_s   = 30
+
+# ─────────────────────────────────────────────
+# STAGE 4a: ESCALATION PATH
+# Triggered when arbiter_decision.decision == "escalate-human"
+# or consensus_score < 0.55 with investigator brief
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "investigate"
+agent       = "investigator"
+description = "Deep actor/network investigation: provenance graph, financial flows, account network analysis. Runs only on escalated claims."
+depends_on  = ["consensus"]
+condition   = "arbiter_decision.decision in ['escalate-human', 'false-debunk'] or narrative_brief.cib_score >= 0.75"
+input       = ["arbiter_decision", "narrative_brief"]
+output      = "investigation_report"
+timeout_s   = 300
+
+# ─────────────────────────────────────────────
+# STAGE 4b: PUBLISH PATH
+# Triggered when arbiter_decision.decision in ["auto-publish", "false-debunk", "monitor"]
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "communicate"
+agent       = "impact-comms"
+description = "Generate bilingual (SK+EN) debunk summary, factcheck overlay, and push to configured channels (Telegram, web, partner APIs)."
+depends_on  = ["consensus"]
+condition   = "arbiter_decision.decision in ['auto-publish', 'false-debunk', 'monitor']"
+input       = ["arbiter_decision", "verdict_inquisitor"]
+output      = "published_debunk"
+timeout_s   = 60
+
+# ─────────────────────────────────────────────
+# PIPELINE SETTINGS
+# ─────────────────────────────────────────────
+[settings]
+max_concurrent_claims   = 10
+global_timeout_s        = 600
+failure_mode            = "escalate-human"  # on any unhandled error, route to human review
+log_all_verdicts        = true
+provenance_graph        = true              # write every stage output to provenance-graph skill
+self_improvement        = true              # log disagreements to self-improving-agent
+ontology_sync           = true             # sync all claim/verdict nodes to ontology after each stage
