@@ -12,6 +12,8 @@ skills = [
   "browser-use",
   "agent-browser-clawdbot",
   "automation-workflows",
+  "ontology",
+  "filesystem",
 ]
 
 [model]
