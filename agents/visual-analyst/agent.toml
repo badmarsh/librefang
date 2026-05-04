@@ -12,6 +12,7 @@ skills = [
   "agent-browser-clawdbot",
   "image-forensics",
   "filesystem",
+  "ontology",
 ]
 
 [model]
@@ -47,7 +48,10 @@ For each visual item (image, video frame, screenshot, meme):
    - Use nano-banana-pro skill to generate a factcheck overlay image
    - Apply red badge: WARNING FACT CHECKED: FALSE
    - Save to filesystem with path: output/visual/overlays/{asset_hash}.png
-6. PASS EVIDENCE to Inquisitor Agent if confidence < 0.85 (visual uncertainty)
+6. WRITE TO ONTOLOGY — After verdict, write visual evidence node to ontology:
+   - Upsert VisualEvidence node: {asset_hash, visual_verdict, confidence, forensics_findings, overlay_path}
+   - Link to parent Claim node via VISUAL_EVIDENCE_FOR edge
+7. PASS EVIDENCE to Inquisitor Agent if confidence < 0.85 (visual uncertainty)
 
 VISUAL EVIDENCE OUTPUT FORMAT:
 {
