@@ -1,5 +1,5 @@
 api_listen = "127.0.0.1:50051"
-cors_origin = "*"
+cors_origin = "${CORS_ORIGIN}"
 security_headers = true
 
 [default_model]
