@@ -314,34 +314,6 @@
     "supports_streaming": true
   },
   {
-    "id": "gemma-4-26b-free",
-    "display_name": "Gemma 4 26B (OpenRouter Free)",
-    "provider": "openrouter",
-    "tier": "free",
-    "aliases": ["free"],
-    "context_window": 128000,
-    "max_output_tokens": 4096,
-    "input_cost_per_m": 0.0,
-    "output_cost_per_m": 0.0,
-    "supports_tools": true,
-    "supports_vision": false,
-    "supports_streaming": true
-  },
-  {
-    "id": "gemma-4-31b-free",
-    "display_name": "Gemma 4 31B (OpenRouter Free)",
-    "provider": "openrouter",
-    "tier": "free",
-    "aliases": [],
-    "context_window": 128000,
-    "max_output_tokens": 4096,
-    "input_cost_per_m": 0.0,
-    "output_cost_per_m": 0.0,
-    "supports_tools": true,
-    "supports_vision": false,
-    "supports_streaming": true
-  },
-  {
     "id": "llama-3.3-70b-free",
     "display_name": "Llama 3.3 70B (OpenRouter Free)",
     "provider": "openrouter",
@@ -428,20 +400,6 @@
   {
     "id": "gpt-oss-120b-free",
     "display_name": "GPT OSS 120B (OpenRouter Free)",
-    "provider": "openrouter",
-    "tier": "free",
-    "aliases": [],
-    "context_window": 128000,
-    "max_output_tokens": 4096,
-    "input_cost_per_m": 0.0,
-    "output_cost_per_m": 0.0,
-    "supports_tools": true,
-    "supports_vision": false,
-    "supports_streaming": true
-  },
-  {
-    "id": "openrouter-free",
-    "display_name": "OpenRouter Free (Auto)",
     "provider": "openrouter",
     "tier": "free",
     "aliases": [],

@@ -21,11 +21,11 @@
       },
       "delivery_targets": [],
       "created_at": "2026-05-04T15:42:08.457917830Z",
-      "last_run": null,
-      "next_run": "2026-05-04T18:00:00Z"
+      "last_run": "2026-05-04T19:00:03.813018975Z",
+      "next_run": "2026-05-04T20:00:00Z"
     },
     "one_shot": false,
-    "last_status": null,
-    "consecutive_errors": 0
+    "last_status": "error: LLM driver error: Request failed: {\"error\":{\"message\":\"The free tier of the model has been exhausted. If you wish to continue access the model on a paid basis, please disable the \\\"use free tier only\\\" mode in the management consol... — raw: API error (4",
+    "consecutive_errors": 2
   }
 ]
