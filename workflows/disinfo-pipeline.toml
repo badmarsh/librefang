@@ -1,74 +1,93 @@
 # OpenFang Disinformation Detection Pipeline
-# Full orchestrated workflow: ingestion → parallel verification → consensus → action
+# Full orchestrated workflow: ingestion → orchestration → parallel verification → consensus → action
 
 name        = "disinfo-pipeline"
-version     = "0.1.0"
-description = "End-to-end disinformation detection: claim extraction, parallel multi-agent verification, Bayesian consensus, and impact comms."
+version     = "0.2.0"
+description = "End-to-end disinformation detection: claim extraction, orchestrator gate, parallel multi-agent verification, Bayesian consensus, and impact comms."
 author      = "openfang"
 tags        = ["osint", "disinformation", "pipeline", "fact-check", "slovak", "czech"]
 
 # ─────────────────────────────────────────────
 # STAGE 1: INGESTION
+# Entry point: accepts URL, raw text, social post, or media.
+# Triggered by: watchdog, collector-hand, manual, webhook
 # ─────────────────────────────────────────────
 [[stages]]
 id          = "ingest"
 agent       = "claim-extractor"
-description = "Accept raw input (URL, text, social post, media). Extract atomic claims, assign UUIDs, write to ontology, build dispatch queue."
+description = "Accept raw input. Extract atomic claims, assign UUIDs, write to ontology, build dispatch queue."
 trigger     = "manual|webhook|watchdog|collector-hand"
 output      = "dispatch_queue"
+timeout_s   = 60
 
 # ─────────────────────────────────────────────
-# STAGE 2: PARALLEL VERIFICATION (fan-out)
-# All three run simultaneously on the same claim_ids
+# STAGE 2: ORCHESTRATION GATE
+# Deduplication, cost guard, circuit breaker.
+# Orchestrator may hold, batch, or pass-through claims.
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "orchestrate"
+agent       = "orchestrator"
+description = "Deduplication gate: skip already-verified claims. Cost guard: hold if hourly cost > $5. Circuit breaker: batch if >20 claims/5min. Outputs approved dispatch_queue."
+depends_on  = ["ingest"]
+input       = "dispatch_queue"
+output      = "approved_queue"
+timeout_s   = 15
+
+# ─────────────────────────────────────────────
+# STAGE 3: PARALLEL VERIFICATION (fan-out)
+# All three run simultaneously on approved_queue claim_ids
 # ─────────────────────────────────────────────
 [[stages]]
 id          = "verify-fast"
 agent       = "ml-classifier"
-description = "Fast linguistic + structural first-pass. No web access. Caps confidence at 0.80. Returns verdict JSON for arbiter."
-depends_on  = ["ingest"]
+description = "Fast linguistic + structural first-pass. No web access. Confidence capped at 0.80. Returns verdict JSON for arbiter."
+depends_on  = ["orchestrate"]
 parallel    = true
-input       = "dispatch_queue.ml_classifier"
+input       = "approved_queue.ml_classifier"
 output      = "verdict_ml"
 timeout_s   = 10
 
 [[stages]]
 id          = "verify-deep"
 agent       = "inquisitor"
-description = "Deep CRAAP + adversarial multi-source verification. Min 10 sources. Triggers archivist for claims >180 days."
-depends_on  = ["ingest"]
+description = "Deep CRAAP + adversarial multi-source verification. Min 10 sources. Triggers archivist for claims >180 days. Checks COST_HOLD flag before starting."
+depends_on  = ["orchestrate"]
 parallel    = true
-input       = "dispatch_queue.inquisitor"
+input       = "approved_queue.inquisitor"
 output      = "verdict_inquisitor"
 timeout_s   = 120
 
 [[stages]]
 id          = "verify-visual"
 agent       = "visual-analyst"
-description = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if dispatch_queue.visual_analyst is non-empty."
-depends_on  = ["ingest"]
+description = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if approved_queue.visual_analyst is non-empty."
+depends_on  = ["orchestrate"]
 parallel    = true
-condition   = "len(dispatch_queue.visual_analyst) > 0"
-input       = "dispatch_queue.visual_analyst"
+condition   = "len(approved_queue.visual_analyst) > 0"
+input       = "approved_queue.visual_analyst"
 output      = "verdict_visual"
 timeout_s   = 60
 
 # ─────────────────────────────────────────────
-# STAGE 2b: NARRATIVE SCAN (optional parallel)
-# Triggered only when cluster threshold is met
+# STAGE 3b: NARRATIVE SCAN (optional parallel)
+# Only when cluster threshold is met (3+ claims share actor/narrative)
 # ─────────────────────────────────────────────
 [[stages]]
 id          = "narrative-scan"
 agent       = "narrative-tracker"
-description = "Campaign detection: cluster related claims, score coordinated inauthentic behaviour, emit CampaignAlert if threshold met."
-depends_on  = ["ingest"]
+description = "Campaign detection: cluster related claims, score coordinated inauthentic behaviour (CIB), emit CampaignAlert if threshold met."
+depends_on  = ["orchestrate"]
 parallel    = true
-condition   = "len(dispatch_queue.narrative_tracker) > 0"
-input       = "dispatch_queue.narrative_tracker"
+condition   = "len(approved_queue.narrative_tracker) > 0"
+input       = "approved_queue.narrative_tracker"
 output      = "narrative_brief"
 timeout_s   = 90
 
 # ─────────────────────────────────────────────
-# STAGE 3: CONSENSUS GATE
+# STAGE 4: CONSENSUS GATE
+# Waits for all required parallel stages to complete.
+# confidence = consensus_score (field alias bridge for impact-comms)
 # ─────────────────────────────────────────────
 [[stages]]
 id          = "consensus"
@@ -80,15 +99,18 @@ input       = ["verdict_ml", "verdict_inquisitor", "verdict_visual"]
 output      = "arbiter_decision"
 timeout_s   = 30
 
+# Field alias: impact-comms reads 'confidence', arbiter outputs 'consensus_score'
+[stages.output_mapping]
+"arbiter_decision.confidence" = "arbiter_decision.consensus_score"
+
 # ─────────────────────────────────────────────
-# STAGE 4a: ESCALATION PATH
-# Triggered when arbiter_decision.decision == "escalate-human"
-# or consensus_score < 0.55 with investigator brief
+# STAGE 5a: ESCALATION PATH
+# Deep actor/network investigation for escalated or high-CIB claims
 # ─────────────────────────────────────────────
 [[stages]]
 id          = "investigate"
 agent       = "investigator"
-description = "Deep actor/network investigation: provenance graph, financial flows, account network analysis. Runs only on escalated claims."
+description = "Deep actor/network investigation: provenance graph, financial flows, account network analysis. Only on escalated or high-CIB claims."
 depends_on  = ["consensus"]
 condition   = "arbiter_decision.decision in ['escalate-human', 'false-debunk'] or narrative_brief.cib_score >= 0.75"
 input       = ["arbiter_decision", "narrative_brief"]
@@ -96,13 +118,13 @@ output      = "investigation_report"
 timeout_s   = 300
 
 # ─────────────────────────────────────────────
-# STAGE 4b: PUBLISH PATH
-# Triggered when arbiter_decision.decision in ["auto-publish", "false-debunk", "monitor"]
+# STAGE 5b: PUBLISH PATH
+# Bilingual debunk generation and channel distribution
 # ─────────────────────────────────────────────
 [[stages]]
 id          = "communicate"
 agent       = "impact-comms"
-description = "Generate bilingual (SK+EN) debunk summary, factcheck overlay, and push to configured channels (Telegram, web, partner APIs)."
+description = "Generate bilingual (SK+EN) debunk summary, factcheck overlay, push to configured channels. Uses arbiter_decision.confidence (= consensus_score)."
 depends_on  = ["consensus"]
 condition   = "arbiter_decision.decision in ['auto-publish', 'false-debunk', 'monitor']"
 input       = ["arbiter_decision", "verdict_inquisitor"]
@@ -115,8 +137,9 @@ timeout_s   = 60
 [settings]
 max_concurrent_claims   = 10
 global_timeout_s        = 600
-failure_mode            = "escalate-human"  # on any unhandled error, route to human review
+failure_mode            = "escalate-human"  # any unhandled error → human review
 log_all_verdicts        = true
 provenance_graph        = true              # write every stage output to provenance-graph skill
-self_improvement        = true              # log disagreements to self-improving-agent
+self_improvement        = true              # archivist consumes disagreement logs
 ontology_sync           = true             # sync all claim/verdict nodes to ontology after each stage
+cost_hold_flag_path     = "output/orchestrator/COST_HOLD"  # inquisitor checks this file before starting
