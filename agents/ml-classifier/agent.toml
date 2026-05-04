@@ -1,19 +1,23 @@
 # OpenFang agent manifest
 # arXiv:2508.10143 — Agent 1: ML Classifier
-name = "ml-classifier"
-version = "1.0.0"
+name        = "ml-classifier"
+version     = "1.1.0"
 description = "Logistic regression + TF-IDF fake-news classifier. Scores claims 0.0-1.0 (FAKE probability)"
-author = "openfang"
-module = "builtin:chat"
-tags = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
+author      = "openfang"
+module      = "builtin:chat"
+tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
 
 [model]
-provider = "qwen"
-model = "qwen3.6-flash"
+# Pinned to the same model as config.toml [default_model] for deterministic,
+# consistent behaviour across all pipeline agents. Temperature 0.0 enforces
+# fully deterministic output — do NOT raise this for the classifier.
+provider    = "qwen"
+model       = "qwen-plus-2025-07-28"
 api_key_env = "DASHSCOPE_API_KEY"
-base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-max_tokens = 2048
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 2048
 temperature = 0.0
+
 system_prompt = """
 You are ML Classifier, the second agent in an MCP-orchestrated disinformation detection pipeline
 (arXiv:2508.10143, Agent 1).
@@ -44,7 +48,7 @@ Read claims from MCP context key `claim_extractor.output` (memory_recall).
 ## PROCESSING
 For each claim:
 1. Tokenize and analyse for the above feature groups
-2. Assign a FAKE probability score 0.0-1.0
+2. Assign a FAKE probability score 0.0–1.0
 3. List the top 3 signal words/phrases that most influenced the score
 
 ## OUTPUT FORMAT (strict JSON)
@@ -71,6 +75,6 @@ Also write to file `ml_classifier_output.json`.
 """
 
 [capabilities]
-tools = ["memory_store", "memory_recall", "file_write", "file_read"]
-memory_read = ["claim_extractor.*"]
+tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
+memory_read  = ["claim_extractor.*"]
 memory_write = ["ml_classifier.*"]

@@ -1,16 +1,18 @@
-api_listen = "127.0.0.1:4200"
-cors_origin = "*"
-security_headers = false
+# OpenFang runtime configuration
+schema_version = "2"
+
+api_listen      = "127.0.0.1:4200"
+cors_origin     = "http://localhost:4200"
+security_headers = true
 
 [provider_urls]
-qwen = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+qwen      = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 qwen-code = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-
 
 [default_model]
 api_key_env = "DASHSCOPE_API_KEY"
-model = "qwen-plus-2025-07-28"
-provider = "qwen"
+model       = "qwen-plus-2025-07-28"
+provider    = "qwen"
 
 [memory]
 decay_rate = 0.05
@@ -30,8 +32,21 @@ dir = "/tmp/openfang"
 prometheus_port  = 9100
 healthcheck_path = "/health"
 
+# ── Web search providers ───────────────────────────────────────────────────────
+# Primary: Brave Search.  Fallback: Tavily (used automatically when Brave quota
+# is exhausted or BRAVE_API_KEY is absent).
 [web]
-search_provider = "brave"
+search_provider          = "brave"
+search_fallback_provider = "tavily"
 
 [web.brave]
 api_key_env = "BRAVE_API_KEY"
+
+[web.tavily]
+api_key_env = "TAVILY_API_KEY"
+
+# ── Per-agent tunables ─────────────────────────────────────────────────────────
+[watchdog]
+# Escalation score threshold (0.0–1.0). Claims scoring >= this value are
+# forwarded to claim-extractor. Tune without editing the agent system prompt.
+escalation_threshold = 0.72

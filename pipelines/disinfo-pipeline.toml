@@ -1,0 +1,123 @@
+# OpenFang — Disinformation Detection Pipeline Manifest
+# arXiv:2508.10143  (Avram, Groza, Lecu 2025)
+#
+# Declares the full agent DAG so tooling, docs and new contributors have a
+# single authoritative source of truth for run-order and data-flow.
+
+name        = "disinfo-pipeline"
+version     = "1.1.0"
+description = "MCP-orchestrated multi-agent disinformation detection (5-stage weighted ensemble)"
+
+# ── Execution model ────────────────────────────────────────────────────────────
+# Stages run in the order listed below.
+# Agents within a stage run in PARALLEL unless `sequential = true`.
+# Each stage reads from and writes to the MCP shared context (memory_store/recall).
+
+[[stage]]
+id          = "ingest"
+label       = "Ingest & Triage"
+agents      = ["watchdog"]
+description = "Monitors feeds, transcribes media, triages items, escalates qualifying claims."
+notes       = "Watchdog escalation threshold is configurable via [watchdog] in config.toml."
+
+[[stage]]
+id          = "extract"
+label       = "Claim Extraction"
+agents      = ["claim-extractor"]
+description = "Splits text into atomic verifiable claims using NER + sentence segmentation."
+notes       = "Deduplicates via SHA-256 hash against seen_hashes in MCP context."
+
+[[stage]]
+id          = "score"
+label       = "Parallel Scoring"
+agents      = ["ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker"]
+description = "Four independent agents score each claim concurrently and write results to MCP context."
+notes       = """
+  Agent weights (derived from per-agent misclassification rates, rebalanced for 4-agent ensemble):
+    ml-classifier        w = 0.30  (e ≈ 0.18)
+    coherence-checker    w = 0.18  (e ≈ 0.36)  — coherence alone ~64% acc by design
+    wiki-checker         w = 0.25  (e ≈ 0.22)  — NER entity lookup against Wikipedia/Wikidata
+    triplet-fact-checker w = 0.27  (e ≈ 0.12)  — web-verified S-P-O triplets via Brave/Tavily
+  If any agent is unavailable, its weight is redistributed proportionally.
+"""
+
+[[stage]]
+id          = "aggregate"
+label       = "Weighted Ensemble Aggregation"
+agents      = ["disinfo-orchestrator"]
+description = "Reads all four scoring agents from MCP context, applies weighted formula, emits JSON verdict."
+notes       = """
+  Verdict thresholds:
+    P_fake >= 0.70  → DISINFORMATION
+    P_fake >= 0.50  → SUSPICIOUS
+    P_fake >= 0.35  → UNCERTAIN
+    P_fake <  0.35  → CREDIBLE
+"""
+
+[[stage]]
+id          = "report"
+label       = "Human-Readable Report"
+agents      = ["writer"]
+description = "Converts orchestrator JSON verdicts into a readable briefing document."
+
+# ── Downstream optional stages ─────────────────────────────────────────────────
+# These stages are NOT part of the fast path and are activated conditionally.
+
+[[optional_stage]]
+id          = "deep-verify"
+label       = "Deep Adversarial Verification"
+trigger     = "orchestrator P_fake in range 0.35–0.69 (SUSPICIOUS or UNCERTAIN)"
+agents      = ["inquisitor"]
+description = "10-source adversarial fact-check. Activates only when ensemble confidence is ambiguous."
+
+[[optional_stage]]
+id          = "campaign-scan"
+label       = "Narrative Campaign Detection"
+trigger     = "scheduled (every 72 h) OR 3+ related claims within 48 h"
+agents      = ["narrative-tracker"]
+description = "Clusters related claims, detects coordinated inauthentic behaviour."
+
+[[optional_stage]]
+id          = "investigation"
+label       = "Investigation Report"
+trigger     = "narrative-tracker CIB score >= 0.75"
+agents      = ["investigator"]
+description = "Full multi-claim investigation report with actor mapping and timeline."
+
+# ── Context key map ────────────────────────────────────────────────────────────
+# Documents what each agent writes to the MCP shared context.
+
+[[context_key]]
+key    = "claim_extractor.output"
+writer = "claim-extractor"
+readers = ["ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker"]
+
+[[context_key]]
+key    = "claim_extractor.seen_hashes"
+writer = "claim-extractor"
+readers = ["claim-extractor"]
+
+[[context_key]]
+key    = "ml_classifier.output"
+writer = "ml-classifier"
+readers = ["disinfo-orchestrator"]
+
+[[context_key]]
+key    = "coherence_checker.output"
+writer = "coherence-checker"
+readers = ["disinfo-orchestrator"]
+
+[[context_key]]
+key    = "wiki_checker.output"
+writer = "wiki-checker"
+readers = ["disinfo-orchestrator"]
+
+[[context_key]]
+key    = "triplet_fact_checker.output"
+writer = "triplet-fact-checker"
+readers = ["disinfo-orchestrator"]
+
+[[context_key]]
+key    = "orchestrator.verdicts"
+writer = "disinfo-orchestrator"
+readers = ["writer", "inquisitor", "narrative-tracker"]

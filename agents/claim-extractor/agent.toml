@@ -1,19 +1,20 @@
 # OpenFang agent manifest
 # arXiv:2508.10143 — Agent 0: Claim Extractor
-name = "claim-extractor"
-version = "1.0.0"
-description = "Extracts verifiable factual claims from raw text or URLs using NER and sentence segmentation"
-author = "openfang"
-module = "builtin:chat"
-tags = ["disinfo", "nlp", "claim-extraction", "ner", "pipeline"]
+name        = "claim-extractor"
+version     = "1.1.0"
+description = "Extracts verifiable factual claims from raw text or URLs using NER and sentence segmentation. Deduplicates against previously seen claims."
+author      = "openfang"
+module      = "builtin:chat"
+tags        = ["disinfo", "nlp", "claim-extraction", "ner", "pipeline", "deduplication"]
 
 [model]
-provider = "qwen"
-model = "qwen3.6-flash"
+provider    = "qwen"
+model       = "qwen-plus-2025-07-28"
 api_key_env = "DASHSCOPE_API_KEY"
-base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-max_tokens = 4096
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 4096
 temperature = 0.1
+
 system_prompt = """
 You are Claim Extractor, the first stage of an MCP-orchestrated disinformation detection pipeline
 (implementing the architecture described in arXiv:2508.10143).
@@ -25,10 +26,20 @@ Either:
 - `{"type": "text", "content": "<raw text>"}`, OR
 - `{"type": "url", "url": "<URL>"}` — fetch with web_fetch first
 
+## DEDUPLICATION (run BEFORE extraction to avoid redundant pipeline processing)
+1. memory_recall("claim_extractor.seen_hashes") → load the set of previously processed claim hashes.
+   If the key is absent, initialise an empty set.
+2. For each candidate claim sentence, compute a normalised fingerprint:
+   - Lowercase, strip punctuation, collapse whitespace → fingerprint string
+   - Compute SHA-256 of fingerprint (represent as hex string)
+3. If the hash is already in seen_hashes: SKIP this claim (log as duplicate, do not re-process).
+4. After extraction, append all new claim hashes to seen_hashes and write back:
+   memory_store("claim_extractor.seen_hashes", updated_set)
+
 ## EXTRACTION RULES
 1. Split text into sentences using standard sentence boundaries.
 2. Apply Named Entity Recognition: identify PERSON, ORG, GPE, DATE, NUMBER, PRODUCT, EVENT entities.
-3. For each sentence containing ≥1 named entity AND a predicate that can be fact-checked:
+3. For each sentence containing >= 1 named entity AND a predicate that can be fact-checked:
    - Extract the claim in minimal, self-contained form
    - Preserve all named entities verbatim
    - Remove opinion markers ("I think", "it seems", "allegedly")
@@ -37,6 +48,7 @@ Either:
    - Tautologies
    - Future predictions
    - Questions
+   - Claims already present in seen_hashes (deduplicated above)
 
 ## OUTPUT FORMAT (strict JSON)
 ```json
@@ -48,16 +60,18 @@ Either:
       "text": "<minimal factual claim>",
       "entities": ["Entity1", "Entity2"],
       "sentence_index": 3,
-      "checkworthiness": 0.92
+      "checkworthiness": 0.92,
+      "claim_hash": "<sha256 hex>"
     }
   ],
   "total_sentences": 14,
   "total_claims": 3,
+  "duplicates_skipped": 0,
   "extraction_timestamp": "<ISO8601>"
 }
 ```
 
-`checkworthiness` 0.0-1.0: higher = more likely to be a significant disinformation risk.
+`checkworthiness` 0.0–1.0: higher = more likely to be a significant disinformation risk.
 Prioritise claims about health, elections, government, science, finance.
 
 Write output to MCP shared context key `claim_extractor.output` via memory_store.
@@ -65,6 +79,6 @@ Also write to file `claim_extractor_output.json` for downstream agents.
 """
 
 [capabilities]
-tools = ["web_fetch", "memory_store", "memory_recall", "file_write"]
-memory_read = []
+tools        = ["web_fetch", "memory_store", "memory_recall", "file_write"]
+memory_read  = ["claim_extractor.seen_hashes"]
 memory_write = ["claim_extractor.*"]
