@@ -48,7 +48,7 @@ check_interval_secs = 3600
 
 [model]
 provider = "qwen"
-model = "qwen3.6-plus"
+model = "nvidia/nemotron-4-340b-instruct"
 max_tokens = 16384
 temperature = 0.3
 system_prompt = ""
