@@ -24,7 +24,7 @@
       "prompt_template": "Draft a formal DOCX advertiser notification using Word/DOCX and humanizer skills. Template: advertiser-notice. Tone: formal. Include: claim text, verdict, confidence score, evidence summary, request to suspend ad placements on {{input.verdict_json.actor}} properties. Verdict: {{input.verdict_json}}.",
       "mode": "sequential",
       "timeout_secs": 120,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "advertiser_notice_doc",
       "condition": "action_tier.tier >= 2"
     },
@@ -35,7 +35,7 @@
       "prompt_template": "Draft a formal DOCX regulatory complaint using Word/DOCX and humanizer skills. Template: regulatory-complaint. Tone: legal. Address to: Slovak Press Council (Tlačová rada), RTVS Council, EU DSA enforcement body. Include full evidence package. Verdict: {{input.verdict_json}}.",
       "mode": "sequential",
       "timeout_secs": 120,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "regulator_complaint_doc",
       "condition": "action_tier.tier >= 3"
     },
@@ -46,7 +46,7 @@
       "prompt_template": "Use agent-phone-call skill to place outbound calls to trust-and-safety contacts and journalists. Script template: journalist-briefing. Max duration: 180 seconds. Briefing context: {{regulator_complaint_doc}}. Target contacts: {{input.contact_list}}.",
       "mode": "sequential",
       "timeout_secs": 240,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "call_results",
       "condition": "action_tier.tier >= 3"
     },
@@ -57,7 +57,7 @@
       "prompt_template": "Deliver all prepared notifications via api-gateway and automation-workflows skills. Channels: email, webhook, signal. Attach documents: {{advertiser_notice_doc}}, {{regulator_complaint_doc}}. Log all delivery confirmations.",
       "mode": "fan_out",
       "timeout_secs": 180,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "delivery_confirmations",
       "output_path": "{{output.dir}}/social-impact-accountability-v2/{{run.id}}/delivery_confirmations.json"
     }

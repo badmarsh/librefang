@@ -23,7 +23,7 @@
       "prompt_template": "Extract all text visible in the image at {{cached_asset.local_path}}. Include captions, overlaid text, watermarks, chart labels, and any embedded statistics. Return extracted_text as a single string.",
       "mode": "sequential",
       "timeout_secs": 90,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "ocr_result"
     },
     {
@@ -45,7 +45,7 @@
       "prompt_template": "Using nano-banana-pro skill, generate a factcheck overlay for the image at {{cached_asset.local_path}}. Apply a red badge with text: WARNING FACT CHECKED: FALSE. Include the OpenFang logo. Save to output/visual/overlays/{{cached_asset.asset_hash}}.png. Return overlay_path.",
       "mode": "sequential",
       "timeout_secs": 120,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "overlay_result",
       "condition": "step.visual-reason.visual_analysis.visual_verdict in ['manipulated', 'out-of-context', 'misleading-caption']"
     },
@@ -68,7 +68,7 @@
       "prompt_template": "Publish visual debunk. Verdict: {{inquisitor_verdict}}. Overlay image: {{overlay_result.overlay_path}}. Draft bilingual (SK+EN) social media post using humanizer skill and deliver via api-gateway.",
       "mode": "sequential",
       "timeout_secs": 120,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "delivery_result",
       "output_path": "{{output.dir}}/meme-deepfake-triage/{{run.id}}/delivery_result.json"
     }

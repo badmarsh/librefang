@@ -14,7 +14,7 @@
       "prompt_template": "Query the knowledge graph for prior verdicts matching: actor={{input.actor}}, claim_fingerprint={{input.claim_fingerprint}}, narrative_cluster={{input.narrative_cluster}}. Return matched nodes, prior verdicts, and related NarrativeClusters.",
       "mode": "sequential",
       "timeout_secs": 60,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "ontology_context"
     },
     {
@@ -36,7 +36,7 @@
       "prompt_template": "Audit historical statements by actor {{input.actor}} over the past 5 years (1825 days). Use the long-context archive model to process bulk media archive data. Identify contradictions between past statements and the current claim: {{input.claim_text}}. Ontology context: {{ontology_context}}.",
       "mode": "sequential",
       "timeout_secs": 600,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "archive_audit_result",
       "condition": "ontology_context.actor_found == true"
     },
@@ -47,7 +47,7 @@
       "prompt_template": "ADVERSARIAL VERIFICATION: Assume the following claim is TRUE: {{input.claim_text}}. Find the strongest possible supporting evidence. If you cannot find credible support, state that clearly. This is a deliberate adversarial challenge to improve confidence calibration. Deep research result: {{deep_research_result}}.",
       "mode": "sequential",
       "timeout_secs": 300,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "adversarial_result",
       "extra_body": { "enable_thinking": true },
       "condition": "deep_research_result.confidence >= 0.45 and deep_research_result.confidence <= 0.75"
@@ -70,7 +70,7 @@
       "prompt_template": "Update the knowledge graph with verdict: {{final_verdict}}. Upsert Actor, Claim, Source, and NarrativeCluster nodes. Add all edges per schema. Output graph mutation JSON.",
       "mode": "sequential",
       "timeout_secs": 120,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "graph_mutations"
     },
     {
@@ -80,7 +80,7 @@
       "prompt_template": "Execute appropriate accountability tier for verdict: {{final_verdict}}. Tier 1 (>=0.80): public debunk. Tier 2 (>=0.85): advertiser notice. Tier 3 (>=0.90): regulator alert + phone outreach. Graph context: {{graph_mutations}}.",
       "mode": "sequential",
       "timeout_secs": 180,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "accountability_result",
       "output_path": "{{output.dir}}/coordinated-debunk-engine-v2/{{run.id}}/accountability_result.json"
     }
