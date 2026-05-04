@@ -23,7 +23,7 @@ check_interval_secs = 3600
 
 [model]
 provider = "qwen"
-model = "qwen3.6-plus"
+model = "qwen-plus-2025-07-28"
 max_tokens = 16384
 temperature = 0.3
 system_prompt = """

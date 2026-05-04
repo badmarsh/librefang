@@ -1,10 +1,15 @@
 api_listen = "127.0.0.1:4200"
 cors_origin = "*"
-security_headers = true
+security_headers = false
+
+[provider_urls]
+qwen = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+qwen-code = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+
 
 [default_model]
 api_key_env = "DASHSCOPE_API_KEY"
-model = "qwen3.6-plus"
+model = "qwen-plus-2025-07-28"
 provider = "qwen"
 
 [memory]

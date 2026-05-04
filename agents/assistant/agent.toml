@@ -24,7 +24,7 @@ cache_context = false
 
 [model]
 provider = "qwen"
-model = "qwen3.6-plus"
+model = "qwen-plus-2025-07-28"
 max_tokens = 8192
 temperature = 0.5
 system_prompt = """

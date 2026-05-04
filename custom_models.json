@@ -57,6 +57,20 @@
     "supports_streaming": true
   },
   {
+    "id": "qwen-plus-2025-07-28",
+    "display_name": "Qwen Plus (2025-07-28)",
+    "provider": "qwen",
+    "tier": "standard",
+    "aliases": [],
+    "context_window": 128000,
+    "max_output_tokens": 8192,
+    "input_cost_per_m": 0.0,
+    "output_cost_per_m": 0.0,
+    "supports_tools": true,
+    "supports_vision": false,
+    "supports_streaming": true
+  },
+  {
     "id": "qwen3.6-35b-a3b",
     "display_name": "Qwen 3.6 35B A3B (Thinking)",
     "provider": "qwen",
