@@ -24,10 +24,20 @@
       "output_var": "gathered_evidence"
     },
     {
+      "name": "source-integrity-check",
+      "agent": { "name": "security-auditor" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "Audit the provenance and integrity of all sources in {{gathered_evidence}}. Flag sources that are: known disinformation outlets, expired/dead links, WHOIS-anonymous domains registered after the event, screenshot-only evidence with no primary URL, or circular citations (source A cites source B which cites source A). Output a per-source integrity verdict.",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "continue",
+      "output_var": "integrity_audited_evidence"
+    },
+    {
       "name": "cross-check-diversity",
       "agent": { "name": "analyst" },
       "model": "nim-giant",
-      "prompt_template": "Independently evaluate the gathered evidence: {{gathered_evidence}}. Flag any claims where the evidence is weak, contradictory, or where a single source is over-relied upon. Provide a dissenting analysis where applicable.",
+      "prompt_template": "Independently evaluate the integrity-audited evidence: {{integrity_audited_evidence}}. Flag any claims where the evidence is weak, contradictory, or where a single source is over-relied upon. Provide a dissenting analysis where applicable.",
       "mode": "sequential",
       "timeout_secs": 300,
       "error_mode": "continue",
@@ -44,10 +54,20 @@
       "output_var": "verified_facts"
     },
     {
+      "name": "qa-review",
+      "agent": { "name": "reviewer-qa" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "Review the verified facts {{verified_facts}} for logical consistency, completeness of rebuttal, and accuracy of CRAAP scores. Verify all cited claims trace back to integrity-checked sources from {{integrity_audited_evidence}}. Flag any logical gaps that would weaken the debunking report.",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "continue",
+      "output_var": "qa_verified_facts"
+    },
+    {
       "name": "generate-debunking-report",
       "agent": { "name": "writer" },
       "model": "qwen-plus-latest",
-      "prompt_template": "Synthesize the verified facts: {{verified_facts}} into a comprehensive debunking report. Include a 'Lies Detected' section, a point-by-point rebuttal, and a full bibliography of cited sources in APA format. Output in both Slovak and English.",
+      "prompt_template": "Synthesize the QA-verified facts: {{qa_verified_facts}} into a comprehensive debunking report. Include a 'Lies Detected' section, a point-by-point rebuttal, and a full bibliography of cited sources in APA format. Output in both Slovak and English.",
       "mode": "sequential",
       "timeout_secs": 300,
       "error_mode": "fail",
