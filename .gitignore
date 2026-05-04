@@ -1,7 +1,12 @@
 .env
 secrets.env
+*.env
 *.log
 *.pid
+*.bak
+*.backup
+config.toml.bak
+secrets/
 nginx_body/
 nginx_fastcgi/
 nginx_proxy/
