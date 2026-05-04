@@ -2,7 +2,7 @@
   {
     "id": "cron-osint-dezinformacia-15min",
     "workflow_id": "abd57e3b-8984-4869-b928-744e5fbe529b",
-    "name": "OSINT Dezinformácia Monitor — every 15 minutes",
+    "name": "OSINT Dezinform\u00e1cia Monitor \u2014 every 15 minutes",
     "schedule": "*/15 * * * *",
     "enabled": true,
     "input": {
@@ -21,7 +21,7 @@
   {
     "id": "cron-high-impact-misinfo-5min",
     "workflow_id": "58cebb2c-a966-432c-8d5e-4121346ab16d",
-    "name": "High-Impact Misinfo Monitor — every 5 minutes",
+    "name": "High-Impact Misinfo Monitor \u2014 every 5 minutes",
     "schedule": "*/5 * * * *",
     "enabled": true,
     "input": {
@@ -37,7 +37,7 @@
   {
     "id": "cron-watchdog-osint-full-pipeline-5min",
     "workflow_id": "e8d5c310-7f2a-4b96-8d41-3c0e5a1f9b72",
-    "name": "Watchdog OSINT Full Pipeline — every 5 minutes",
+    "name": "Watchdog OSINT Full Pipeline \u2014 every 5 minutes",
     "schedule": "*/5 * * * *",
     "enabled": true,
     "input": {
@@ -53,14 +53,36 @@
     "description": "Full end-to-end OSINT watchdog pipeline: ingest -> translate -> classify -> visual triage -> fact-check -> graph update -> debunk delivery. Runs every 5 minutes."
   },
   {
+    "id": "cron-coordinated-debunk-engine-4h",
+    "workflow_id": "e32083dc-972f-412e-8d5d-7ee1ae5e1655",
+    "name": "Coordinated Debunk Engine \u2014 every 4 hours",
+    "schedule": "0 */4 * * *",
+    "enabled": true,
+    "input": {
+      "queue": "pending_high_priority_claims"
+    },
+    "description": "Run deep debunk engine every 4 hours processing queued high-priority claims from high-impact-misinfo-monitor output."
+  },
+  {
+    "id": "cron-social-impact-accountability-3x",
+    "workflow_id": "9e5ce002-29b5-4570-b657-9ec0724a4fdb",
+    "name": "Social Impact Accountability \u2014 3\u00d7 daily",
+    "schedule": "0 8,14,20 * * *",
+    "enabled": true,
+    "input": {
+      "queue": "confirmed_debunked_claims"
+    },
+    "description": "Run stakeholder notification and accountability alerts 3\u00d7 daily at 08:00, 14:00, 20:00 UTC. Requires SMTP_HOST/PORT/USER/PASS env vars for email delivery."
+  },
+  {
     "id": "cron-msm-archive-audit-nightly",
     "workflow_id": "b609beef-5d94-4fb8-8211-38f280874983",
-    "name": "MSM Archive Audit — nightly 02:00",
+    "name": "MSM Archive Audit \u2014 nightly 02:00",
     "schedule": "0 2 * * *",
     "enabled": true,
     "input": {
       "topic": "scheduled_nightly_audit",
-      "outlets": ["SME", "Pravda", "Denník N", "Nový Čas", "Hospodárske noviny"]
+      "outlets": ["SME", "Pravda", "Denn\u00edk N", "Nov\u00fd \u010cas", "Hospod\u00e1rske noviny"]
     },
     "description": "Nightly audit of Slovak mainstream media archives against documented outcomes. Runs at 02:00 UTC."
   }
