@@ -12,6 +12,7 @@ config.toml.bak
 # Runtime state files (change on every restart — do not commit)
 daemon.json
 hand_state.json
+workspaces/
 
 # TLS / certificate files
 *.key
