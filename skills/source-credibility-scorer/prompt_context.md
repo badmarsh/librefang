@@ -1,7 +1,3 @@
----
-name: Source Credibility Scorer
-description: Methodology for scoring news source credibility.
----
 # Source Credibility Scorer
 
 A structured methodology for scoring the credibility of news sources and social media actors in the Slovak/Czech/Central European disinformation context.

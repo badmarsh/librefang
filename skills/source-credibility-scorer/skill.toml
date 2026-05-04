@@ -1,7 +1,4 @@
----
-name: Source Credibility Scorer
-description: Methodology for scoring news source credibility.
----
+prompt_context = """
 # Source Credibility Scorer
 
 A structured methodology for scoring the credibility of news sources and social media actors in the Slovak/Czech/Central European disinformation context.
@@ -70,4 +67,31 @@ Deduct from bias_score when a source exhibits:
 
 The **Inquisitor** agent should call this skill before weighting evidence from any source.
 The **Archivist** agent calls this skill after each verdict to update the source's `credibility_score` in the ontology.
-The **Watchdog** agent uses pre-computed scores to deprioritize known low-credibility sources during triage.
+The **Watchdog** agent uses pre-computed scores to deprioritize known low-credibility sources during triage."""
+
+[skill]
+name = "Source Credibility Scorer"
+version = "0.1.0"
+description = "Methodology for scoring news source credibility."
+author = ""
+license = ""
+tags = [
+    "openclaw-compat",
+    "prompt-only",
+]
+
+[runtime]
+type = "promptonly"
+entry = ""
+
+[tools]
+provided = []
+
+[requirements]
+tools = []
+capabilities = []
+
+[source]
+type = "open_claw"
+
+[config]

@@ -1,3 +1,4 @@
+[skill]
 name        = "image-forensics"
 version     = "0.1.0"
 description = "VLM-powered image forensics: caption consistency, EXIF metadata validation, manipulation detection, reverse image lineage via Firecrawl, video frame sampling."
@@ -5,19 +6,19 @@ author      = "openfang"
 tags        = ["vision", "deepfake", "forensics", "exif", "reverse-image", "osint"]
 
 [config]
-vlm_primary   = "qwen3-vl-235b-a22b-instruct"
-vlm_fallback  = "qwen-vl-max-latest"
-api_key_env   = "DASHSCOPE_API_KEY"
+vlm_primary   = { value = "qwen3-vl-235b-a22b-instruct" }
+vlm_fallback  = { value = "qwen-vl-max-latest" }
+api_key_env   = { env = "DASHSCOPE_API_KEY" }
 
 # Number of keyframes to extract per 30-second video segment
-video_keyframe_sample_rate = 5
+video_keyframe_sample_rate = { value = 5 }
 
 # Confidence below which visual-analyst escalates to inquisitor
-vlm_escalation_threshold = 0.85
+vlm_escalation_threshold = { value = 0.85 }
 
 # Reverse image search via Firecrawl
-reverse_image_search_enabled = true
-wayback_archive_on_collect   = true
+reverse_image_search_enabled = { value = true }
+wayback_archive_on_collect   = { value = true }
 
 [prompts]
 caption_consistency = """

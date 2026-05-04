@@ -1,3 +1,4 @@
+[skill]
 name        = "provenance-graph"
 version     = "0.1.0"
 description = "Immutable chain-of-evidence graph: creates and traverses RDF-style provenance nodes for every claim, ensuring full auditability of every Verification Report."
@@ -5,10 +6,10 @@ author      = "openfang"
 tags        = ["provenance", "evidence", "graph", "audit", "knowledge-graph", "osint"]
 
 [config]
-storage_backend  = "filesystem"  # options: filesystem | neo4j | sqlite
-graph_path       = "data/provenance-graph/"
-immutable_writes = true   # agents can only APPEND nodes, never overwrite
-wayback_archive  = true   # auto-archive all source URLs on node creation
+storage_backend  = { value = "filesystem" }
+graph_path       = { value = "data/provenance-graph/" }
+immutable_writes = { value = true }
+wayback_archive  = { value = true }
 
 [node_types]
 
