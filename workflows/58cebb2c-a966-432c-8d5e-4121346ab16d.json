@@ -51,7 +51,7 @@
       "prompt_template": "Review the scored claims {{scored_claims}} for scoring consistency, evidence quality, and flag accuracy. Verify that high-impact_score claims (>75) genuinely warrant escalation in the Slovak/Central European context. Correct or remove any mis-scored claims.",
       "mode": "sequential",
       "timeout_secs": 90,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "high_priority_claims",
       "output_path": "{{output.dir}}/high-impact-misinfo-monitor/{{run.id}}/high_priority_claims.json"
     }

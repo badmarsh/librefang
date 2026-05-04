@@ -48,7 +48,7 @@ Or check if a known path exists. Then set your approach:
 
 IMPORTANT cross-platform rules:
 - ffmpeg/ffprobe/yt-dlp/whisper CLI flags are identical on all platforms
-- On Windows, the `subtitles` filter path MUST use forward slashes and escape drive colons: `subtitles=C\:/Users/clip.srt` (not backslash)
+- On Windows, the `subtitles` filter path MUST use forward slashes and escape drive colons: `subtitles=C\\:/Users/clip.srt` (not backslash)
 - On Windows, prefer `python -c "..."` over shell builtins for text processing
 - Always use `-y` on ffmpeg to avoid interactive prompts on all platforms
 
@@ -225,7 +225,7 @@ If the SRT is in the current directory, just use the filename directly:
 ```
 ffmpeg -i clip_N_vert.mp4 -vf "subtitles=clip_N.srt:force_style='FontSize=22,FontName=Arial,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Alignment=2,MarginV=40'" -c:a copy -y clip_N_final.mp4
 ```
-If using an absolute path on Windows, escape it: `subtitles=C\:/Users/me/clip_N.srt`
+If using an absolute path on Windows, escape it: `subtitles=C\\:/Users/me/clip_N.srt`
 
 ### Step 4b: TTS voice-over (if tts_provider is set and not "none")
 Check the **User Configuration** for tts_provider. If a TTS provider is configured:

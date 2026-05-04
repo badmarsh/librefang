@@ -30,7 +30,7 @@
       "prompt_template": "Audit the provenance and integrity of all sources in {{gathered_evidence}}. Flag sources that are: known disinformation outlets, expired/dead links, WHOIS-anonymous domains registered after the event, screenshot-only evidence with no primary URL, or circular citations (source A cites source B which cites source A). Output a per-source integrity verdict.",
       "mode": "sequential",
       "timeout_secs": 180,
-      "error_mode": "continue",
+      "error_mode": "skip",
       "output_var": "integrity_audited_evidence"
     },
     {
