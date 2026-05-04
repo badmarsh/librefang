@@ -25,7 +25,7 @@
     },
     {
       "name": "draft-alerts",
-      "agent": { "name": "analyst" },
+      "agent": { "name": "impact-comms" },
       "model": "qwen-plus-latest",
       "prompt_template": "Using the verified evidence from the debunking report and the legal assessment: {{legal_assessment}}, draft professional but firm 'Misinformation Alerts' tailored for each group in {{stakeholder_list}}. Highlight the breach of social responsibility, legal exposure, and potential reputational blowback for associated brands.",
       "mode": "sequential",
@@ -34,10 +34,20 @@
       "output_var": "drafted_alerts"
     },
     {
+      "name": "qa-review",
+      "agent": { "name": "reviewer-qa" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "Review all drafted alerts in {{drafted_alerts}} for factual accuracy, tone appropriateness, legal compliance with {{legal_assessment}}, and completeness of stakeholder coverage per {{stakeholder_list}}. Flag any alert that is inaccurate, inflammatory, or legally risky. Only approved alerts proceed to dissemination.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "reviewed_alerts"
+    },
+    {
       "name": "disseminate-reports",
       "agent": { "name": "email-assistant" },
       "model": "qwen3.5-flash",
-      "prompt_template": "Prepare the drafted alerts in {{drafted_alerts}} for dissemination. Format as formal PDF reports for local storage at {{output.dir}}/social-impact/{{run.id}}/. NOTE: SMTP email delivery requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS environment variables — delivery will be skipped if not configured.",
+      "prompt_template": "Prepare the reviewed alerts in {{reviewed_alerts}} for dissemination. Format as formal PDF reports for local storage at {{output.dir}}/social-impact/{{run.id}}/. NOTE: SMTP email delivery requires SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS environment variables — delivery will be skipped if not configured.",
       "mode": "sequential",
       "timeout_secs": 120,
       "error_mode": "continue",
