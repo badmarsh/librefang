@@ -22,8 +22,8 @@ cache_context = false
 check_interval_secs = 3600
 
 [model]
-provider = "openrouter"
-model = "meta-llama/llama-3.3-70b-instruct:free"
+provider = "qwen"
+model = "qwen3.6-plus"
 max_tokens = 16384
 temperature = 0.3
 system_prompt = """
@@ -485,7 +485,8 @@ Before including data in the knowledge graph, evaluate:
 
 If a claim fails 3+ checks, downgrade its confidence to "low".
 """
-api_key_env = "OPENROUTER_API_KEY"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 [resources]
 max_memory_bytes = 268435456

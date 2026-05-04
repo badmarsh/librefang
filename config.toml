@@ -1,4 +1,4 @@
-api_listen = "127.0.0.1:50051"
+api_listen = "127.0.0.1:4200"
 cors_origin = "*"
 security_headers = false
 
@@ -11,7 +11,7 @@ provider = "qwen"
 decay_rate = 0.05
 
 [network]
-listen_addr = "127.0.0.1:50051"
+listen_addr = "127.0.0.1:4200"
 
 [knowledge_graph]
 enabled = true
