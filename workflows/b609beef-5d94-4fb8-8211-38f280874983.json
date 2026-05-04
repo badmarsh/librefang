@@ -5,7 +5,7 @@
   "steps": [
     {
       "name": "archive-search",
-      "agent": { "name": "researcher" },
+      "agent": { "name": "archivist" },
       "model": "qwen2.5-14b-instruct-1m",
       "prompt_template": "Search Slovak and international mainstream media archives (SME, Pravda, Denník N, NYT, BBC) for predictions and core narratives regarding {{input}} from the specific historical period requested. Retrieve full article texts where available.",
       "mode": "fan_out",
@@ -34,10 +34,20 @@
       "output_var": "audit_findings"
     },
     {
+      "name": "qa-review",
+      "agent": { "name": "reviewer-qa" },
+      "model": "qwen3.6-35b-a3b",
+      "prompt_template": "Review the audit findings {{audit_findings}} for methodological soundness, source quality, and scoring consistency. Verify that gap analysis conclusions are supported by the evidence in {{historical_narratives}} and {{actual_outcomes}}. Flag any unsupported claims or scoring anomalies.",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "continue",
+      "output_var": "reviewed_findings"
+    },
+    {
       "name": "accountability-report",
       "agent": { "name": "writer" },
       "model": "qwen-plus-latest",
-      "prompt_template": "Synthesize the findings {{audit_findings}} into an 'Accountability Audit' report. Score the media outlets on their predictive accuracy and narrative integrity for this topic.",
+      "prompt_template": "Synthesize the reviewed findings {{reviewed_findings}} into an 'Accountability Audit' report. Score the media outlets on their predictive accuracy and narrative integrity for this topic.",
       "mode": "sequential",
       "timeout_secs": 240,
       "error_mode": "fail",
