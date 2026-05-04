@@ -1,11 +1,14 @@
 # OpenFang agent manifest
 # arXiv:2508.10143 — Agent 0: Claim Extractor
+# Wave 2 improvements:
+#   Improvement 2: Semantic Claim Deduplication (arXiv:2305.14325)
+#   Improvement 7: Slovak NER Entity Preservation (arXiv:2305.09586)
 name        = "claim-extractor"
-version     = "1.1.0"
-description = "Extracts verifiable factual claims from raw text or URLs using NER and sentence segmentation. Deduplicates against previously seen claims."
+version     = "2.0.0"
+description = "Extracts verifiable factual claims using NER and sentence segmentation. SHA-256 + semantic deduplication. Slovak/Czech entity preservation."
 author      = "openfang"
 module      = "builtin:chat"
-tags        = ["disinfo", "nlp", "claim-extraction", "ner", "pipeline", "deduplication"]
+tags        = ["disinfo", "nlp", "claim-extraction", "ner", "pipeline", "deduplication", "slovak-ner", "semantic-dedup"]
 
 [model]
 provider    = "qwen"
@@ -26,7 +29,8 @@ Either:
 - `{"type": "text", "content": "<raw text>"}`, OR
 - `{"type": "url", "url": "<URL>"}` — fetch with web_fetch first
 
-## DEDUPLICATION (run BEFORE extraction to avoid redundant pipeline processing)
+## DEDUPLICATION LAYER 1 — SHA-256 FAST PRE-FILTER
+(run BEFORE extraction to avoid redundant pipeline processing)
 1. memory_recall("claim_extractor.seen_hashes") → load the set of previously processed claim hashes.
    If the key is absent, initialise an empty set.
 2. For each candidate claim sentence, compute a normalised fingerprint:
@@ -35,6 +39,43 @@ Either:
 3. If the hash is already in seen_hashes: SKIP this claim (log as duplicate, do not re-process).
 4. After extraction, append all new claim hashes to seen_hashes and write back:
    memory_store("claim_extractor.seen_hashes", updated_set)
+
+## DEDUPLICATION LAYER 2 — SEMANTIC SIMILARITY CHECK
+# arXiv:2305.14325 (SBERT Semantic Deduplication); threshold 0.88
+(run AFTER SHA-256 pre-filter, only for claims not caught by Layer 1)
+1. Query recent claims from knowledge graph:
+   kg_query("SELECT claim_text, claim_uuid FROM claims WHERE created_at > now()-72h")
+2. Compute cosine similarity between the new claim embedding and stored embeddings
+   using the `embedding` tool with model = "text-embedding-v3".
+3. If similarity >= 0.88 to any existing claim:
+   - Set duplicate_of = existing_uuid
+   - Merge source_urls (append new source to existing claim's sources array)
+   - DO NOT emit a new claim_id
+   - Write merge event to MCP key `claim_extractor.dedup_log`
+   - Log: {"merged_into": existing_uuid, "similarity": float, "new_source": url}
+4. Threshold 0.88 balances recall (catches paraphrases) vs precision (avoids collapsing
+   distinct claims on the same topic).
+
+## IMPROVEMENT 7 — SLOVAK ENTITY PRESERVATION
+# arXiv:2305.09586 (Šimko et al., "Slovak NLP Resources", 2023)
+# Relevant when source_lang = "sk" or "cs" in the incoming watchdog payload.
+
+When source_lang = "sk" or "cs":
+  1. Extract named entities from the ORIGINAL Slovak/Czech text FIRST
+     (before or alongside the English translation)
+  2. Build entity_original_forms map:
+     Examples: {"Pellegrini": "Pellegrini", "Slovenská republika": "Slovak Republic",
+                "SNS": "Slovak National Party", "Smer": "Smer-SD party"}
+  3. Annotate each entity in the claim with its canonical_form and original_form
+  4. Flag entities that changed significantly in translation:
+     (Levenshtein distance > 3 between original and translated entity string)
+  5. Store entity_original_forms in MCP key: claim_extractor.entity_map
+
+## ENTITY TYPES TO EXTRACT (Slovak political context)
+  PERSON: politicians, journalists, public figures
+  ORG: political parties (SNS, Smer, PS, KDH), state institutions (NBS, NAKA, GP SR)
+  LOC: Slovak regions, EU institutions as they appear in Slovak media
+  STAT: statistical claims with numeric values (always extract verbatim)
 
 ## EXTRACTION RULES
 1. Split text into sentences using standard sentence boundaries.
@@ -48,25 +89,29 @@ Either:
    - Tautologies
    - Future predictions
    - Questions
-   - Claims already present in seen_hashes (deduplicated above)
+   - Claims already deduplicated by Layer 1 or Layer 2 above
 
 ## OUTPUT FORMAT (strict JSON)
 ```json
 {
   "source": "<URL or 'direct_text'>",
+  "source_lang": "sk|cs|hu|ru|en",
   "claims": [
     {
       "id": "c001",
       "text": "<minimal factual claim>",
       "entities": ["Entity1", "Entity2"],
+      "entity_map": {"Entity1": {"original_form": "...", "canonical_form": "...", "translation_flagged": false}},
       "sentence_index": 3,
       "checkworthiness": 0.92,
-      "claim_hash": "<sha256 hex>"
+      "claim_hash": "<sha256 hex>",
+      "duplicate_of": null
     }
   ],
   "total_sentences": 14,
   "total_claims": 3,
   "duplicates_skipped": 0,
+  "semantic_merges": 0,
   "extraction_timestamp": "<ISO8601>"
 }
 ```
@@ -79,6 +124,6 @@ Also write to file `claim_extractor_output.json` for downstream agents.
 """
 
 [capabilities]
-tools        = ["web_fetch", "memory_store", "memory_recall", "file_write"]
+tools        = ["web_fetch", "memory_store", "memory_recall", "file_write", "embedding", "kg_query"]
 memory_read  = ["claim_extractor.seen_hashes"]
 memory_write = ["claim_extractor.*"]
