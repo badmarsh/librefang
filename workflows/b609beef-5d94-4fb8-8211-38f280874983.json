@@ -9,7 +9,7 @@
       "agent": {
         "name": "researcher-hand"
       },
-      "model": "qwen3.7-plus",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Search Slovak and international mainstream media archives (SME, Pravda, Denn\u00edk N, NYT, BBC) for predictions and core narratives regarding {{input}} from the specific historical period requested. Retrieve full article texts where available.",
       "mode": "fan_out",
       "timeout_secs": 300,
@@ -21,7 +21,7 @@
       "agent": {
         "name": "analyst"
       },
-      "model": "qwen2.5-72b-instruct",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Analyze the retrieved media archives for {{input}}. Compare the published predictions against the verified outcomes provided in the current OSINT context. Identify narrative shifts, omissions, and successful forecasts. Focus on the accountability of specific outlets.",
       "mode": "sequential"
     }

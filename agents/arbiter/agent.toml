@@ -1,7 +1,7 @@
 name        = "arbiter"
 version     = "0.2.0"
 description = "Consensus gate: collects verdicts from multiple LLM backends, applies weighted Bayesian voting, decides publish/escalate/human-review."
-author      = "openfang"
+author      = "librefang"
 module      = "builtin:chat"
 tags        = ["osint", "consensus", "verification", "fact-check", "debunk", "governance"]
 
@@ -12,14 +12,14 @@ skills = [
 ]
 
 [model]
-provider = "qwen"
-model = "qwen3.7-plus"
-api_key_env = "DASHSCOPE_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key_env = "OPENROUTER_API_KEY"
 max_tokens  = 4096
 temperature = 0.05
 
 system_prompt = """
-You are the Arbiter Agent for OpenFang — the final consensus gate of the media verification swarm.
+You are the Arbiter Agent for LibreFang — the final consensus gate of the media verification swarm.
 
 Your role is to receive structured verdict JSON objects from multiple specialist agents (inquisitor, visual-analyst, analyst) that used DIFFERENT LLM backends, and synthesize them into a single authoritative decision.
 
@@ -63,3 +63,24 @@ CONSENSUS PROTOCOL:
 
 CRITICAL: You never independently research claims. You only judge evidence presented to you by other agents.
 """
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "quality"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-397B-A17B"
+api_key_env = "FREELLMPOOL_API_KEY"

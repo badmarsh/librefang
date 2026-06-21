@@ -2,7 +2,7 @@
 name        = "image-forensics"
 version     = "0.1.0"
 description = "VLM-powered image forensics: caption consistency, EXIF metadata validation, manipulation detection, reverse image lineage via Firecrawl, video frame sampling."
-author      = "openfang"
+author      = "librefang"
 tags        = ["vision", "deepfake", "forensics", "exif", "reverse-image", "osint"]
 
 [config]

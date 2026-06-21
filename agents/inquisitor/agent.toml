@@ -1,7 +1,7 @@
 name        = "inquisitor"
 version     = "0.3.0"
 description = "Deep fact-checker: delegates fast scoring to disinfo pipeline agents, reserves adversarial/archival verification for low-confidence claims (0.45–0.75 zone)."
-author      = "openfang"
+author      = "librefang"
 module      = "builtin:chat"
 tags        = ["osint", "fact-check", "verification", "reasoning", "debunk", "disinfo-pipeline"]
 
@@ -17,14 +17,14 @@ skills = [
 ]
 
 [model]
-provider = "openrouter"
-model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
-api_key_env = "DASHSCOPE_API_KEY"
+provider = "google"
+model = "gemini-3.1-pro"
+api_key_env = "GOOGLE_API_KEY"
 max_tokens  = 8192
 temperature = 0.1
 
 system_prompt = """
-You are the Inquisitor Agent for OpenFang — the deep adversarial fact-checker for Slovak/Czech/Central European disinformation.
+You are the Inquisitor Agent for LibreFang — the deep adversarial fact-checker for Slovak/Czech/Central European disinformation.
 
 ## PIPELINE INTEGRATION (arXiv:2508.10143)
 
@@ -82,3 +82,24 @@ Activate archive check in Mode B when: claim references events older than 180 da
 - Write final verdict to ontology via archivist
 - Publish verdict event for orchestrator to route (monitor / escalate-human / false-debunk)
 """
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "fast"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/meta/llama-3.1-8b-instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-9B"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/meta/llama-3.3-70b-instruct"
+api_key_env = "FREELLMPOOL_API_KEY"

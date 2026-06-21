@@ -2,7 +2,7 @@
 name        = "provenance-graph"
 version     = "0.1.0"
 description = "Immutable chain-of-evidence graph: creates and traverses RDF-style provenance nodes for every claim, ensuring full auditability of every Verification Report."
-author      = "openfang"
+author      = "librefang"
 tags        = ["provenance", "evidence", "graph", "audit", "knowledge-graph", "osint"]
 
 [config]

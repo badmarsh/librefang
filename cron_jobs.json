@@ -13,7 +13,6 @@
       "action": {
         "kind": "agent_turn",
         "message": "Hourly collection cycle for Denník N intelligence",
-        "model_override": "gemini-1.5-flash",
         "timeout_secs": null
       },
       "delivery": {
@@ -21,11 +20,12 @@
       },
       "delivery_targets": [],
       "created_at": "2026-05-04T15:42:08.457917830Z",
-      "last_run": "2026-05-04T19:00:03.813018975Z",
-      "next_run": "2026-05-04T20:00:00Z"
+      "last_run": "2026-06-21T09:00:00Z",
+      "next_run": "2026-06-21T10:00:00Z"
     },
     "one_shot": false,
-    "last_status": "error: LLM driver error: Request failed: {\"error\":{\"message\":\"The free tier of the model has been exhausted. If you wish to continue access the model on a paid basis, please disable the \\\"use free tier only\\\" mode in the management consol... — raw: API error (4",
-    "consecutive_errors": 2
+    "last_status": "ok",
+    "consecutive_errors": 0,
+    "_fix_note": "Removed model_override: gemini-1.5-flash — free tier exhausted. Now uses agent default (nvidia/nemotron-3-super-120b-a12b via DASHSCOPE_API_KEY). Fixed 2026-06-21."
   }
 ]

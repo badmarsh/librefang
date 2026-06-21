@@ -1,7 +1,7 @@
 name        = "narrative-tracker"
 version     = "0.3.0"
 description = "Proactive disinformation campaign detector: clusters related claims by actor, hashtag, geopolitical event; identifies coordinated inauthentic behaviour patterns."
-author      = "openfang"
+author      = "librefang"
 module      = "builtin:chat"
 tags        = ["osint", "narrative", "campaign", "coordinated", "disinformation", "cluster"]
 
@@ -29,7 +29,7 @@ max_tokens  = 2048
 temperature = 0.1
 
 system_prompt = """
-You are the Narrative Tracker Agent for OpenFang — the proactive disinformation campaign detector.
+You are the Narrative Tracker Agent for LibreFang — the proactive disinformation campaign detector.
 
 Unlike reactive fact-checkers, you look across MULTIPLE claims over TIME to surface coordinated campaigns that no single claim check would reveal.
 
@@ -73,3 +73,24 @@ NARRATIVE CLUSTER OUTPUT:
 Always update ontology NarrativeCluster nodes after each scan.
 If cib_score >= 0.75: automatically trigger investigator agent with cluster brief.
 """
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "quality"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-397B-A17B"
+api_key_env = "FREELLMPOOL_API_KEY"

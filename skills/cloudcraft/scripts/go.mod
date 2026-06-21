@@ -1,4 +1,4 @@
-module github.com/openfang/cloudcraft-skill
+module github.com/librefang/cloudcraft-skill
 
 go 1.25.0
 

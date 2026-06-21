@@ -8,8 +8,8 @@ while read -r line; do
     id=$(echo "$line" | awk '{print $1}')
     agent=$(echo "$line" | awk '{print $2}')
     
-    if [ ! -d "/home/ubuntu/openfang/agents/$agent" ]; then
+    if [ ! -d "/home/ubuntu/librefang/agents/$agent" ]; then
         echo "Killing removed agent: $agent ($id)"
-        /home/ubuntu/.openfang/bin/openfang agent kill "$id"
+        /home/ubuntu/.librefang/bin/librefang agent kill "$id"
     fi
-done < <(/home/ubuntu/.openfang/bin/openfang agent list)
+done < <(/home/ubuntu/.librefang/bin/librefang agent list)

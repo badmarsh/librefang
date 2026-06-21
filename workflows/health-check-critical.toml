@@ -3,7 +3,7 @@
 name        = "health-check-critical"
 version     = "1.0.0"
 description = "Probes the researcher-hand and collector-hand with a benign request to ensure they are online and responding within thresholds. Auto-restarts on failure."
-author      = "openfang"
+author      = "librefang"
 tags        = ["system", "health", "critical"]
 
 [schedule]

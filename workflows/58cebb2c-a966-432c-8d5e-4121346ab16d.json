@@ -8,7 +8,7 @@
       "agent": {
         "name": "collector-hand"
       },
-      "model": "qwen3.5-flash",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Monitor the following list of high-profile social media accounts and news RSS feeds for new statements: {{input}}. Extract all factual claims made in the last 24 hours with author, reach estimate, and platform.",
       "mode": "fan_out",
       "timeout_secs": 120,
@@ -20,7 +20,7 @@
       "agent": {
         "name": "translator"
       },
-      "model": "qwen-plus-2025-07-28",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Translate all non-English claims in {{extracted_claims}} to English. Preserve original language text. Source languages: SK, CZ, HU, RU.",
       "mode": "sequential",
       "timeout_secs": 90,
@@ -32,7 +32,7 @@
       "agent": {
         "name": "analyst"
       },
-      "model": "qwen3.6-35b-a3b",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Review the following claims: {{translated_claims}}. Identify statements that exhibit demagoguery (appealing to prejudices, using inflammatory language) or contain potentially high-impact malicious lies that could cause public harm or misinformation spread. Include a brief reasoning chain for each flag.",
       "mode": "sequential",
       "timeout_secs": 180,
@@ -44,7 +44,7 @@
       "agent": {
         "name": "analyst"
       },
-      "model": "qwen3.7-plus",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "extra_body": {
         "enable_thinking": true
       },
@@ -59,7 +59,7 @@
       "agent": {
         "name": "analyst"
       },
-      "model": "qwen3.6-35b-a3b",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Review the scored claims {{scored_claims}} for scoring consistency, evidence quality, and flag accuracy. Verify that high-impact_score claims (>75) genuinely warrant escalation in the Slovak/Central European context. Correct or remove any mis-scored claims.",
       "mode": "sequential",
       "timeout_secs": 90,

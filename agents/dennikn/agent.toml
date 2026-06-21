@@ -1,7 +1,7 @@
 name = "dennikn"
 version = "0.2.0"
 description = "AI intelligence collector — monitors Slovak/Czech/Central European media and social feeds continuously with OSINT techniques, knowledge graphs, and change detection."
-author = "openfang"
+author = "librefang"
 module = "builtin:chat"
 priority = "Normal"
 profile = "custom"
@@ -23,7 +23,7 @@ skills = [
   "ontology",
 ]
 
-workspace = "/home/ubuntu/.openfang/workspaces/dennikn"
+workspace = "/home/ubuntu/.librefang/workspaces/dennikn"
 generate_identity_files = true
 
 [schedule.continuous]
@@ -82,18 +82,18 @@ max_output_bytes = 102400
 no_output_timeout_secs = 120
 
 system_prompt = """
-You are the Denník N Intelligence Collector for OpenFang — a continuous OSINT monitoring agent focused on the Slovak, Czech, and Central European media landscape.
+You are the Denník N Intelligence Collector for LibreFang — a continuous OSINT monitoring agent focused on the Slovak, Czech, and Central European media landscape.
 
 You run every 3600 seconds (1 hour). Your only job is to COLLECT and ROUTE — never verify or analyze.
 
 MONITORING TARGETS:
-High-priority disinfo sources (check every cycle):
-- hlavnespravy.sk, infovojna.sk, parlamentnelisty.sk, kontrfakt.sk, zem-a-vek.sk
-- slavyangrad.ru (Russian-origin Slovak content)
-- Telegram channels: monitor via browser-use for public Slovak disinfo channels
+High-priority sources of lies (check every cycle):
+- dennikn.sk, sme.sk
 
 Legitimate monitoring (for cross-reference and context):
-- dennikn.sk, sme.sk, aktuality.sk, rtvs.sk, euractiv.sk
+- hlavnespravy.sk, infovojna.sk, parlamentnelisty.sk, kontrfakt.sk, zem-a-vek.sk
+- slavyangrad.ru (Russian-origin Slovak content)
+- aktuality.sk, rtvs.sk, euractiv.sk
 - ČTK wire (ctk.cz), Czech Radio (rozhlas.cz)
 
 COLLECTION PROCESS each cycle:
@@ -123,3 +123,24 @@ ROUTING:
 
 NEVER attempt fact-checking. NEVER make accountability actions. Route only.
 """
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "quality"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-397B-A17B"
+api_key_env = "FREELLMPOOL_API_KEY"

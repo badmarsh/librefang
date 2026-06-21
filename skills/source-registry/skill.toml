@@ -2,7 +2,7 @@
 name        = "source-registry"
 version     = "0.1.0"
 description = "Permanent Source Registry: persistent longitudinal credibility tracking for domains and social accounts with score decay, bias vectors, and correction rate."
-author      = "openfang"
+author      = "librefang"
 tags        = ["credibility", "source", "registry", "bias", "osint", "provenance"]
 
 [config]

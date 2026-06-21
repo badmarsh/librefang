@@ -1,11 +1,11 @@
-# OpenFang Self-Healing Pipeline Validator
+# LibreFang Self-Healing Pipeline Validator
 # This workflow runs when triggered by pipeline errors or via cron,
 # utilizing the self-improving-agent skill to propose and implement fixes.
 
 name        = "self-healing-pipeline"
 version     = "1.0.0"
 description = "Monitors pipeline runs and applies the self-improving-agent skill to automatically propose and implement fixes for failures."
-author      = "openfang"
+author      = "librefang"
 tags        = ["infrastructure", "stability", "self-healing", "monitoring"]
 
 [schedule]

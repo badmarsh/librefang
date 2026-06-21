@@ -1,47 +1,124 @@
-# OpenFang runtime configuration
+api_listen = "127.0.0.1:4200"
+cors_origin = "http://localhost:4200"
 schema_version = "2"
-
-api_listen      = "127.0.0.1:4200"
-cors_origin     = "http://localhost:4200"
 security_headers = true
 
-[provider_urls]
-qwen      = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-qwen-code = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-openrouter = "https://openrouter.ai/api/v1"
+[cib_detector]
+cib_escalation_threshold = 0.7
+lexical_overlap_threshold = 0.65
+temporal_window_hours = 2
+# Wave 3 — Improvement 16: Multi-window CIB detection
+temporal_windows = [2, 12, 72]
+temporal_window_weights = [0.40, 0.35, 0.25]
 
-[provider.openrouter]
-api_key_env = "OPENROUTER_API_KEY"
+[circuit_breaker]
+alert_channel = "proactive-agent"
+alert_on_trip = true
+enabled = true
+log_path = "${LIBREFANG_OUTPUT_DIR}/circuit_breaker.log"
+pause_duration_minutes = 30
+quarantine_threshold_per_window = 20
+quarantine_window_minutes = 10
+
+[claim_extractor]
+embedding_model = "nvidia/nemotron-3-super-120b-a12b:free"
+entity_translation_flag_threshold = 3
+preserve_original_entities = true
+semantic_dedup_enabled = true
+semantic_dedup_threshold = 0.88
+semantic_dedup_window_hours = 72
+slovak_ner_mode = true
 
 [default_model]
-api_key_env = "DASHSCOPE_API_KEY"
-model = "qwen3.7-plus"
-provider    = "qwen"
+api_key_env = "NVIDIA_API_KEY"
+model = "nvidia/llama-3.1-nemotron-70b-instruct"
+provider = "nvidia"
+
+[disinfo_pipeline]
+weight_adaptation_enabled = true
+weight_deviation_threshold = 0.08
+weight_recompute_interval = 50
+
+[disinfo_pipeline.baseline_weights]
+coh = 0.16
+ml = 0.26
+src = 0.12
+trip = 0.24
+wiki = 0.22
+
+# Wave 3 — Improvement 15: F2-score optimised weighting
+[ensemble]
+f2_weighting_enabled = true
+f2_min_disinfo_verdicts = 20
+
+[feedback]
+confirmed_verdict_key = "feedback.confirmed_verdicts"
+enabled = true
+feedback_ingest_agent = "disinfo-orchestrator"
+feedback_log_path = "${LIBREFANG_OUTPUT_DIR}/feedback.log"
+min_confirmed_for_update = 10
+review_queue_path = "${LIBREFANG_OUTPUT_DIR}/review_queue.json"
+
+[knowledge_graph]
+backend = "sqlite"
+enabled = true
+# Portable path — falls back to ~/.librefang if LIBREFANG_DATA_DIR is unset
+path = "${LIBREFANG_DATA_DIR}/knowledge-graph.db"
 
 [memory]
 decay_rate = 0.05
 
+[monitoring]
+healthcheck_path = "/health"
+prometheus_port = 9100
+
 [network]
 listen_addr = "127.0.0.1:4200"
 
-[knowledge_graph]
-enabled = true
-backend = "sqlite"
-path    = "/home/ubuntu/.openfang/knowledge-graph.db"
-
 [output]
-dir = "/tmp/openfang"
+# Set LIBREFANG_OUTPUT_DIR in .env to override (default: ~/.librefang/output)
+dir = "${LIBREFANG_OUTPUT_DIR}"
 
-[monitoring]
-prometheus_port  = 9100
-healthcheck_path = "/health"
+[provider.openrouter]
+api_key_env = "OPENROUTER_API_KEY"
 
-# ── Web search providers ───────────────────────────────────────────────────────
-# Primary: Brave Search.  Fallback: Tavily (used automatically when Brave quota
-# is exhausted or BRAVE_API_KEY is absent).
+[provider.freellmpool]
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[provider.qwen]
+api_key_env = "DASHSCOPE_API_KEY"
+
+[provider.qwen-code]
+api_key_env = "DASHSCOPE_API_KEY"
+
+# Wave 3 — Improvement 11/17: Firecrawl self-hosted instance
+# Instance: https://firecrawl.dev.significa.sk/ (API key optional on this instance)
+# Docs: https://docs.firecrawl.dev/
+[provider.firecrawl]
+api_key_env = "FIRECRAWL_API_KEY"
+api_key_optional = true
+
+[provider_urls]
+-cf = "http://127.0.0.1:8085/v1"
+freellmpool = "http://127.0.0.1:8085/v1"
+openrouter = "https://openrouter.ai/api/v1"
+qwen = "http://127.0.0.1:8085/v1"
+qwen-code = "http://127.0.0.1:8085/v1"
+firecrawl = "https://firecrawl.dev.significa.sk"
+
+[security]
+injection_log_path = "${LIBREFANG_OUTPUT_DIR}/quarantine.log"
+injection_quarantine_threshold = 0.8
+injection_shield_enabled = true
+
+[watchdog]
+escalation_threshold = 0.72
+
 [web]
-search_provider          = "brave"
 search_fallback_provider = "tavily"
+search_provider = "brave"
+firecrawl_search_enabled = true
+firecrawl_search_limit = 10
 
 [web.brave]
 api_key_env = "BRAVE_API_KEY"
@@ -49,77 +126,23 @@ api_key_env = "BRAVE_API_KEY"
 [web.tavily]
 api_key_env = "TAVILY_API_KEY"
 
-# ── Per-agent tunables ─────────────────────────────────────────────────────────
-[watchdog]
-# Escalation score threshold (0.0–1.0). Claims scoring >= this value are
-# forwarded to claim-extractor. Tune without editing the agent system prompt.
-escalation_threshold = 0.72
+[web.firecrawl]
+api_key_env = "FIRECRAWL_API_KEY"
+api_key_optional = true
+base_url = "https://firecrawl.dev.significa.sk"
 
-# ── Improvement 1: Bayesian Weight Adaptation ─────────────────────────────────
-# arXiv:2310.01555 — Dynamic Ensemble Weighting for LLM Fact-Checking
-[disinfo_pipeline]
-weight_adaptation_enabled   = true
-weight_recompute_interval   = 50        # verdicts before recompute
-weight_deviation_threshold  = 0.08      # trigger recompute if any agent drifts > 8%
-# Baseline weights (4-agent ensemble) — 5th signal (source-rater) added below
-baseline_weights            = {ml = 0.26, wiki = 0.22, trip = 0.24, coh = 0.16, src = 0.12}
-
-# ── Improvement 2: Semantic Claim Deduplication ────────────────────────────────
-# arXiv:2305.14325 — SBERT Semantic Deduplication
-[claim_extractor]
-semantic_dedup_enabled      = true
-semantic_dedup_window_hours = 72
-semantic_dedup_threshold    = 0.88
-embedding_model = "qwen3.7-plus"
-# Slovak NER flags (Improvement 7)
-slovak_ner_mode                   = true
-entity_translation_flag_threshold = 3     # Levenshtein distance threshold
-preserve_original_entities        = true
-
-# ── Improvement 4: CIB Detector ───────────────────────────────────────────────
-# arXiv:2302.07934 — Coordinated Inauthentic Behaviour detection
-[cib_detector]
-temporal_window_hours     = 2
-lexical_overlap_threshold = 0.65
-cib_escalation_threshold  = 0.70
-
-# ── Improvement 8: Prompt Injection Shield ────────────────────────────────────
-# arXiv:2302.12173 — Prompt injection attack techniques for LLMs
-[security]
-injection_shield_enabled       = true
-injection_quarantine_threshold = 0.80
-injection_log_path             = "/tmp/openfang/quarantine.log"
-
-# ── Improvement 10: Writer HITL Confidence-Gated Publication Tiers ────────────
-# Pattern from anthropics/anthropic-cookbook HITL; arXiv:2308.08155
 [writer]
-tier1_confidence_threshold    = 0.90
-tier1_epistemic_max           = 0.25
-tier2_confidence_min          = 0.70
+review_queue_path = "${LIBREFANG_OUTPUT_DIR}/review_queue.json"
+tier1_confidence_threshold = 0.9
+tier1_epistemic_max = 0.25
+tier2_confidence_min = 0.7
 tier3_auto_publish_on_timeout = false
-review_queue_path             = "/tmp/openfang/review_queue.json"
 
-# ── Improvement A1: Injection Flood Circuit-Breaker ───────────────────────────
-# If injection-shield quarantines too many items in a rolling window, pause the
-# pipeline and alert the operator. Prevents adversarial API-quota exhaustion via
-# a crafted article flood.
-[circuit_breaker]
-enabled                         = true
-quarantine_window_minutes       = 10
-quarantine_threshold_per_window = 20      # pause if >20 items quarantined in 10 min
-pause_duration_minutes          = 30      # auto-resume after 30 min unless manually cleared
-alert_on_trip                   = true
-alert_channel                   = "proactive-agent"   # agent to notify on trip
-log_path                        = "/tmp/openfang/circuit_breaker.log"
-
-# ── Improvement A2: Bayesian Weight Adaptation Feedback Loop ──────────────────
-# Defines how human review decisions are fed back into ensemble.agent_stats
-# so Improvement 1 (Bayesian weight adaptation) can actually converge.
-# Without this, the feedback loop is open and weights never truly adapt.
-[feedback]
-enabled                    = true
-review_queue_path          = "/tmp/openfang/review_queue.json"
-feedback_ingest_agent      = "disinfo-orchestrator"  # agent that receives confirmed verdicts
-confirmed_verdict_key      = "feedback.confirmed_verdicts"  # MCP key for confirmed ground-truth
-min_confirmed_for_update   = 10    # minimum confirmed verdicts before first Bayesian update
-feedback_log_path          = "/tmp/openfang/feedback.log"
+# Telegram channel adapter for impact-comms public alerts
+[channels.telegram]
+enabled = true
+api_key_env = "TELEGRAM_BOT_TOKEN"
+chat_id_env = "TELEGRAM_CHAT_ID"
+# Only confirmed DISINFORMATION verdicts with confidence >= 0.80 auto-post
+min_confidence = 0.80
+verdict_filter = ["DISINFORMATION"]

@@ -36,7 +36,7 @@ def get_replacement(model_id):
     return "qwen3.7-plus"
 
 # Fix config.toml
-config_path = "/home/ubuntu/openfang/config.toml"
+config_path = "/home/ubuntu/librefang/config.toml"
 with open(config_path, "r") as f:
     config_content = f.read()
 
@@ -45,7 +45,7 @@ with open(config_path, "w") as f:
     f.write(config_content)
 
 # Fix agents
-for agent_path in glob.glob("/home/ubuntu/openfang/agents/*/agent.toml"):
+for agent_path in glob.glob("/home/ubuntu/librefang/agents/*/agent.toml"):
     with open(agent_path, "r") as f:
         content = f.read()
     
@@ -88,7 +88,7 @@ for m in AVAILABLE_MODELS:
         "supports_streaming": True
     })
 
-with open("/home/ubuntu/openfang/custom_models.json", "w") as f:
+with open("/home/ubuntu/librefang/custom_models.json", "w") as f:
     json.dump(new_custom_models, f, indent=2)
 
 print("Models patched successfully.")

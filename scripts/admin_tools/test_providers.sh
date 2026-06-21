@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source ~/.openfang/secrets.env
+source ~/.librefang/secrets.env
 
 echo "=== Testing DashScope (qwen provider) ==="
 RESPONSE=$(python3 -c "

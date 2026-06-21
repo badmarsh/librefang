@@ -2,7 +2,7 @@
 name        = "security-scan"
 version     = "1.0.0"
 description = "Runs the security-checklist against the repository and agent configurations to block updates containing misconfigurations or vulnerabilities."
-author      = "openfang"
+author      = "librefang"
 
 [[stages]]
 id          = "run_audit"

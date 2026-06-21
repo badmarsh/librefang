@@ -7,7 +7,7 @@ import json
 OR_KEY = None
 # Load from secrets.env
 import os
-with open(os.path.expanduser("~/.openfang/secrets.env")) as f:
+with open(os.path.expanduser("~/.librefang/secrets.env")) as f:
     for line in f:
         line = line.strip()
         if line.startswith("OPENROUTER_API_KEY="):
@@ -28,8 +28,8 @@ def test_openrouter(key, model):
         headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://openfang.ai",
-            "X-Title": "OpenFang"
+            "HTTP-Referer": "https://librefang.ai",
+            "X-Title": "LibreFang"
         },
         method="POST"
     )

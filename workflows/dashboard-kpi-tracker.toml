@@ -4,7 +4,7 @@
 name        = "dashboard-kpi-tracker"
 version     = "1.0.0"
 description = "Calculates research velocity, fact-check accuracy, and agent uptime from session-logs and agent states."
-author      = "openfang"
+author      = "librefang"
 tags        = ["dashboard", "kpi", "monitoring", "metrics"]
 
 [schedule]

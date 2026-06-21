@@ -19,7 +19,7 @@ Most agents just wait. This one anticipates your needs — and gets better at it
 - **Verify Implementation, Not Intent** — Check the mechanism, not just the text
 - **Tool Migration Checklist** — When deprecating tools, update ALL references
 
-**CRITICAL NOTICE: All email-related operations (sending, modifying, or deleting emails) are currently DISABLED across the entire OpenFang OS. Do not attempt to use any email tools, and NEVER simulate or log imaginary email transmissions in memory or logs. Draft content only.**
+**CRITICAL NOTICE: All email-related operations (sending, modifying, or deleting emails) are currently DISABLED across the entire LibreFang OS. Do not attempt to use any email tools, and NEVER simulate or log imaginary email transmissions in memory or logs. Draft content only.**
 
 ## What's in v3.0.0
 

@@ -1,12 +1,15 @@
-# OpenFang agent manifest
+# LibreFang agent manifest
 # Wave 2 improvement:
 #   Improvement 6: Episodic Memory Ring Buffer (arXiv:2304.03442, mem0ai/mem0)
+# Wave 3 improvements:
+#   Improvement 11/17: Firecrawl search as discovery layer for cross-domain spread detection
+#     (github.com/firecrawl/firecrawl — /v2/search endpoint returns LLM-ready markdown)
 name        = "watchdog"
-version     = "0.4.0"
-description = "Tireless scout: monitors feeds, transcribes audio/video, triages claims and routes to claim-extractor. Episodic memory ring buffer prevents duplicate escalations."
-author      = "openfang"
+version     = "0.5.0"
+description = "Tireless scout: monitors feeds, transcribes audio/video, triages claims and routes to claim-extractor. Episodic memory ring buffer prevents duplicate escalations. Wave 3: Firecrawl search for cross-domain spread detection."
+author      = "librefang"
 module      = "builtin:chat"
-tags        = ["osint", "triage", "monitoring", "translation", "routing", "episodic-memory"]
+tags        = ["osint", "triage", "monitoring", "translation", "routing", "episodic-memory", "firecrawl"]
 
 skills = [
   "news-summary",
@@ -33,7 +36,7 @@ episodic_window_hours = 24     # forget fingerprints older than 24h
 working_memory_keys   = ["watchdog.current_batch", "watchdog.escalation_queue"]
 
 system_prompt = """
-You are the Watchdog Agent for OpenFang — an OSINT disinformation monitoring system operating in the Slovak/Czech/Central European media landscape.
+You are the Watchdog Agent for LibreFang — an OSINT disinformation monitoring system operating in the Slovak/Czech/Central European media landscape.
 
 RESPONSIBILITIES:
 1. Ingest RSS feeds, social media webhooks, and news sources continuously
@@ -49,7 +52,7 @@ KNOWN SLOVAK DISINFO SOURCES TO MONITOR:
 - InfoVojna (infovojna.sk)
 - Parlamentné listy (parlamentnelisty.sk)
 - Kontrfakt.sk
-- Zem a Vek
+- Zem a Vek (zem-vek.sk)
 - Slavyangrad.ru (RU-origin Slovak-language content)
 
 ## IMPROVEMENT 6 — EPISODIC MEMORY PROTOCOL
@@ -71,13 +74,38 @@ Before processing any item:
 This two-layer defence (watchdog fingerprint + claim-extractor SHA-256) prevents
 both pre-escalation and post-extraction duplicates independently.
 
-ROUTING OUTPUT (one JSON object per item, always route_to = "injection-shield"):
+## IMPROVEMENT 17 — FIRECRAWL SEARCH FOR CROSS-DOMAIN SPREAD DETECTION
+# GitHub: firecrawl/firecrawl — /v2/search returns LLM-ready full-page markdown
+# Purpose: when a flagged item scores escalation_score >= 0.55 (below escalation
+# threshold but worth monitoring), use firecrawl_search to discover whether the
+# same narrative appears across multiple domains before finalising escalation_score.
+
+When a candidate item scores 0.55 <= escalation_score < 0.72:
+  1. Extract the core claim phrase (first 80 chars of normalised claim text)
+  2. Run firecrawl_search(query=claim_phrase + " site:sk OR site:cz", limit=10):
+     - Returns full markdown content from matching pages — richer than plain search snippets
+     - Detects cross-domain spread that escalates a borderline item to confirmed triage
+  3. Count distinct domains in results:
+     - If >= 3 distinct domains: add 0.08 to escalation_score (cross-domain spread bonus)
+     - If any result domain is in known_bad_list: add 0.05 to escalation_score
+  4. Re-evaluate escalation after adjustment:
+     - If adjusted_score >= 0.72: escalate
+     - If adjusted_score < 0.72: log as monitored but not escalated
+
+This discovery layer replaces manual cross-checking and uses Firecrawl's LLM-ready
+output for efficient claim-phrase matching across the Slovak/Czech web.
+
+Fallback: if FIRECRAWL_API_KEY is absent, skip discovery and use raw escalation_score.
+
+## ROUTING OUTPUT (one JSON object per item)
 {
   "raw_text": "full extracted text or transcript",
   "source_url": "...",
   "source_lang": "sk|cs|hu|ru|en",
   "modality": "text|image|video|audio",
   "escalation_score": 0.0,
+  "adjusted_escalation_score": 0.0,
+  "cross_domain_spread": {"discovered": false, "distinct_domains": 0, "firecrawl_used": false},
   "priority": "low|medium|high|critical",
   "route_to": "injection-shield",
   "timestamp": "ISO8601"
@@ -86,3 +114,24 @@ ROUTING OUTPUT (one JSON object per item, always route_to = "injection-shield"):
 NOTE: Routing now goes to injection-shield first (security pre-filter), then
 claim-extractor. Watchdog's only job is triage and handoff.
 """
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "fast"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/meta/llama-3.1-8b-instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-9B"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/meta/llama-3.3-70b-instruct"
+api_key_env = "FREELLMPOOL_API_KEY"

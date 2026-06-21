@@ -85,17 +85,17 @@ P_fake = 0.38 * ml_score + 0.21 * (1 - coherence_score) + 0.41 * triplet_score
 
 ```bash
 # 1. Extract claims
-openfang run claim-extractor --input '{"type": "url", "url": "https://example.com/article"}'
+librefang run claim-extractor --input '{"type": "url", "url": "https://example.com/article"}'
 
 # 2. Run scoring agents in parallel
-openfang run ml-classifier &
-openfang run coherence-checker &
-openfang run triplet-fact-checker &
+librefang run ml-classifier &
+librefang run coherence-checker &
+librefang run triplet-fact-checker &
 wait
 
 # 3. Aggregate and report
-openfang run disinfo-orchestrator
-openfang run writer
+librefang run disinfo-orchestrator
+librefang run writer
 ```
 
 Output files: `claim_extractor_output.json`, `ml_classifier_output.json`,

@@ -1,9 +1,9 @@
-# OpenFang agent manifest
+# LibreFang agent manifest
 # arXiv:2508.10143 — Agent 2: Coherence Checker
 name = "coherence-checker"
 version = "1.0.0"
 description = "LLM-based coherence and logical consistency checker for extracted claims"
-author = "openfang"
+author = "librefang"
 module = "builtin:chat"
 tags = ["disinfo", "coherence", "logic", "llm", "pipeline"]
 
@@ -81,3 +81,24 @@ Also write to file `coherence_checker_output.json`.
 tools = ["memory_store", "memory_recall", "file_write", "file_read"]
 memory_read = ["claim_extractor.*"]
 memory_write = ["coherence_checker.*"]
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "fast"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/meta/llama-3.1-8b-instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-9B"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/meta/llama-3.3-70b-instruct"
+api_key_env = "FREELLMPOOL_API_KEY"

@@ -80,14 +80,14 @@ def verify_agents():
     # Load custom models
     custom_models = []
     try:
-        with open("/home/ubuntu/openfang/custom_models.json", "r") as f:
+        with open("/home/ubuntu/librefang/custom_models.json", "r") as f:
             custom_models_json = json.load(f)
             custom_models = [m["id"] for m in custom_models_json]
     except Exception as e:
         print(f"❌ Failed to load custom_models.json: {e}")
         return
 
-    agent_files = glob.glob("/home/ubuntu/openfang/agents/*/agent.toml")
+    agent_files = glob.glob("/home/ubuntu/librefang/agents/*/agent.toml")
     errors = 0
     for agent_file in agent_files:
         agent_name = os.path.basename(os.path.dirname(agent_file))
@@ -120,7 +120,7 @@ def verify_agents():
         print(f"✅ All {len(agent_files)} agents have valid provider/model configurations.")
 
 if __name__ == "__main__":
-    print("--- OpenFang Audit ---")
+    print("--- LibreFang Audit ---")
     print("\n1. Checking Daemon Health")
     check_daemon_health()
     

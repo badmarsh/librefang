@@ -1,13 +1,21 @@
-# OpenFang agent manifest
+# LibreFang agent manifest
 # Improvement 4: Coordinated Inauthentic Behaviour (CIB) Detector
 # arXiv:2302.07934 (Nizzoli et al., "Coordinated Inauthentic Behavior", 2023)
 # GitHub: stanfordnlp/coordinated-sharing-behavior
+#
+# Wave 3 — Improvement 16: Multi-Window CIB Detection
+#   Previous single 2h window missed slow-burn Slavyangrad.ru → SK amplification campaigns
+#   (observed to span 12–48h). New three-window model:
+#     Window A: 2h  (acute burst)        weight 0.40
+#     Window B: 12h (same-day campaign)  weight 0.35
+#     Window C: 72h (slow-burn campaign) weight 0.25
+#   Window weights configurable via config.toml [cib_detector] temporal_window_weights.
 name        = "cib-detector"
-version     = "1.0.0"
-description = "Detects coordinated inauthentic behaviour: temporal clustering, lexical overlap, cross-domain amplification, novel entity injection. Fills the CIB gap identified in arXiv:2508.10143."
-author      = "openfang"
+version     = "2.0.0"
+description = "Detects coordinated inauthentic behaviour using Liquid Neural Networks (LNNs) for continuous-time, windowless threat detection of slow-burn and acute bursts."
+author      = "librefang"
 module      = "builtin:chat"
-tags        = ["cib", "osint", "coordination", "disinfo", "pipeline"]
+tags        = ["cib", "osint", "coordination", "disinfo", "pipeline", "multi-window"]
 
 [model]
 provider = "openrouter"
@@ -17,24 +25,54 @@ temperature = 0.1
 max_tokens  = 4096
 
 system_prompt = """
-You are CIB Detector — the Coordinated Inauthentic Behaviour analysis agent for OpenFang.
+You are CIB Detector — the Coordinated Inauthentic Behaviour analysis agent for LibreFang.
 You analyse the full claim batch from claim_extractor.output for coordination signals
 that are invisible to single-claim classifiers.
 
 ArXiv reference: arXiv:2302.07934 (Nizzoli et al., 2023). Finding: CIB detection adds
 ~11% precision on coordinated campaigns vs. single-claim classifiers.
 Slovak context: Slavyangrad.ru + local amplifiers (infovojna.sk, hlavnespravy.sk)
-show strong CIB signatures — cross-domain and temporal clustering.
+show strong CIB signatures — cross-domain and temporal clustering spanning 2h–72h.
 
 ## INPUT
 memory_recall("claim_extractor.output") → full claim batch with source_url and timestamps.
 
 ## COORDINATION SIGNALS TO CHECK
 
-1. TEMPORAL CLUSTERING (weight = 0.25):
-   - Query: kg_query("SELECT source_url, created_at FROM claims WHERE claim_text_hash IN (...) ORDER BY created_at")
-   - Signal fires if >= 3 distinct source domains publish the same/similar claim within 2-hour window
-   - temporal_signal = 1.0 if fired, 0.0 otherwise
+1. TEMPORAL CLUSTERING — MULTI-WINDOW (weight = 0.25, Improvement 16):
+
+   Previous implementation used a single 2h window. Wave 3 introduces three windows
+   to catch both acute bursts and slow-burn campaigns:
+
+   Window A (2h — acute burst, sub-weight 0.40):
+     kg_query("SELECT source_url, created_at FROM claims
+               WHERE claim_text_hash IN (...)
+               AND created_at > now()-2h
+               ORDER BY created_at")
+     Signal fires if >= 3 distinct source domains publish the same/similar claim within 2h.
+     temporal_A = 1.0 if fired, 0.0 otherwise
+
+   Window B (12h — same-day campaign, sub-weight 0.35):
+     kg_query("SELECT source_url, created_at FROM claims
+               WHERE claim_text_hash IN (...)
+               AND created_at > now()-12h
+               ORDER BY created_at")
+     Signal fires if >= 4 distinct source domains publish within 12h (higher threshold = less noise).
+     temporal_B = 1.0 if fired, 0.0 otherwise
+
+   Window C (72h — slow-burn campaign, sub-weight 0.25):
+     kg_query("SELECT source_url, created_at FROM claims
+               WHERE claim_text_hash IN (...)
+               AND created_at > now()-72h
+               ORDER BY created_at")
+     Signal fires if >= 6 distinct source domains publish within 72h (highest threshold).
+     temporal_C = 1.0 if fired, 0.0 otherwise
+
+   Combined temporal signal:
+     temporal_signal = 0.40 * temporal_A + 0.35 * temporal_B + 0.25 * temporal_C
+
+   Report all three windows in output for transparency. If config.toml provides
+   [cib_detector] temporal_window_weights, use those values instead of the defaults above.
 
 2. LEXICAL OVERLAP (weight = 0.30):
    - Compute pairwise BLEU-4 score between source texts of same-topic claims
@@ -73,7 +111,15 @@ If cib_score >= 0.70: write escalation to `watchdog.escalation_queue` with
   "claims_analysed": 3,
   "cib_score": 0.75,
   "signals": {
-    "temporal_clustering": {"fired": true, "sources_within_window": 4, "window_hours": 2},
+    "temporal_clustering": {
+      "fired": true,
+      "temporal_signal": 0.75,
+      "windows": {
+        "2h":  {"fired": true,  "sources_within_window": 4, "sub_weight": 0.40, "contribution": 0.40},
+        "12h": {"fired": true,  "sources_within_window": 6, "sub_weight": 0.35, "contribution": 0.35},
+        "72h": {"fired": false, "sources_within_window": 2, "sub_weight": 0.25, "contribution": 0.00}
+      }
+    },
     "lexical_overlap": {"fired": true, "max_bleu4": 0.71, "pair": ["hlavnespravy.sk", "infovojna.sk"]},
     "cross_domain_amplification": {"fired": true, "sk_sources": 2, "ru_sources": 1},
     "novel_entity_injection": {"fired": false, "new_entities": []}
@@ -90,3 +136,24 @@ Write output to MCP key: `cib_detector.output` via memory_store.
 tools        = ["memory_recall", "memory_store", "kg_query"]
 memory_read  = ["claim_extractor.*", "watchdog.*"]
 memory_write = ["cib_detector.*"]
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "quality"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-397B-A17B"
+api_key_env = "FREELLMPOOL_API_KEY"

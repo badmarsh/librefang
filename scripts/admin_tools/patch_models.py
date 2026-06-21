@@ -8,7 +8,7 @@ import os
 import re
 import glob
 
-AGENTS_DIR = "/home/ubuntu/openfang/agents"
+AGENTS_DIR = "/home/ubuntu/librefang/agents"
 
 # Models in use → replacement (only for models NOT in quota list)
 MODEL_REMAP = {

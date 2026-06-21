@@ -10,7 +10,7 @@
     {
       "name": "asset-retrieve",
       "agent": { "name": "collector-hand" },
-      "model": "qwen3-30b-a3b",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Retrieve and archive the media asset at URL: {{input.asset_url}}. Compute SHA256 hash. If video: extract {{config.video_keyframe_sample_rate}} keyframes per 30-second segment. Archive original URL to Wayback Machine. Return: asset_hash, archived_url, keyframe_paths (if video), extracted_audio_transcript (if video, use openai-whisper skill).",
       "mode": "sequential",
       "timeout_secs": 120,
@@ -20,7 +20,7 @@
     {
       "name": "vlm-forensics",
       "agent": { "name": "visual-analyst" },
-      "model": "qwen3-vl-235b-a22b-instruct",
+      "model": "nvidia/nemotron-nano-12b-v2-vl:free",
       "prompt_template": "Apply full image forensics pipeline to asset {{asset_data.asset_hash}}. Run: (1) caption_consistency check against claim: {{input.claim_text}}, (2) manipulation_check for deepfake/splice indicators, (3) EXIF validation if metadata available. For video: analyse each keyframe in {{asset_data.keyframe_paths}} individually then aggregate. Use image-forensics skill prompts. Return full VisualEvidence JSON.",
       "mode": "sequential",
       "timeout_secs": 300,
@@ -31,7 +31,7 @@
     {
       "name": "reverse-image-search",
       "agent": { "name": "researcher-hand" },
-      "model": "qwen3-30b-a3b",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Perform reverse image lineage search for asset hash {{asset_data.asset_hash}}, URL: {{input.asset_url}}. Use multi-search-engine and browser-use to find earlier publications of this image/video. Identify original context, original date, and any prior fact-checks. Return: earliest_known_url, original_context, original_date, prior_factchecks.",
       "mode": "fan_out",
       "timeout_secs": 180,
@@ -41,7 +41,7 @@
     {
       "name": "caption-cross-check",
       "agent": { "name": "inquisitor" },
-      "model": "qwen3.7-plus",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Cross-check visual findings against textual claim. VLM forensics result: {{vlm_forensics_result}}. Reverse image search: {{reverse_image_result}}. Original claim: {{input.claim_text}}. Does the visual evidence support, refute, or complicate the textual claim? Output updated verdict JSON incorporating visual evidence.",
       "mode": "sequential",
       "timeout_secs": 300,
@@ -52,7 +52,7 @@
     {
       "name": "overlay-generation",
       "agent": { "name": "visual-analyst" },
-      "model": "qwen3-vl-235b-a22b-instruct",
+      "model": "nvidia/nemotron-nano-12b-v2-vl:free",
       "prompt_template": "Generate factcheck overlay badge for asset {{asset_data.asset_hash}} using nano-banana-pro skill. Integrated verdict: {{integrated_verdict}}. Apply appropriate badge text from image-forensics skill config. Save to output/visual/forensics/{{asset_data.asset_hash}}_overlay.png.",
       "mode": "sequential",
       "timeout_secs": 120,
@@ -63,7 +63,7 @@
     {
       "name": "provenance-attach-visual",
       "agent": { "name": "archivist" },
-      "model": "qwen3-coder-30b-a3b-instruct",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Attach VisualEvidence node to provenance graph. Claim ID: {{input.claim_id}}. VLM forensics: {{vlm_forensics_result}}. Reverse image: {{reverse_image_result}}. Overlay path: {{overlay_result.overlay_path}}. Asset data: {{asset_data}}.",
       "mode": "sequential",
       "timeout_secs": 60,

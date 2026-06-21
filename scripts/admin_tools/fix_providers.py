@@ -6,7 +6,7 @@ KEEP_QWEN = ['disinfo-orchestrator', 'cross-lingual-aligner', 'arbiter']
 LOGIC_AGENTS = ['coherence-checker', 'inquisitor', 'ml-classifier']
 VISION_AGENTS = ['visual-analyst', 'clip-hand']
 
-for agent_file in glob.glob('/home/ubuntu/openfang/agents/*/agent.toml'):
+for agent_file in glob.glob('/home/ubuntu/librefang/agents/*/agent.toml'):
     agent_dir = os.path.dirname(agent_file)
     agent_name = os.path.basename(agent_dir)
     

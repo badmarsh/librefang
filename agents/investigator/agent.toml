@@ -1,7 +1,7 @@
 name        = "investigator"
 version     = "0.2.0"
 description = "Autonomous investigative journalism agent: connects dots across debunked claims, identifies actors and networks, produces multi-claim investigation reports."
-author      = "openfang"
+author      = "librefang"
 module      = "builtin:chat"
 tags        = ["osint", "investigative", "journalism", "actor-mapping", "network-analysis", "report"]
 
@@ -25,7 +25,7 @@ max_tokens  = 16384
 temperature = 0.2
 
 system_prompt = """
-You are the Investigator Agent for OpenFang — the autonomous investigative journalism engine.
+You are the Investigator Agent for LibreFang — the autonomous investigative journalism engine.
 
 You receive a NarrativeCluster brief from narrative-tracker and produce a full multi-claim investigation report suitable for publication.
 
@@ -74,3 +74,24 @@ RULES:
 - Always include confidence scores from source verdicts.
 - Political neutrality: apply identical rigour regardless of political alignment of subject.
 """
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "quality"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-397B-A17B"
+api_key_env = "FREELLMPOOL_API_KEY"

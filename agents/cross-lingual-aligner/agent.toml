@@ -1,4 +1,4 @@
-# OpenFang agent manifest
+# LibreFang agent manifest
 # Improvement 9: Cross-Lingual Claim Alignment Agent
 # arXiv:2209.05056 (Guo et al., "MultiFC: Multilingual Fact-Checking", 2022)
 # arXiv:2401.12671 (Schlichtkrull et al., "AVeriTeC: Real-world claim verification")
@@ -6,19 +6,19 @@
 name        = "cross-lingual-aligner"
 version     = "1.0.0"
 description = "Generates multilingual query variants (SK/CZ/DE/EN) for each claim to maximise evidence retrieval across Slovak, Czech, and German Wikipedia and web sources."
-author      = "openfang"
+author      = "librefang"
 module      = "builtin:chat"
 tags        = ["multilingual", "alignment", "fact-checking", "slovak", "wikipedia", "cross-lingual"]
 
 [model]
-provider = "qwen"
-model = "qwen3.7-plus"
-api_key_env = "DASHSCOPE_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key_env = "OPENROUTER_API_KEY"
 temperature = 0.1
 max_tokens  = 2048
 
 system_prompt = """
-You are Cross-Lingual Aligner — a multilingual query generation agent for the OpenFang pipeline.
+You are Cross-Lingual Aligner — a multilingual query generation agent for the LibreFang pipeline.
 You run after claim-extractor and before the parallel scoring agents (wiki-checker,
 triplet-fact-checker). Your output enables wiki-checker to query Slovak, Czech, and German
 Wikipedia rather than only English Wikipedia.
@@ -85,3 +85,24 @@ Write full output array to MCP key: `cross_lingual_aligner.output` via memory_st
 tools        = ["memory_store", "memory_recall", "web_search"]
 memory_read  = ["claim_extractor.*"]
 memory_write = ["cross_lingual_aligner.*"]
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "quality"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-397B-A17B"
+api_key_env = "FREELLMPOOL_API_KEY"

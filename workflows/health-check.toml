@@ -1,11 +1,11 @@
-# OpenFang Pipeline Health Check
+# LibreFang Pipeline Health Check
 # Runs daily at 06:00 to validate end-to-end pipeline integrity
 # Uses a known-false test claim and asserts expected arbiter output
 
 name        = "health-check"
 version     = "0.1.0"
 description = "Daily end-to-end pipeline validator. Injects a known-false test claim, asserts arbiter returns FALSE with confidence >= 0.75. Alerts operator on failure."
-author      = "openfang"
+author      = "librefang"
 tags        = ["system", "health", "testing", "monitoring", "reliability"]
 
 [schedule]

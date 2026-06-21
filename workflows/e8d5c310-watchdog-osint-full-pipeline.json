@@ -9,7 +9,7 @@
     {
       "name": "ingest-and-triage",
       "agent": { "name": "watchdog" },
-      "model": "qwen3.5-flash",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Ingest latest content from all configured OSINT sources: {{input.sources}}. Sources include: RSS feeds from hlavnespravy.sk, infovojna.sk, parlamentnelisty.sk, dennikn.sk, sme.sk, aktuality.sk; YouTube RSS; Telegram webhooks; Twitter webhooks. Normalize, deduplicate, and extract claim objects. Return array of raw claim objects.",
       "mode": "fan_out",
       "timeout_secs": 120,
@@ -19,7 +19,7 @@
     {
       "name": "translate-foreign-content",
       "agent": { "name": "translator" },
-      "model": "qwen-plus-2025-07-28",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Translate all non-English claims in {{raw_claims}} to English. Preserve original text alongside translation. Source languages: Slovak (sk), Czech (cs), Hungarian (hu), Russian (ru). Return claims with added fields: translated_text, source_lang.",
       "mode": "sequential",
       "timeout_secs": 120,
@@ -29,7 +29,7 @@
     {
       "name": "classify-and-route",
       "agent": { "name": "watchdog" },
-      "model": "qwen3.6-35b-a3b",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Classify each claim in {{translated_claims}}. For each: (1) assign escalation_score 0.0-1.0, (2) assign modality text|image|video|audio, (3) assign priority low|medium|high|critical, (4) assign route_to: inquisitor (score>=0.72 and text), visual-analyst (image/video), archive (historical). Return classified_claims array.",
       "mode": "sequential",
       "timeout_secs": 180,
@@ -40,7 +40,7 @@
     {
       "name": "visual-triage",
       "agent": { "name": "visual-analyst" },
-      "model": "qwen3-vl-235b-a22b-instruct",
+      "model": "nvidia/nemotron-nano-12b-v2-vl:free",
       "prompt_template": "Analyze visual claims from {{classified_claims}} where modality is image or video. For each: extract text (OCR), assess authenticity, detect manipulation or out-of-context usage. Return visual_evidence array with visual_verdict and confidence.",
       "mode": "fan_out",
       "timeout_secs": 300,
@@ -51,7 +51,7 @@
     {
       "name": "fact-check",
       "agent": { "name": "inquisitor" },
-      "model": "qwen3.7-plus",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Fact-check all escalated claims from {{classified_claims}} where escalation_score >= 0.72 and modality == text. Visual evidence available: {{visual_evidence}}. Apply CRAAP methodology. Return verdict array.",
       "mode": "fan_out",
       "timeout_secs": 300,
@@ -63,7 +63,7 @@
     {
       "name": "enrich-graph",
       "agent": { "name": "archivist" },
-      "model": "qwen3-coder-30b-a3b-instruct",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Update the knowledge graph with all new verdicts: {{verdicts}}. Upsert Actor, Claim, Source, NarrativeCluster nodes. Update source credibility scores. Detect new narrative clusters (spread_score > 0.80 triggers watchdog alert). Output graph_mutations JSON.",
       "mode": "sequential",
       "timeout_secs": 120,
@@ -73,7 +73,7 @@
     {
       "name": "prepare-debunks",
       "agent": { "name": "impact-comms" },
-      "model": "qwen-plus-2025-07-28",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "For all FALSE or MISLEADING verdicts in {{verdicts}} with confidence >= 0.80: draft bilingual (SK+EN) debunk posts using humanizer skill. Attach visual overlays from {{visual_evidence}} where available. Return debunk_drafts array.",
       "mode": "sequential",
       "timeout_secs": 120,

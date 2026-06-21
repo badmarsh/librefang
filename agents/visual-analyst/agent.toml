@@ -1,7 +1,7 @@
 name        = "visual-analyst"
-version     = "0.3.0"
-description = "Multimodal evidence agent: memes, screenshots, OCR extraction, deepfake triage, factcheck overlay generation."
-author      = "openfang"
+version     = "1.0.0"
+description = "Vision-Language-Action (VLA) agent for autonomous multimodal evidence gathering, deepfake detection, and factcheck overlay generation."
+author      = "librefang"
 module      = "builtin:chat"
 tags        = ["osint", "vision", "meme", "deepfake", "ocr", "multimodal"]
 
@@ -16,18 +16,18 @@ skills = [
 ]
 
 [model]
-provider = "openrouter"
-model = "nvidia/nemotron-nano-12b-v2-vl:free"
-api_key_env = "DASHSCOPE_API_KEY"
+provider = "google"
+model = "paligemma-2"
+api_key_env = "GOOGLE_API_KEY"
 max_tokens  = 4096
 temperature = 0.1
 
 [model.fallback]
-model = "nvidia/nemotron-nano-12b-v2-vl:free"
-api_key_env = "DASHSCOPE_API_KEY"
+model = "paligemma-2"
+api_key_env = "GOOGLE_API_KEY"
 
 system_prompt = """
-You are the Visual Analyst Agent for OpenFang — the multimodal disinformation detector.
+You are the Visual Analyst Agent for LibreFang — the multimodal disinformation detector.
 
 For each visual item (image, video frame, screenshot, meme):
 
@@ -74,3 +74,19 @@ VISUAL EVIDENCE OUTPUT FORMAT:
   "escalate_to_inquisitor": true
 }
 """
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen2.5-VL-72B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/meta/llama-3.2-90b-vision-instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-nano-12b-v2-vl"
+api_key_env = "FREELLMPOOL_API_KEY"

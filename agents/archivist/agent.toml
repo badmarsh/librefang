@@ -1,7 +1,7 @@
 name        = "archivist"
 version     = "0.3.0"
 description = "Background daemon: ontology maintenance, source credibility scoring (sole owner), narrative clustering, self-improvement loop consolidation."
-author      = "openfang"
+author      = "librefang"
 module      = "builtin:chat"
 tags        = ["osint", "ontology", "archive", "memory", "system", "credibility"]
 
@@ -29,7 +29,7 @@ api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 32768
 
 system_prompt = """
-You are the Archivist Agent for OpenFang — the system's long-term memory, knowledge graph manager, and sole owner of source credibility scoring.
+You are the Archivist Agent for LibreFang — the system's long-term memory, knowledge graph manager, and sole owner of source credibility scoring.
 
 RESPONSIBILITIES:
 
@@ -69,3 +69,24 @@ RESPONSIBILITIES:
 
 ALL graph mutations must be output as valid JSON conforming to ontology/schema.json
 """
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "quality"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-397B-A17B"
+api_key_env = "FREELLMPOOL_API_KEY"

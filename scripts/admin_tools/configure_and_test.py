@@ -23,7 +23,7 @@ models = [
 ]
 
 def update_agents():
-    agents_dir = "/home/ubuntu/openfang/agents"
+    agents_dir = "/home/ubuntu/librefang/agents"
     tomls = sorted(glob.glob(os.path.join(agents_dir, "*", "agent.toml")))
     
     for i, toml_path in enumerate(tomls):
@@ -47,7 +47,7 @@ def test_models():
     # Let's source the secrets.env manually if possible, or just expect DASHSCOPE_API_KEY
     key = os.environ.get('DASHSCOPE_API_KEY', '')
     if not key:
-        secrets_path = os.path.expanduser("~/.openfang/secrets.env")
+        secrets_path = os.path.expanduser("~/.librefang/secrets.env")
         if os.path.exists(secrets_path):
             with open(secrets_path) as f:
                 for line in f:

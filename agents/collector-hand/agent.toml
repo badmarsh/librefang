@@ -3,7 +3,6 @@ version = "0.1.0"
 description = "AI intelligence collector — monitors any target continuously with OSINT techniques, knowledge graphs, and change detection"
 author = ""
 module = "builtin:chat"
-fallback_models = []
 priority = "Normal"
 profile = "custom"
 skills = []
@@ -12,7 +11,7 @@ tags = [
     "hand:collector",
     "hand_instance:317de372-440d-4b35-b380-785002addde4",
 ]
-workspace = "/home/ubuntu/.openfang/workspaces/collector-hand"
+workspace = "/home/ubuntu/.librefang/workspaces/collector-hand"
 generate_identity_files = true
 tool_allowlist = []
 tool_blocklist = []
@@ -559,3 +558,24 @@ allowed_commands = []
 timeout_secs = 300
 max_output_bytes = 102400
 no_output_timeout_secs = 120
+
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "quality"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+[[fallback_models]]
+provider = "freellmpool"
+model = "ovh/Qwen3.5-397B-A17B"
+api_key_env = "FREELLMPOOL_API_KEY"
