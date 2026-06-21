@@ -21,6 +21,18 @@ output      = "dispatch_queue"
 timeout_s   = 60
 
 # ─────────────────────────────────────────────
+# STAGE 1.5: SANITIZATION
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "sanitize"
+agent       = "injection-shield"
+description = "Blocks adversarial inputs, prompt injections, and poisoned data in the extracted claims before orchestration."
+depends_on  = ["ingest"]
+input       = "dispatch_queue"
+output      = "sanitized_queue"
+timeout_s   = 15
+
+# ─────────────────────────────────────────────
 # STAGE 2: ORCHESTRATION GATE
 # Deduplication, cost guard, circuit breaker.
 # Orchestrator may hold, batch, or pass-through claims.
@@ -29,8 +41,8 @@ timeout_s   = 60
 id          = "orchestrate"
 agent       = "orchestrator"
 description = "Deduplication gate: skip already-verified claims. Cost guard: hold if hourly cost > $5. Circuit breaker: batch if >20 claims/5min. Outputs approved dispatch_queue."
-depends_on  = ["ingest"]
-input       = "dispatch_queue"
+depends_on  = ["sanitize"]
+input       = "sanitized_queue"
 output      = "approved_queue"
 timeout_s   = 15
 
@@ -129,6 +141,20 @@ depends_on  = ["consensus"]
 condition   = "arbiter_decision.decision in ['auto-publish', 'false-debunk', 'monitor']"
 input       = ["arbiter_decision", "verdict_inquisitor"]
 output      = "published_debunk"
+timeout_s   = 60
+
+# ─────────────────────────────────────────────
+# STAGE 6: ARCHIVAL
+# Immutable logging for reproducibility
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "archive_record"
+agent       = "archivist"
+description = "Immutable logging of final reports, investigation findings, and debunks for reproducibility."
+depends_on  = ["communicate", "investigate"]
+wait        = "any_completed"
+input       = ["investigation_report", "published_debunk"]
+output      = "archived_record"
 timeout_s   = 60
 
 # ─────────────────────────────────────────────

@@ -5,8 +5,10 @@
   "steps": [
     {
       "name": "deconstruct-claim",
-      "agent": { "name": "orchestrator" },
-      "model": "qwen3-235b-a22b",
+      "agent": {
+        "name": "orchestrator"
+      },
+      "model": "qwen3.7-plus",
       "prompt_template": "Decompose the high-priority claim: {{input}} into 5-10 specific sub-questions that can be empirically verified. For each sub-question, specify the ideal source type (academic, official record, primary witness, statistical dataset).",
       "mode": "sequential",
       "timeout_secs": 300,
@@ -15,8 +17,10 @@
     },
     {
       "name": "deep-evidence-gathering",
-      "agent": { "name": "researcher-hand" },
-      "model": "qwen3.5-397b-a17b",
+      "agent": {
+        "name": "researcher-hand"
+      },
+      "model": "qwen3.7-plus",
       "prompt_template": "Perform an exhaustive search for each sub-question in {{sub_questions}}. Cross-reference at least 15 independent authoritative sources. Prioritize primary sources, academic research, and verified official records. Include Slovak/Czech language sources where relevant.",
       "mode": "fan_out",
       "timeout_secs": 600,
@@ -25,7 +29,9 @@
     },
     {
       "name": "source-integrity-check",
-      "agent": { "name": "security-auditor" },
+      "agent": {
+        "name": "security-auditor"
+      },
       "model": "qwen3.6-35b-a3b",
       "prompt_template": "Audit the provenance and integrity of all sources in {{gathered_evidence}}. Flag sources that are: known disinformation outlets, expired/dead links, WHOIS-anonymous domains registered after the event, screenshot-only evidence with no primary URL, or circular citations (source A cites source B which cites source A). Output a per-source integrity verdict.",
       "mode": "sequential",
@@ -35,8 +41,10 @@
     },
     {
       "name": "cross-check-diversity",
-      "agent": { "name": "analyst" },
-      "model": "nim-giant",
+      "agent": {
+        "name": "analyst"
+      },
+      "model": "qwen3.7-plus",
       "prompt_template": "Independently evaluate the integrity-audited evidence: {{integrity_audited_evidence}}. Flag any claims where the evidence is weak, contradictory, or where a single source is over-relied upon. Provide a dissenting analysis where applicable.",
       "mode": "sequential",
       "timeout_secs": 300,
@@ -45,7 +53,9 @@
     },
     {
       "name": "craap-verification",
-      "agent": { "name": "analyst" },
+      "agent": {
+        "name": "analyst"
+      },
       "model": "qwen3.6-35b-a3b",
       "prompt_template": "Evaluate the cross-checked evidence: {{cross_checked_evidence}} using the CRAAP methodology (Currency, Relevance, Authority, Accuracy, Purpose). Produce a CRAAP score per source and identify contradictions or false premises in the original claim.",
       "mode": "sequential",
@@ -55,7 +65,9 @@
     },
     {
       "name": "qa-review",
-      "agent": { "name": "reviewer-qa" },
+      "agent": {
+        "name": "analyst"
+      },
       "model": "qwen3.6-35b-a3b",
       "prompt_template": "Review the verified facts {{verified_facts}} for logical consistency, completeness of rebuttal, and accuracy of CRAAP scores. Verify all cited claims trace back to integrity-checked sources from {{integrity_audited_evidence}}. Flag any logical gaps that would weaken the debunking report.",
       "mode": "sequential",
@@ -65,8 +77,10 @@
     },
     {
       "name": "generate-debunking-report",
-      "agent": { "name": "writer" },
-      "model": "qwen-plus-latest",
+      "agent": {
+        "name": "writer"
+      },
+      "model": "qwen-plus-2025-07-28",
       "prompt_template": "Synthesize the QA-verified facts: {{qa_verified_facts}} into a comprehensive debunking report. Include a 'Lies Detected' section, a point-by-point rebuttal, and a full bibliography of cited sources in APA format. Output in both Slovak and English.",
       "mode": "sequential",
       "timeout_secs": 300,

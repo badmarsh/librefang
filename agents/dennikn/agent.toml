@@ -30,8 +30,8 @@ generate_identity_files = true
 check_interval_secs = 3600
 
 [model]
-provider = "qwen"
-model = "qwen3-235b-a22b"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 max_tokens = 8192
 temperature = 0.2
 api_key_env = "DASHSCOPE_API_KEY"

@@ -14,15 +14,15 @@ skills = [
   "filesystem",
   "word-docx",
   "self-improving-agent",
+  "cloudcraft",
 ]
 
 [model]
-provider    = "qwen"
-model       = "qwen3.5-397b-a17b"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 16384
 temperature = 0.2
-extra_body  = { enable_thinking = true }
 
 system_prompt = """
 You are the Investigator Agent for OpenFang — the autonomous investigative journalism engine.

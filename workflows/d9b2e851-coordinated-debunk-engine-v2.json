@@ -20,7 +20,7 @@
     {
       "name": "deep-research",
       "agent": { "name": "inquisitor" },
-      "model": "qwen3.5-397b-a17b",
+      "model": "qwen3.7-plus",
       "prompt_template": "Perform deep multi-source verification of claim: {{input.claim_text}}. Prior context from ontology: {{ontology_context}}. Use eric-deep-research-agent, multi-search-engine, and browser-use. Minimum 20 sources. Apply CRAAP test to each. thinking_budget=12000.",
       "mode": "fan_out",
       "timeout_secs": 600,
@@ -32,7 +32,7 @@
     {
       "name": "archive-audit",
       "agent": { "name": "inquisitor" },
-      "model": "qwen2.5-14b-instruct-1m",
+      "model": "qwen3.7-plus",
       "prompt_template": "Audit historical statements by actor {{input.actor}} over the past 5 years (1825 days). Use the long-context archive model to process bulk media archive data. Identify contradictions between past statements and the current claim: {{input.claim_text}}. Ontology context: {{ontology_context}}.",
       "mode": "sequential",
       "timeout_secs": 600,
@@ -43,7 +43,7 @@
     {
       "name": "adversarial-check",
       "agent": { "name": "inquisitor" },
-      "model": "qwen3-235b-a22b",
+      "model": "qwen3.7-plus",
       "prompt_template": "ADVERSARIAL VERIFICATION: Assume the following claim is TRUE: {{input.claim_text}}. Find the strongest possible supporting evidence. If you cannot find credible support, state that clearly. This is a deliberate adversarial challenge to improve confidence calibration. Deep research result: {{deep_research_result}}.",
       "mode": "sequential",
       "timeout_secs": 300,
@@ -55,7 +55,7 @@
     {
       "name": "synthesize-verdict",
       "agent": { "name": "inquisitor" },
-      "model": "qwen3-235b-a22b",
+      "model": "qwen3.7-plus",
       "prompt_template": "Synthesize final verdict from all available evidence. Deep research: {{deep_research_result}}. Archive audit: {{archive_audit_result}}. Adversarial check: {{adversarial_result}}. Ontology context: {{ontology_context}}. Output complete verdict JSON per schema.",
       "mode": "sequential",
       "timeout_secs": 300,
@@ -76,7 +76,7 @@
     {
       "name": "accountability-action",
       "agent": { "name": "impact-comms" },
-      "model": "qwen-plus-latest",
+      "model": "qwen-plus-2025-07-28",
       "prompt_template": "Execute appropriate accountability tier for verdict: {{final_verdict}}. Tier 1 (>=0.80): public debunk. Tier 2 (>=0.85): advertiser notice. Tier 3 (>=0.90): regulator alert + phone outreach. Graph context: {{graph_mutations}}.",
       "mode": "sequential",
       "timeout_secs": 180,

@@ -41,7 +41,7 @@
     {
       "name": "caption-cross-check",
       "agent": { "name": "inquisitor" },
-      "model": "qwen3.5-397b-a17b",
+      "model": "qwen3.7-plus",
       "prompt_template": "Cross-check visual findings against textual claim. VLM forensics result: {{vlm_forensics_result}}. Reverse image search: {{reverse_image_result}}. Original claim: {{input.claim_text}}. Does the visual evidence support, refute, or complicate the textual claim? Output updated verdict JSON incorporating visual evidence.",
       "mode": "sequential",
       "timeout_secs": 300,

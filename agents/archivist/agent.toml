@@ -16,15 +16,15 @@ skills = [
 ]
 
 [model]
-provider    = "qwen"
-model       = "qwen3-235b-a22b"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 8192
 temperature = 0.0
 extra_body  = { enable_thinking = true }
 
 [model.archive]
-model       = "qwen2.5-14b-instruct-1m"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 32768
 

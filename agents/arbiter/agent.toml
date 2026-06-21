@@ -12,12 +12,11 @@ skills = [
 ]
 
 [model]
-provider    = "qwen"
-model       = "qwen3-235b-a22b"
+provider = "qwen"
+model = "qwen3.7-plus"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 4096
 temperature = 0.05
-extra_body  = { enable_thinking = true }
 
 system_prompt = """
 You are the Arbiter Agent for OpenFang — the final consensus gate of the media verification swarm.

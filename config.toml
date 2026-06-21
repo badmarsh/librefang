@@ -8,10 +8,14 @@ security_headers = true
 [provider_urls]
 qwen      = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 qwen-code = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+openrouter = "https://openrouter.ai/api/v1"
+
+[provider.openrouter]
+api_key_env = "OPENROUTER_API_KEY"
 
 [default_model]
 api_key_env = "DASHSCOPE_API_KEY"
-model       = "qwen-plus-2025-07-28"
+model = "qwen3.7-plus"
 provider    = "qwen"
 
 [memory]
@@ -66,7 +70,7 @@ baseline_weights            = {ml = 0.26, wiki = 0.22, trip = 0.24, coh = 0.16, 
 semantic_dedup_enabled      = true
 semantic_dedup_window_hours = 72
 semantic_dedup_threshold    = 0.88
-embedding_model             = "text-embedding-v3"
+embedding_model = "qwen3.7-plus"
 # Slovak NER flags (Improvement 7)
 slovak_ner_mode                   = true
 entity_translation_flag_threshold = 3     # Levenshtein distance threshold
@@ -94,3 +98,28 @@ tier1_epistemic_max           = 0.25
 tier2_confidence_min          = 0.70
 tier3_auto_publish_on_timeout = false
 review_queue_path             = "/tmp/openfang/review_queue.json"
+
+# ── Improvement A1: Injection Flood Circuit-Breaker ───────────────────────────
+# If injection-shield quarantines too many items in a rolling window, pause the
+# pipeline and alert the operator. Prevents adversarial API-quota exhaustion via
+# a crafted article flood.
+[circuit_breaker]
+enabled                         = true
+quarantine_window_minutes       = 10
+quarantine_threshold_per_window = 20      # pause if >20 items quarantined in 10 min
+pause_duration_minutes          = 30      # auto-resume after 30 min unless manually cleared
+alert_on_trip                   = true
+alert_channel                   = "proactive-agent"   # agent to notify on trip
+log_path                        = "/tmp/openfang/circuit_breaker.log"
+
+# ── Improvement A2: Bayesian Weight Adaptation Feedback Loop ──────────────────
+# Defines how human review decisions are fed back into ensemble.agent_stats
+# so Improvement 1 (Bayesian weight adaptation) can actually converge.
+# Without this, the feedback loop is open and weights never truly adapt.
+[feedback]
+enabled                    = true
+review_queue_path          = "/tmp/openfang/review_queue.json"
+feedback_ingest_agent      = "disinfo-orchestrator"  # agent that receives confirmed verdicts
+confirmed_verdict_key      = "feedback.confirmed_verdicts"  # MCP key for confirmed ground-truth
+min_confirmed_for_update   = 10    # minimum confirmed verdicts before first Bayesian update
+feedback_log_path          = "/tmp/openfang/feedback.log"

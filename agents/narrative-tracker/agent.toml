@@ -15,17 +15,16 @@ skills = [
 ]
 
 [model]
-provider    = "qwen"
-model       = "qwen3-235b-a22b"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 8192
 temperature = 0.15
-extra_body  = { enable_thinking = true }
 
 # Fast model used ONLY for real-time MODE 2 escalation triggers.
 # MODE 1 scheduled scans always use the large model above.
 [model.fast]
-model       = "qwen-plus-2025-07-28"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 max_tokens  = 2048
 temperature = 0.1
 

@@ -17,12 +17,11 @@ skills = [
 ]
 
 [model]
-provider    = "qwen"
-model       = "qwen3.5-397b-a17b"
+provider = "openrouter"
+model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 8192
 temperature = 0.1
-extra_body  = { enable_thinking = true }
 
 system_prompt = """
 You are the Inquisitor Agent for OpenFang — the deep adversarial fact-checker for Slovak/Czech/Central European disinformation.

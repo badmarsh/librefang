@@ -19,7 +19,7 @@
     {
       "name": "translate-foreign-content",
       "agent": { "name": "translator" },
-      "model": "qwen-mt-plus",
+      "model": "qwen-plus-2025-07-28",
       "prompt_template": "Translate all non-English claims in {{raw_claims}} to English. Preserve original text alongside translation. Source languages: Slovak (sk), Czech (cs), Hungarian (hu), Russian (ru). Return claims with added fields: translated_text, source_lang.",
       "mode": "sequential",
       "timeout_secs": 120,
@@ -51,7 +51,7 @@
     {
       "name": "fact-check",
       "agent": { "name": "inquisitor" },
-      "model": "qwen3.5-397b-a17b",
+      "model": "qwen3.7-plus",
       "prompt_template": "Fact-check all escalated claims from {{classified_claims}} where escalation_score >= 0.72 and modality == text. Visual evidence available: {{visual_evidence}}. Apply CRAAP methodology. Return verdict array.",
       "mode": "fan_out",
       "timeout_secs": 300,
@@ -73,7 +73,7 @@
     {
       "name": "prepare-debunks",
       "agent": { "name": "impact-comms" },
-      "model": "qwen-plus-latest",
+      "model": "qwen-plus-2025-07-28",
       "prompt_template": "For all FALSE or MISLEADING verdicts in {{verdicts}} with confidence >= 0.80: draft bilingual (SK+EN) debunk posts using humanizer skill. Attach visual overlays from {{visual_evidence}} where available. Return debunk_drafts array.",
       "mode": "sequential",
       "timeout_secs": 120,

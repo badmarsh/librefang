@@ -20,8 +20,8 @@ skills = [
 ]
 
 [model]
-provider    = "qwen"
-model       = "qwen3.5-flash"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 4096
 temperature = 0.2

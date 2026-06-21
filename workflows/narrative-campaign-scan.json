@@ -11,7 +11,7 @@
     {
       "name": "claim-cluster-scan",
       "agent": { "name": "narrative-tracker" },
-      "model": "qwen3-235b-a22b",
+      "model": "qwen3.7-plus",
       "prompt_template": "MODE 1: SCHEDULED CLUSTER SCAN. Query ontology for all claims ingested in the past 72 hours. Group by actor, hashtag_cluster, geopolitical_event, narrative_fingerprint. For each cluster of 3+ related claims: compute NarrativeCluster score and CIB indicators. Return array of NarrativeCluster JSON objects sorted by cib_score descending.",
       "mode": "sequential",
       "timeout_secs": 600,

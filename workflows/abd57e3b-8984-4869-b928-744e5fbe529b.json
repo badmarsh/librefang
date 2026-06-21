@@ -16,7 +16,7 @@
     {
       "name": "translate-content",
       "agent": { "name": "translator" },
-      "model": "qwen-mt-plus",
+      "model": "qwen-plus-2025-07-28",
       "prompt_template": "Translate all non-English content in {{raw_data}} to English. Preserve original text alongside the translation. Source languages include Slovak (SK), Czech (CZ), and Hungarian (HU).",
       "mode": "sequential",
       "timeout_secs": 120,
@@ -46,7 +46,7 @@
     {
       "name": "enrich-with-context",
       "agent": { "name": "researcher-hand" },
-      "model": "qwen3.5-397b-a17b",
+      "model": "qwen3.7-plus",
       "prompt_template": "For each flagged statement in {{flagged_statements}}, search Wikidata and authoritative news archives to add context and verified entity information. Cross-reference with dennikn.sk fact-check archive.",
       "mode": "fan_out",
       "timeout_secs": 300,
@@ -56,7 +56,7 @@
     {
       "name": "prepare-responses",
       "agent": { "name": "social-media" },
-      "model": "qwen-plus-latest",
+      "model": "qwen-plus-2025-07-28",
       "prompt_template": "Based on the enriched context: {{enriched_graph}}, draft polite but factual corrections in both Slovak and English. Prepare as alerts for Slack and drafts for social media platforms.",
       "mode": "sequential",
       "timeout_secs": 120,

@@ -61,7 +61,8 @@ timeout_s   = 150
 # ─────────────────────────────────────────────
 [[stages]]
 id          = "hc-consensus"
-agent       = "arbiter"
+agent       = "disinfo-orchestrator"
+descends_on = ["hc-verify-fast", "hc-verify-deep"]
 depends_on  = ["hc-verify-fast", "hc-verify-deep"]
 wait        = "all_required_parallel_complete"
 timeout_s   = 30
@@ -78,8 +79,10 @@ action      = "assert_verdict"
 depends_on  = ["hc-consensus"]
 input       = ["hc_arbiter_decision", "test_fixture"]
 assertions  = [
-  "hc_arbiter_decision.arbiter_verdict == test_fixture.expected_verdict",
-  "hc_arbiter_decision.consensus_score >= test_fixture.expected_confidence_min",
+  "hc_arbiter_decision.verdict == test_fixture.expected_verdict",
+  "hc_arbiter_decision.confidence >= test_fixture.expected_confidence_min",
+  # expected_verdict for fixture: 'FALSE' maps to P_fake >= 0.70 ('DISINFORMATION') in disinfo-orchestrator schema
+  # Assertion checks pipeline verdict label rather than raw P_fake for readability
 ]
 on_pass     = "write_result(status='pass')"
 on_fail     = "write_result(status='fail') + trigger_alert"
@@ -101,14 +104,15 @@ timeout_s   = 15
 [output]
 path        = "output/health-check/latest.json"
 schema      = {
-  run_at              = "ISO8601",
-  status              = "pass|fail",
-  arbiter_verdict     = "string",
-  consensus_score     = 0.0,
-  expected_verdict    = "string",
+  run_at                  = "ISO8601",
+  status                  = "pass|fail",
+  verdict                 = "DISINFORMATION|SUSPICIOUS|UNCERTAIN|CREDIBLE",
+  weighted_fake_score     = 0.0,
+  confidence              = 0.0,
+  expected_verdict        = "string",
   expected_confidence_min = 0.0,
-  assertion_results   = [],
-  stage_timings_ms    = {},
-  failure_reason      = "string or null"
+  assertion_results       = [],
+  stage_timings_ms        = {},
+  failure_reason          = "string or null"
 }
 retain_history = 30   # keep last 30 days of health-check results

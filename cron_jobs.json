@@ -13,7 +13,7 @@
       "action": {
         "kind": "agent_turn",
         "message": "Hourly collection cycle for Denník N intelligence",
-        "model_override": null,
+        "model_override": "gemini-1.5-flash",
         "timeout_secs": null
       },
       "delivery": {

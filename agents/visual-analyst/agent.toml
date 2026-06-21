@@ -16,14 +16,14 @@ skills = [
 ]
 
 [model]
-provider    = "qwen"
-model       = "qwen3-vl-235b-a22b-instruct"
+provider = "openrouter"
+model = "nvidia/nemotron-nano-12b-v2-vl:free"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 4096
 temperature = 0.1
 
 [model.fallback]
-model       = "qwen-vl-max-latest"
+model = "nvidia/nemotron-nano-12b-v2-vl:free"
 api_key_env = "DASHSCOPE_API_KEY"
 
 system_prompt = """

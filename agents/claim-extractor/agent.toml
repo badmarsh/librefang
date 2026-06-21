@@ -11,10 +11,9 @@ module      = "builtin:chat"
 tags        = ["disinfo", "nlp", "claim-extraction", "ner", "pipeline", "deduplication", "slovak-ner", "semantic-dedup"]
 
 [model]
-provider    = "qwen"
-model       = "qwen-plus-2025-07-28"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 api_key_env = "DASHSCOPE_API_KEY"
-base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 max_tokens  = 4096
 temperature = 0.1
 
@@ -46,7 +45,7 @@ Either:
 1. Query recent claims from knowledge graph:
    kg_query("SELECT claim_text, claim_uuid FROM claims WHERE created_at > now()-72h")
 2. Compute cosine similarity between the new claim embedding and stored embeddings
-   using the `embedding` tool with model = "text-embedding-v3".
+   using the `embedding` tool with model = "nvidia/nemotron-3-super-120b-a12b:free".
 3. If similarity >= 0.88 to any existing claim:
    - Set duplicate_of = existing_uuid
    - Merge source_urls (append new source to existing claim's sources array)

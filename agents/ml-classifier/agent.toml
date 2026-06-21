@@ -11,10 +11,9 @@ tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
 # Pinned to the same model as config.toml [default_model] for deterministic,
 # consistent behaviour across all pipeline agents. Temperature 0.0 enforces
 # fully deterministic output — do NOT raise this for the classifier.
-provider    = "qwen"
-model       = "qwen-plus-2025-07-28"
+provider = "openrouter"
+model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
 api_key_env = "DASHSCOPE_API_KEY"
-base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 max_tokens  = 2048
 temperature = 0.0
 

@@ -22,8 +22,8 @@ cache_context = false
 check_interval_secs = 3600
 
 [model]
-provider = "qwen"
-model = "qwen-plus-2025-07-28"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 max_tokens = 16384
 temperature = 0.3
 system_prompt = """
@@ -486,7 +486,6 @@ Before including data in the knowledge graph, evaluate:
 If a claim fails 3+ checks, downgrade its confidence to "low".
 """
 api_key_env = "DASHSCOPE_API_KEY"
-base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 [resources]
 max_memory_bytes = 268435456

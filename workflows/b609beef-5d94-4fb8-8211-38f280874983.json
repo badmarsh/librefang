@@ -6,9 +6,11 @@
     {
       "id": "search-archives",
       "name": "archive-search",
-      "agent": { "name": "researcher" },
-      "model": "qwen2.5-14b-instruct-1m",
-      "prompt_template": "Search Slovak and international mainstream media archives (SME, Pravda, Denník N, NYT, BBC) for predictions and core narratives regarding {{input}} from the specific historical period requested. Retrieve full article texts where available.",
+      "agent": {
+        "name": "researcher-hand"
+      },
+      "model": "qwen3.7-plus",
+      "prompt_template": "Search Slovak and international mainstream media archives (SME, Pravda, Denn\u00edk N, NYT, BBC) for predictions and core narratives regarding {{input}} from the specific historical period requested. Retrieve full article texts where available.",
       "mode": "fan_out",
       "timeout_secs": 300,
       "error_mode": "skip"
@@ -16,7 +18,9 @@
     {
       "id": "narrative-verification",
       "name": "cross-reference-narratives",
-      "agent": { "name": "analyst" },
+      "agent": {
+        "name": "analyst"
+      },
       "model": "qwen2.5-72b-instruct",
       "prompt_template": "Analyze the retrieved media archives for {{input}}. Compare the published predictions against the verified outcomes provided in the current OSINT context. Identify narrative shifts, omissions, and successful forecasts. Focus on the accountability of specific outlets.",
       "mode": "sequential"

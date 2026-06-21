@@ -1,16 +1,13 @@
-# OpenFang agent manifest
-# Wave 2 improvement:
-#   Improvement 10: HITL Confidence-Gated Publication Tiers (arXiv:2308.08155)
-name        = "writer"
-version     = "2.0.0"
-description = "Disinfo pipeline briefing writer with HITL confidence-gated publication tiers. Auto-publishes high-confidence verdicts; flags uncertain or sensitive verdicts for human review."
-author      = "openfang"
-module      = "builtin:chat"
-tags        = ["writer", "hitl", "confidence-gated", "disinfo", "review-queue"]
+name = "writer"
+version = "0.1.0"
+description = "Content writer. Creates documentation, articles, and technical writing."
+author = "openfang"
+module = "builtin:chat"
 
 [model]
-provider    = "qwen"
-model       = "qwen3.6-flash"
+api_key_env = "DASHSCOPE_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
 max_tokens  = 4096
 temperature = 0.7
 
@@ -85,7 +82,16 @@ OUTPUT:
 - Always write the tier status and verdict_id at the top of each briefing.
 """
 
+[[fallback_models]]
+provider = "openrouter"
+model = "nvidia/nemotron-3-super-120b-a12b:free"
+api_key_env = "GEMINI_API_KEY"
+
+[resources]
+max_llm_tokens_per_hour = 100000
+
 [capabilities]
-tools        = ["memory_store", "memory_recall", "file_write", "web_search"]
-memory_read  = ["orchestrator.*", "cib_detector.*"]
-memory_write = ["writer.*"]
+tools = ["file_read", "file_write", "file_list", "web_search", "web_fetch", "memory_store", "memory_recall"]
+network = ["*"]
+memory_read = ["*"]
+memory_write = ["self.*"]

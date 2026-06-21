@@ -22,8 +22,8 @@ cache_context = false
 check_interval_secs = 3600
 
 [model]
-provider = "qwen"
-model = "qwen3.6-flash"
+provider = "openrouter"
+model = "nvidia/nemotron-nano-12b-v2-vl:free"
 max_tokens = 16384
 temperature = 0.3
 system_prompt = """
@@ -401,7 +401,7 @@ All tools (ffmpeg, ffprobe, yt-dlp, whisper) use **identical CLI flags** on Wind
 | Feature | macOS / Linux | Windows (cmd.exe) |
 |---------|---------------|-------------------|
 | Suppress stderr | `2>/dev/null` | `2>NUL` |
-| Filter output | `\| grep pattern` | `\| findstr pattern` |
+| Filter output | `| grep pattern` | `| findstr pattern` |
 | Delete files | `rm file1 file2` | `del file1 file2` |
 | Null output device | `-f null -` | `-f null -` (same) |
 | ffmpeg subtitle paths | `subtitles=clip.srt` | `subtitles=clip.srt` (relative OK, absolute needs `C\\:/path`) |
@@ -861,7 +861,6 @@ WhatsApp requires the recipient to have messaged you within the last 24 hours (f
 | 131053 | Media upload failed | File too large or unsupported format — re-encode as MP4 under 16MB |
 """
 api_key_env = "DASHSCOPE_API_KEY"
-base_url = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 [resources]
 max_memory_bytes = 268435456

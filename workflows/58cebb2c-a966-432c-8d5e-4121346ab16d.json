@@ -5,7 +5,9 @@
   "steps": [
     {
       "name": "ingest-feeds",
-      "agent": { "name": "collector-hand" },
+      "agent": {
+        "name": "collector-hand"
+      },
       "model": "qwen3.5-flash",
       "prompt_template": "Monitor the following list of high-profile social media accounts and news RSS feeds for new statements: {{input}}. Extract all factual claims made in the last 24 hours with author, reach estimate, and platform.",
       "mode": "fan_out",
@@ -15,8 +17,10 @@
     },
     {
       "name": "translate-claims",
-      "agent": { "name": "translator" },
-      "model": "qwen-mt-plus",
+      "agent": {
+        "name": "translator"
+      },
+      "model": "qwen-plus-2025-07-28",
       "prompt_template": "Translate all non-English claims in {{extracted_claims}} to English. Preserve original language text. Source languages: SK, CZ, HU, RU.",
       "mode": "sequential",
       "timeout_secs": 90,
@@ -25,7 +29,9 @@
     },
     {
       "name": "identify-demagoguery",
-      "agent": { "name": "analyst" },
+      "agent": {
+        "name": "analyst"
+      },
       "model": "qwen3.6-35b-a3b",
       "prompt_template": "Review the following claims: {{translated_claims}}. Identify statements that exhibit demagoguery (appealing to prejudices, using inflammatory language) or contain potentially high-impact malicious lies that could cause public harm or misinformation spread. Include a brief reasoning chain for each flag.",
       "mode": "sequential",
@@ -35,9 +41,13 @@
     },
     {
       "name": "impact-scoring",
-      "agent": { "name": "research-analyst" },
-      "model": "qwen3.5-397b-a17b",
-      "extra_body": { "enable_thinking": true },
+      "agent": {
+        "name": "analyst"
+      },
+      "model": "qwen3.7-plus",
+      "extra_body": {
+        "enable_thinking": true
+      },
       "prompt_template": "For each flagged claim in {{flagged_claims}}, assign an impact score (0-100) based on the reach of the author, platform virality potential, and the potential for social disruption in the Slovak/Central European context. Filter for claims with a score > 75 and output them as a structured JSON list with fields: claim_text, author, source_url, impact_score, flag_reason.",
       "mode": "sequential",
       "timeout_secs": 180,
@@ -46,7 +56,9 @@
     },
     {
       "name": "qa-review",
-      "agent": { "name": "reviewer-qa" },
+      "agent": {
+        "name": "analyst"
+      },
       "model": "qwen3.6-35b-a3b",
       "prompt_template": "Review the scored claims {{scored_claims}} for scoring consistency, evidence quality, and flag accuracy. Verify that high-impact_score claims (>75) genuinely warrant escalation in the Slovak/Central European context. Correct or remove any mis-scored claims.",
       "mode": "sequential",
