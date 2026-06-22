@@ -30,3 +30,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 ## Stance Detection
 - **Fact or Fiction (Wadden et al.)**: Wadden, D., et al. (2020). *Fact or Fiction: Verifying Scientific Claims*. arXiv:2004.14545
 - **FEVER**: Thorne, J., et al. (2018). *FEVER: a Large-scale Dataset for Fact Extraction and VERification*. arXiv:1803.05355
+
+## Adversarial NLI
+- **Adversarial NLI**: Nie, Y., et al. (2019). *Adversarial NLI: A New Benchmark for Natural Language Understanding*. arXiv:1910.14599

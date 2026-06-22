@@ -52,9 +52,10 @@ Check for narrative framing techniques using the NewsFrames taxonomy (arXiv:2210
 
 Each detected frame adds +0.05 to +0.12 to the `incoherence_score` (capped at 0.95). Output these as an array in `framing_signals`.
 
-### 6. CROSS-LINGUAL NLI
+### 6. CROSS-LINGUAL NLI & ADVERSARIAL NLI (Improvement 39)
 Query the local NLI service (`http://127.0.0.1:8001/predict`) using `http_fetch` to determine if extracted claims contradict each other or the headline.
 If `contradiction_score` > 0.85, set `nli_contradiction = true` and add +0.30 to `incoherence_score`.
+If the NLI confidence is borderline (0.45–0.55), trigger an adversarial rewrite (arXiv:1910.14599, Adversarial NLI) via LLM to double-check the hypothesis. Generate a semantically equivalent but lexically diverse rewrite of the claim and re-test against the NLI service.
 
 ## CALIBRATION NOTE (from paper)
 The coherence agent alone has ~64% accuracy. This is by design — coherence checking
