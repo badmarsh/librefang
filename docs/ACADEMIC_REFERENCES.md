@@ -17,3 +17,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Temporal Graph Networks (CIB)
 - **TGN**: Rossi, E., et al. (2020). *Temporal Graph Networks for Deep Learning on Dynamic Graphs*. arXiv:2006.10637
+
+## Check-Worthiness Evaluation
+- **CLEF CheckThat!**: Nakov, P., et al. (2021). *The CLEF-2021 CheckThat! Lab on Detecting Check-Worthy Claims, Previously Fact-Checked Claims, and Fake News*. arXiv:2109.10260
