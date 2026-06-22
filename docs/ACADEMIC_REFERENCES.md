@@ -20,3 +20,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Check-Worthiness Evaluation
 - **CLEF CheckThat!**: Nakov, P., et al. (2021). *The CLEF-2021 CheckThat! Lab on Detecting Check-Worthy Claims, Previously Fact-Checked Claims, and Fake News*. arXiv:2109.10260
+
+## Calibration
+- **Platt Scaling / Temperature Scaling**: Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). *On calibration of modern neural networks*. arXiv:1706.04599

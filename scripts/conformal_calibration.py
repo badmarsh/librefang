@@ -11,6 +11,8 @@ import os
 import random
 import sys
 from pathlib import Path
+from scipy.optimize import minimize
+import numpy as np
 
 # Add tests directory to path so we can import call_pipeline
 sys.path.insert(0, str(Path(__file__).parent.parent / "tests"))
@@ -68,7 +70,51 @@ def main():
         print("Error: No valid scores computed.")
         sys.exit(1)
         
-    nonconformity_scores.sort()
+    # TEMPERATURE SCALING (Improvement 35)
+    print("Fitting Temperature Scaling parameter...")
+    def nll_func(T_param, logits, labels):
+        T = T_param[0]
+        if T <= 0: return 1e9
+        scaled_logits = logits / T
+        probs = 1.0 / (1.0 + np.exp(-scaled_logits))
+        probs = np.clip(probs, 1e-7, 1 - 1e-7)
+        return -np.sum(labels * np.log(probs) + (1 - labels) * np.log(1 - probs))
+
+    all_logits = []
+    all_labels = []
+    
+    for article in cal_set:
+        expected = article.get("expected_verdict")
+        if expected not in ("CREDIBLE", "DISINFORMATION"):
+            continue
+        resp = call_pipeline(article)
+        verdicts = resp.get("verdicts", [])
+        if not verdicts:
+            continue
+        p_fake = verdicts[0].get("weighted_fake_score", 0.5)
+        p_fake = max(1e-5, min(1 - 1e-5, p_fake))
+        logit = math.log(p_fake / (1.0 - p_fake))
+        label = 1 if expected == "DISINFORMATION" else 0
+        all_logits.append(logit)
+        all_labels.append(label)
+        
+    all_logits = np.array(all_logits)
+    all_labels = np.array(all_labels)
+    
+    res = minimize(nll_func, [1.0], args=(all_logits, all_labels), bounds=[(0.01, 10.0)])
+    optimal_T = float(res.x[0])
+    print(f"Optimal Temperature T = {optimal_T:.4f}")
+    
+    # Recalculate nonconformity scores using scaled probabilities
+    calibrated_scores = []
+    for i in range(len(all_logits)):
+        scaled_logit = all_logits[i] / optimal_T
+        calibrated_p = 1.0 / (1.0 + math.exp(-scaled_logit))
+        s_i = 1.0 - calibrated_p if all_labels[i] == 1 else calibrated_p
+        calibrated_scores.append(s_i)
+        
+    calibrated_scores.sort()
+    nonconformity_scores = calibrated_scores
     
     # α = 0.10 for 90% coverage
     alpha = 0.10
@@ -106,7 +152,8 @@ def main():
                 "alpha": alpha,
                 "conformal_coverage_guarantee": 1.0 - alpha,
                 "empirical_coverage": empirical_coverage,
-                "n_samples": n
+                "n_samples": n,
+                "temperature_T": optimal_T
             }, f, indent=2)
         print(f"Saved threshold to {out_path}")
         
