@@ -36,6 +36,7 @@ nginx_uwsgi/
 
 # Data directories
 data/
+!data/source_lists/
 
 # Python artifacts
 __pycache__/

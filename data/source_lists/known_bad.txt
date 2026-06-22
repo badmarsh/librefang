@@ -1,0 +1,16 @@
+# LibreFang Source Lists — v1.0.0 — last updated: 2026-06-22
+# Maintenance: edit this file and bump the version comment.
+# Sources: IRI, EUvsDisinfo, GLOBSEC (see docs/source_list_methodology.md)
+
+hlavnespravy.sk
+infovojna.sk
+parlamentnelisty.sk
+kontrfakt.sk
+zem-vek.sk
+slavyangrad.ru
+aeronet.cz
+ac24.cz
+protiproud.cz
+prvnizpravy.cz
+sputniknews.com
+rt.com

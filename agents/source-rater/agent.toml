@@ -21,6 +21,10 @@ model = "nvidia/nemotron-3-super-120b-a12b:free"
 api_key_env = "DASHSCOPE_API_KEY"
 temperature = 0.0
 max_tokens  = 1024
+[source_lists]
+known_good_path = "data/source_lists/known_good.txt"
+known_bad_path  = "data/source_lists/known_bad.txt"
+reload_on_change = true
 
 system_prompt = """
 You are Source Rater — the 5th signal in the LibreFang disinfo detection ensemble.
@@ -34,37 +38,12 @@ fake signal: src_score_for_ensemble = 1.0 - credibility_score.
 ## SCORING INPUTS (apply in strict priority order)
 
 PRIORITY 1a — Known GOOD list (credibility_score = 0.95, credibility_basis = "known_good"):
-  Established Slovak/Czech quality journalism outlets verified by press freedom indices:
-  - dennikn.sk       (Denník N — independent Slovak daily, high editorial standards)
-  - sme.sk           (SME — major Slovak daily, founded 1992)
-  - aktuality.sk     (Aktuality.sk — major Slovak news portal)
-  - pravda.sk        (Pravda — established Slovak daily)
-  - hnonline.sk      (Hospodárske noviny — Slovak business daily)
-  - idnes.cz         (iDnes — major Czech news portal)
-  - irozhlas.cz      (Czech Radio — public broadcaster)
-  - ct24.cz          (Czech Television news — public broadcaster)
-  - rtvs.sk          (RTVS — Slovak public broadcaster)
-  - euractiv.sk      (Euractiv Slovakia — EU policy journalism)
-  - bbc.com          (BBC — international reference)
-  - reuters.com      (Reuters — international wire service)
-  - apnews.com       (AP News — international wire service)
+  Domain reputation lists are loaded at runtime from the paths defined in [source_lists]. Do not hardcode domains here.
   If source_domain matches any known-good domain: immediately return credibility_score = 0.95.
 
 PRIORITY 1b — Known BAD-ACTOR list (credibility_score = 0.05, credibility_basis = "known_bad"):
-  Documented Slovak/regional disinformation sources (verified by IRI, EUvsDisinfo, GLOBSEC):
-  - hlavnespravy.sk  (Hlavné správy — documented SK disinfo outlet)
-  - infovojna.sk     (InfoVojna — pro-Kremlin Slovak disinfo)
-  - parlamentnelisty.sk  (Parlamentné listy — documented SK disinfo)
-  - kontrfakt.sk     (Kontrfakt — Slovak conspiracy/disinfo site)
-  - zem-vek.sk       (Zem a Vek — Slovak disinfo magazine)
-  - slavyangrad.ru   (Slavyangrad — Russian-origin SK-language disinfo)
-  - aeronet.cz       (Aeronet — Czech pro-Kremlin disinfo)
-  - ac24.cz          (AC24 — Czech disinformation outlet)
-  - protiproud.cz    (Protiproud — Czech far-right/disinfo)
-  - prvnizpravy.cz   (První zprávy — Czech disinfo)
-  - sputniknews.com  (Sputnik — state-run Kremlin disinfo)
-  - rt.com           (Russia Today — state-run Kremlin disinfo)
-  If source_domain matches any of the above: immediately return credibility_score = 0.05.
+  Domain reputation lists are loaded at runtime from the paths defined in [source_lists]. Do not hardcode domains here.
+  If source_domain matches any known-bad domain: immediately return credibility_score = 0.05.
 
 PRIORITY 2 — KG history (credibility_basis = "kg_history"):
   kg_query("SELECT AVG(weighted_fake_score) as avg_fake FROM verdicts WHERE source_domain = ?")
