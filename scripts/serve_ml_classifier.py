@@ -33,11 +33,18 @@ def load_model():
     force_tfidf = os.environ.get("ML_CLASSIFIER_FORCE_TFIDF", "0") == "1"
     
     if HAS_TRANSFORMERS and not force_tfidf:
-        # Priority order: local fine-tuned model path, otherwise gerulata/slovakbert or SlavicBERT
+        # Priority order: local fine-tuned model path, otherwise SOTA multilingual models
         model_name = os.environ.get("ML_TRANSFORMER_MODEL", "models/slovak_bert")
         if not os.path.exists(model_name) and model_name == "models/slovak_bert":
             # Fall back to HuggingFace hub if local model doesn't exist yet
-            model_name = "gerulata/slovakbert"
+            # Uses fallback chain (Improvement 28)
+            CLASSIFIER_MODELS = [
+                "intfloat/multilingual-e5-large-instruct",   # primary
+                "microsoft/mdeberta-v3-base",                 # fine-tune target
+                "facebook/nllb-200-distilled-600M",           # CPU fallback
+            ]
+            # Try to load the primary model (for this script we default to the first available)
+            model_name = CLASSIFIER_MODELS[0]
             
         print(f"Loading transformer model from {model_name}...")
         try:

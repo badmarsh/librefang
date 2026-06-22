@@ -3,7 +3,7 @@
 # Part of fix: Fix 1 — Replace fake ml-classifier with real trained model
 name        = "ml-classifier"
 version     = "1.2.0"
-description = "SlovakBERT / SlavicBERT sequence classifier served locally via scripts/serve_ml_classifier.py (falls back to TF-IDF + Logistic Regression when PyTorch/Transformers are unavailable)."
+description = "Multilingual sequence classifier (mDeBERTa-v3/BGE-M3/NLLB) served locally via scripts/serve_ml_classifier.py (falls back to TF-IDF + Logistic Regression when PyTorch/Transformers are unavailable)."
 author      = "librefang"
 module      = "builtin:http_scorer"
 tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]

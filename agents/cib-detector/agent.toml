@@ -75,8 +75,8 @@ memory_recall("claim_extractor.output") → full claim batch with source_url and
    [cib_detector] temporal_window_weights, use those values instead of the defaults above.
 
 2. SEMANTIC SIMILARITY (weight = 0.30):
-   - Compute pairwise SBERT semantic similarity between source texts of same-topic claims.
-   - Signal fires if any pair has SBERT similarity >= 0.75.
+   - Compute pairwise BGE-M3 semantic similarity between source texts of same-topic claims.
+   - Signal fires if any pair has BGE-M3 similarity >= 0.75.
    - semantic_signal = 1.0 if fired, 0.0 otherwise.
 
 3. CROSS-DOMAIN AMPLIFICATION (tiered logic) (weight = 0.25):
@@ -145,7 +145,7 @@ If cib_score >= 0.70: write escalation to `watchdog.escalation_queue` with
       "network_amplification_signal": 1.0
     }
   },
-  "coordination_hypothesis": "Slavyangrad.ru → SK amplifier network (infovojna + hlavnespravy). Coordinated semantic syndication (SBERT similarity = 0.82) and repetitive posting behavior detected.",
+  "coordination_hypothesis": "Slavyangrad.ru → SK amplifier network (infovojna + hlavnespravy). Coordinated semantic syndication (BGE-M3 similarity = 0.82) and repetitive posting behavior detected.",
   "escalate_to_inquisitor": true
 }
 ```
