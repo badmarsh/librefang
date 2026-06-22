@@ -1,0 +1,34 @@
+# Slim pre-commit config (#3303).
+#
+# Philosophy: hooks must not block the dev loop. Pre-commit is fast and
+# cheap; heavy verification (clippy, openapi/SDK drift, security audit,
+# tests) runs in CI. Pre-commit must average < 2s on a typical commit;
+# pre-push is intentionally bare (in `scripts/hooks/pre-push` it only
+# refuses direct pushes to protected branches).
+#
+# Setup:
+#   pipx install pre-commit
+#   pre-commit install --install-hooks               # commit stage
+#
+# A new false positive? Add a path or regex to [allowlist] in .gitleaks.toml.
+
+repos:
+  - repo: local
+    hooks:
+      # Format check on staged Rust files only (no full-workspace compile).
+      - id: cargo-fmt-staged
+        name: cargo fmt --check (staged files)
+        entry: scripts/hooks/cargo-fmt-staged.sh
+        language: script
+        types: [rust]
+        stages: [pre-commit]
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        # Scans staged changes (`gitleaks protect --staged`) and reads
+        # `.gitleaks.toml` automatically. Path / regex allowlists for
+        # generated / vendored / lockfile / fixture content live there,
+        # not inline here.
+        stages: [pre-commit]

@@ -1,0 +1,1970 @@
+//! Memory substrate types: fragments, sources, filters, and the unified Memory trait.
+//! Also includes proactive memory types for mem0-style API.
+
+use crate::agent::AgentId;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+/// Memory levels for multi-level memory (User/Session/Agent)
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryLevel {
+    /// User-level memory (persistent across sessions)
+    User,
+    /// Session-level memory (current conversation)
+    #[default]
+    Session,
+    /// Agent-level memory (agent-specific learned behaviors)
+    Agent,
+}
+
+impl MemoryLevel {
+    /// Return the scope string used in storage.
+    pub fn scope_str(&self) -> &'static str {
+        match self {
+            MemoryLevel::User => "user_memory",
+            MemoryLevel::Session => "session_memory",
+            MemoryLevel::Agent => "agent_memory",
+        }
+    }
+}
+
+impl From<&str> for MemoryLevel {
+    fn from(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "user" | "user_memory" => MemoryLevel::User,
+            "session" | "session_memory" => MemoryLevel::Session,
+            "agent" | "agent_memory" => MemoryLevel::Agent,
+            _ => MemoryLevel::Session,
+        }
+    }
+}
+
+impl std::str::FromStr for MemoryLevel {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(MemoryLevel::from(s))
+    }
+}
+
+/// A simple memory item for mem0-style API.
+/// This is a simplified version of MemoryFragment for external use.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MemoryItem {
+    /// Unique ID.
+    pub id: String,
+    /// The memory content.
+    pub content: String,
+    /// Memory level (user/session/agent).
+    pub level: MemoryLevel,
+    /// Optional category for grouping.
+    pub category: Option<String>,
+    /// Metadata key-value pairs.
+    pub metadata: HashMap<String, serde_json::Value>,
+    /// When this memory was created.
+    pub created_at: DateTime<Utc>,
+    /// How this memory was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Confidence score (0.0 - 1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    /// When this memory was last accessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accessed_at: Option<DateTime<Utc>>,
+    /// How many times this memory has been accessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_count: Option<u64>,
+    /// Which agent owns this memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+}
+
+impl MemoryItem {
+    /// Create a new memory item.
+    pub fn new(content: String, level: MemoryLevel) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            content,
+            level,
+            category: None,
+            metadata: HashMap::new(),
+            created_at: Utc::now(),
+            source: None,
+            confidence: None,
+            accessed_at: None,
+            access_count: None,
+            agent_id: None,
+        }
+    }
+
+    /// Create a user-level memory item.
+    pub fn user(content: impl Into<String>) -> Self {
+        Self::new(content.into(), MemoryLevel::User)
+    }
+
+    /// Create a session-level memory item.
+    pub fn session(content: impl Into<String>) -> Self {
+        Self::new(content.into(), MemoryLevel::Session)
+    }
+
+    /// Create an agent-level memory item.
+    pub fn agent(content: impl Into<String>) -> Self {
+        Self::new(content.into(), MemoryLevel::Agent)
+    }
+
+    /// Set category.
+    pub fn with_category(mut self, category: impl Into<String>) -> Self {
+        self.category = Some(category.into());
+        self
+    }
+
+    /// Add metadata.
+    pub fn with_metadata(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.metadata.insert(key.into(), value);
+        self
+    }
+
+    /// Create from a MemoryFragment.
+    pub fn from_fragment(frag: MemoryFragment) -> Self {
+        let level = MemoryLevel::from(frag.scope.as_str());
+        let source_str = serde_json::to_value(&frag.source)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from));
+        Self {
+            id: frag.id.to_string(),
+            content: frag.content,
+            level,
+            category: frag
+                .metadata
+                .get("category")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            source: source_str,
+            confidence: Some(frag.confidence),
+            accessed_at: Some(frag.accessed_at),
+            access_count: Some(frag.access_count),
+            agent_id: Some(frag.agent_id.to_string()),
+            created_at: frag.created_at,
+            metadata: frag.metadata,
+        }
+    }
+}
+
+/// Configuration for proactive memory system.
+///
+/// Example in config.toml:
+/// ```toml
+/// [proactive_memory]
+/// auto_memorize = true
+/// auto_retrieve = true
+/// max_retrieve = 10
+/// session_ttl_hours = 24
+/// # Use the kernel's default provider:
+/// extraction_model = "gpt-4o-mini"
+/// # Or target a specific provider with `provider/model` format:
+/// extraction_model = "anthropic/claude-haiku-4"
+/// # The colon form (`provider:model`) also works:
+/// extraction_model = "anthropic:claude-haiku-4"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct ProactiveMemoryConfig {
+    /// Master toggle — when false, the entire proactive memory subsystem is disabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Enable auto-memorize after agent execution.
+    pub auto_memorize: bool,
+    /// Enable auto-retrieve before agent execution.
+    pub auto_retrieve: bool,
+    /// Maximum memories to retrieve per query.
+    pub max_retrieve: usize,
+    /// Confidence threshold for near-duplicate detection (0.0 - 1.0).
+    pub extraction_threshold: f32,
+    /// LLM model to use for extraction. If None, uses rule-based extraction.
+    ///
+    /// The value is parsed by `resolve_extraction_model_target`. Three forms
+    /// are accepted, in priority order:
+    ///
+    /// 1. `provider:model` — e.g. `"anthropic:claude-haiku-4"`
+    /// 2. `provider/model` — e.g. `"anthropic/claude-haiku-4"`
+    /// 3. Bare model name — e.g. `"gpt-4o-mini"`
+    ///
+    /// For bare model names the kernel's `default_model.provider` is used as
+    /// the driver. Use the `provider/model` form when extraction should run
+    /// through a different provider — there is no separate
+    /// `extraction_provider` field.
+    pub extraction_model: Option<String>,
+    /// Categories to extract from conversations.
+    pub extract_categories: Vec<String>,
+    /// Session memory TTL in hours. Memories older than this are cleaned up
+    /// automatically before each agent execution. Default: 24 hours.
+    pub session_ttl_hours: u32,
+    /// Similarity threshold for duplicate detection (0.0 - 1.0).
+    /// When stored embeddings are available, uses vector cosine similarity
+    /// (mem0-quality); otherwise falls back to Jaccard word overlap.
+    /// Default: 0.85.
+    ///
+    /// Pre-fix this defaulted to 0.5, which is far too permissive for both
+    /// metrics: cosine 0.5 matches "topically related" pairs (including
+    /// opposite-meaning sentences that share keywords), and Jaccard 0.5
+    /// matches anything with 50% word overlap. 0.85 is the threshold mem0
+    /// recommends for "near-duplicate" detection and matches the
+    /// industry-standard cosine cut-off for embedding-based dedup.
+    pub duplicate_threshold: f32,
+    /// Confidence decay rate per day. Memories lose confidence over time when
+    /// not accessed, following exponential decay: `conf * e^(-rate * days)`.
+    /// Default: 0.01 (very slow — takes ~70 days to halve).
+    pub confidence_decay_rate: f64,
+    /// Maximum number of memories allowed per agent. When adding new memories
+    /// would exceed this cap, the oldest/lowest-confidence memories are evicted
+    /// first. Default: 1000. Set to 0 to disable the cap.
+    #[serde(default = "default_max_memories_per_agent")]
+    pub max_memories_per_agent: usize,
+    /// Maximum number of characters that `format_context` (the prompt
+    /// injection for `auto_retrieve` memories) may emit, including the
+    /// header template (H4 review-followup #8). At ~4 chars per token
+    /// this is roughly a token budget; the default 8000 (~2000 tokens)
+    /// suits an 8k–32k context window. Operators on larger windows can
+    /// raise this without recompiling. Excess memories are dropped and
+    /// reported via a footer; the cap is a hard ceiling on the section.
+    #[serde(default = "default_format_context_max_chars")]
+    pub format_context_max_chars: usize,
+    /// Similarity threshold above which `decide_action` returns UPDATE
+    /// instead of ADD when the new and existing memory share a
+    /// category (M14). Lower than `update_threshold_cross_category`
+    /// because same-category memories share semantic context, so a
+    /// modest similarity bump is enough evidence to fold them
+    /// together. Default 0.7 — empirically the cut-off where
+    /// embedding cosine starts catching genuine paraphrases without
+    /// merging unrelated facts.
+    ///
+    /// Conceptually distinct from `duplicate_threshold` (which gates
+    /// the post-hoc consolidation sweep — "should two existing
+    /// memories be merged into one?"). The two serve different
+    /// purposes: UPDATE is per-insertion conflict resolution; dedup
+    /// is batch cleanup. Pre-fix both used the same hardcoded
+    /// values, which conflated the contracts.
+    #[serde(default = "default_update_threshold_same_category")]
+    pub update_threshold_same_category: f32,
+    /// Same as `update_threshold_same_category` but for memories with
+    /// *different* categories. Higher (default 0.8) because
+    /// cross-category merges require stronger evidence — the
+    /// categories themselves carry semantic distinction that a
+    /// purely-text similarity score might miss.
+    #[serde(default = "default_update_threshold_cross_category")]
+    pub update_threshold_cross_category: f32,
+    /// Out-of-process memory extractor. When set, extraction is delegated to
+    /// the configured subprocess (which may use its own LLM, a local model,
+    /// embeddings, etc.) instead of the built-in LLM/rule-based extractor; the
+    /// store and the dedup decision stay in Rust. Takes precedence over
+    /// `extraction_model`.
+    #[serde(default)]
+    pub extractor_sidecar: Option<MemoryExtractorSidecarConfig>,
+}
+
+/// Configuration for an out-of-process memory extractor (see
+/// [`ProactiveMemoryConfig::extractor_sidecar`]).
+///
+/// **Precedence (review-followup G).** When this table is present
+/// AND `command` is non-empty, the sidecar handles every
+/// `auto_memorize` call — the kernel's built-in `LlmMemoryExtractor`
+/// is **not constructed at all**, and any per-agent
+/// [`ProactiveMemoryOverrides::extraction_model`] is silently
+/// shadowed. The kernel emits a `WARN` at boot in that case so an
+/// operator who set both isn't surprised which wins. A
+/// configured-but-empty `command` is treated as a no-op (the kernel
+/// falls back to the LLM/rule-based path with a separate `WARN`).
+///
+/// The sidecar only handles **extraction**. The store, the dedup
+/// `decide_action` decision, and the prompt-context formatting all
+/// stay in Rust, so the sidecar's output cannot influence retrieval
+/// ranking or storage layout — only what gets *proposed* to remember.
+///
+/// ```toml
+/// [proactive_memory.extractor_sidecar]
+/// command = "python3"
+/// args = ["/home/me/.librefang/memory/extract.py"]
+/// request_timeout_secs = 30
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct MemoryExtractorSidecarConfig {
+    /// Executable to launch (resolved via `PATH`). Empty string disables
+    /// the sidecar (operator typo or commented-out args field) — see
+    /// the precedence note on the struct.
+    pub command: String,
+    /// Arguments passed to the command.
+    pub args: Vec<String>,
+    /// Per-extraction wall-clock timeout. `0` means the compiled default (30s).
+    pub request_timeout_secs: u64,
+}
+
+impl Default for MemoryExtractorSidecarConfig {
+    fn default() -> Self {
+        Self {
+            command: String::new(),
+            args: Vec::new(),
+            request_timeout_secs: 30,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_max_memories_per_agent() -> usize {
+    1000
+}
+
+fn default_format_context_max_chars() -> usize {
+    8000
+}
+
+fn default_update_threshold_same_category() -> f32 {
+    0.7
+}
+
+fn default_update_threshold_cross_category() -> f32 {
+    0.8
+}
+
+impl Default for ProactiveMemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_memorize: true,
+            auto_retrieve: true,
+            max_retrieve: 10,
+            extraction_threshold: 0.7,
+            extraction_model: None,
+            extract_categories: vec![
+                "communication_style".to_string(),
+                "preference".to_string(),
+                "expertise".to_string(),
+                "work_style".to_string(),
+                "project_context".to_string(),
+                "personal_detail".to_string(),
+                "frustration".to_string(),
+            ],
+            session_ttl_hours: 24,
+            duplicate_threshold: 0.85,
+            confidence_decay_rate: 0.01,
+            max_memories_per_agent: 1000,
+            format_context_max_chars: default_format_context_max_chars(),
+            update_threshold_same_category: default_update_threshold_same_category(),
+            update_threshold_cross_category: default_update_threshold_cross_category(),
+            extractor_sidecar: None,
+        }
+    }
+}
+
+/// Per-agent override for the kernel-global [`ProactiveMemoryConfig`] (#4870).
+///
+/// `[proactive_memory]` in `config.toml` sets a single, kernel-wide policy.
+/// On hosts that mix one chatty user-facing agent with cron-driven
+/// sub-agents (data collectors, ETL, brief composers), enabling
+/// `auto_memorize` globally costs an extraction LLM call per sub-agent
+/// turn for content that has no recall value. This struct lets an
+/// agent's manifest disable proactive memory (in whole, or just one of
+/// `auto_memorize` / `auto_retrieve`) without forcing the global policy
+/// to follow.
+///
+/// Each field is `Option<bool>`: `None` inherits the global setting,
+/// `Some(b)` overrides it. Resolution lives in
+/// [`ProactiveMemoryOverrides::resolve_auto_retrieve`] and
+/// [`ProactiveMemoryOverrides::resolve_auto_memorize`] so call sites in
+/// the runtime can gate without reproducing the merge logic.
+///
+/// Boot caveat: the global [`ProactiveMemoryConfig::enabled = false`]
+/// short-circuits store construction in
+/// `librefang_kernel::kernel::boot`; per-agent `enabled = Some(true)`
+/// cannot resurrect a non-existent store. For the same reason, per-field
+/// overrides like `auto_memorize = Some(true)` or `auto_retrieve = Some(true)`
+/// against a globally-off config are dead letters — the gate they would
+/// flip never receives a store to act on. The intended (and currently
+/// supported) shape is **per-agent opt-out** when the global is on.
+///
+/// Example in `agent.toml`:
+/// ```toml
+/// # full opt-out for this agent
+/// [proactive_memory]
+/// enabled = false
+///
+/// # or: keep retrieve, skip memorize (tool-output extraction is noise)
+/// [proactive_memory]
+/// auto_memorize = false
+///
+/// # or: per-agent extractor model (#5475) — agent A on a cheap OpenAI
+/// # tier while the global default points elsewhere
+/// [proactive_memory]
+/// extraction_model = "openai/gpt-4o-mini"
+/// ```
+///
+/// **The override surface is `{workspace}/agent.toml`, NOT `config.toml`** (#5476).
+/// A `[agents.<name>.proactive_memory]` block in `~/.librefang/config.toml`
+/// is silently ignored — `KernelConfig` has no `agents` field, so the
+/// block parses but never feeds into any `AgentManifest`. Since #5476
+/// the kernel emits a targeted `WARN` at boot (and on
+/// `POST /api/config/reload`) when this misplacement is detected, but
+/// the load-bearing path is still the agent's own manifest:
+/// ```toml
+/// # ~/.librefang/config.toml — kernel-global default
+/// [proactive_memory]
+/// auto_memorize = false
+///
+/// # ~/.librefang/workspaces/agents/my-agent/agent.toml — per-agent override
+/// [proactive_memory]
+/// auto_memorize = true
+/// ```
+///
+/// Note: `Copy` was removed when `extraction_model: Option<String>` was
+/// added in #5475 — the struct is now small but heap-allocating. Callers
+/// that previously moved-by-copy now move-by-clone; that's a trivial
+/// `Arc`-free `Option<String>` deep copy and not on a hot path.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct ProactiveMemoryOverrides {
+    /// Override the master switch. `Some(false)` disables both retrieve
+    /// and memorize for this agent regardless of the global config.
+    /// `Some(true)` is documented but not load-bearing — see the boot
+    /// caveat above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// Override `auto_memorize`. `Some(false)` skips the after-turn
+    /// extraction call for this agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_memorize: Option<bool>,
+    /// Override `auto_retrieve`. `Some(false)` skips the before-turn
+    /// retrieval (no memory items injected into the prompt).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_retrieve: Option<bool>,
+    /// Per-agent override for the LLM model used by proactive memory
+    /// extraction (#5475). Same shape as the global
+    /// [`ProactiveMemoryConfig::extraction_model`] — accepts
+    /// `provider/model`, `provider:model`, or a bare model name that
+    /// falls through to the kernel's default driver. `None` (the
+    /// default) inherits the kernel-global `[proactive_memory]
+    /// extraction_model`.
+    ///
+    /// Use case: multi-provider deployments where each agent's
+    /// extractor should match the provider that hosts its primary
+    /// model — e.g. agent A on `openai/gpt-4o-mini`, agent B on
+    /// `anthropic/claude-haiku-4-5`, agent C on `gemini/gemini-2.0-flash`.
+    /// Without this, the global must pick one extractor that may not
+    /// even be reachable from the other agents' provider keys.
+    ///
+    /// Limitation in this PR: the override switches the model **name**
+    /// passed to the boot-time extraction driver. Cross-provider
+    /// switching (where the override picks a provider different from
+    /// the one the kernel initialised the extraction driver with) is
+    /// honoured only when the same driver supports both — typically
+    /// within an OpenAI-compatible family. Full per-agent driver
+    /// switching (rebuilding the LLM driver per-agent) is tracked as a
+    /// follow-up.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_model: Option<String>,
+}
+
+impl ProactiveMemoryOverrides {
+    /// Resolve the effective `auto_retrieve` for this agent given the
+    /// kernel-global `[proactive_memory]` defaults.
+    pub fn resolve_auto_retrieve(&self, global: &ProactiveMemoryConfig) -> bool {
+        if matches!(self.enabled, Some(false)) {
+            return false;
+        }
+        if let Some(v) = self.auto_retrieve {
+            return v;
+        }
+        global.enabled && global.auto_retrieve
+    }
+
+    /// Resolve the effective `auto_memorize` for this agent given the
+    /// kernel-global `[proactive_memory]` defaults.
+    pub fn resolve_auto_memorize(&self, global: &ProactiveMemoryConfig) -> bool {
+        if matches!(self.enabled, Some(false)) {
+            return false;
+        }
+        if let Some(v) = self.auto_memorize {
+            return v;
+        }
+        global.enabled && global.auto_memorize
+    }
+
+    /// Resolve the effective `extraction_model` for this agent given
+    /// the kernel-global `[proactive_memory]` defaults (#5475).
+    ///
+    /// Resolution chain: agent override → kernel-global → `None`
+    /// (callers fall back to the agent's primary model). Empty strings
+    /// on either side are treated as unset — operators sometimes leave
+    /// `extraction_model = ""` to denote "no override", and the
+    /// global-side `filter(|s| !s.is_empty())` upstream of boot already
+    /// applies that convention.
+    pub fn resolve_extraction_model(&self, global: &ProactiveMemoryConfig) -> Option<String> {
+        if let Some(m) = self.extraction_model.as_ref() {
+            if !m.is_empty() {
+                return Some(m.clone());
+            }
+        }
+        global
+            .extraction_model
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .cloned()
+    }
+
+    /// True when *no* field is set — equivalent to `Default::default()`.
+    /// Used by call sites that want to skip the resolve dance entirely
+    /// for the common "no override" case.
+    pub fn is_empty(&self) -> bool {
+        self.enabled.is_none()
+            && self.auto_memorize.is_none()
+            && self.auto_retrieve.is_none()
+            && self.extraction_model.is_none()
+    }
+}
+
+/// A relationship triple extracted from conversation (subject, relation, object).
+///
+/// Example: ("Alice", "works_at", "Acme Corp")
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RelationTriple {
+    /// Subject entity name.
+    pub subject: String,
+    /// Subject entity type (person, organization, project, etc.).
+    pub subject_type: String,
+    /// Relationship type.
+    pub relation: String,
+    /// Object entity name.
+    pub object: String,
+    /// Object entity type.
+    pub object_type: String,
+}
+
+/// Result from LLM-powered memory extraction.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ExtractionResult {
+    /// Extracted memory items.
+    pub memories: Vec<MemoryItem>,
+    /// Extracted relationship triples for knowledge graph.
+    pub relations: Vec<RelationTriple>,
+    /// Whether extraction found anything worth remembering.
+    pub has_content: bool,
+    /// Original query that triggered extraction.
+    pub trigger: String,
+    /// Detected conflicts where new info contradicts existing memories.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<MemoryConflict>,
+}
+
+/// A detected conflict between old and new memory content.
+///
+/// This is surfaced when an Update action replaces old content with new content
+/// that appears contradictory (low similarity + negation patterns), rather than
+/// being a simple refinement.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MemoryConflict {
+    /// The previous memory content that was replaced.
+    pub old_content: String,
+    /// The new memory content that replaced it.
+    pub new_content: String,
+    /// The ID of the memory that was updated.
+    pub memory_id: String,
+}
+
+/// Result from a single memory add operation, including the decision taken.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MemoryAddResult {
+    /// The memory item that was stored (or the updated version).
+    pub item: MemoryItem,
+    /// What action was taken.
+    pub action: MemoryAction,
+    /// If updated, the ID of the old memory that was replaced.
+    pub replaced_id: Option<String>,
+    /// Detected conflict when an update appears contradictory rather than a refinement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict: Option<MemoryConflict>,
+}
+
+/// Action to take when a new memory conflicts with an existing one.
+///
+/// This is the core mem0 decision: when we extract a new memory, should we
+/// add it as new, update an existing one, or skip it?
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "action")]
+pub enum MemoryAction {
+    /// Store as a new memory (no conflict with existing).
+    Add,
+    /// Update an existing memory (new info supersedes old).
+    Update {
+        /// ID of the existing memory to replace.
+        existing_id: String,
+    },
+    /// Skip — duplicate or subsumed by existing memory.
+    Noop,
+}
+
+/// Trait for LLM-powered memory extraction and conflict resolution.
+///
+/// This trait allows the runtime to inject an LLM client for memory extraction
+/// without creating circular dependencies between librefang-memory and librefang-runtime.
+///
+/// Implement this trait in the runtime to enable automatic memory extraction.
+#[async_trait]
+pub trait MemoryExtractor: Send + Sync {
+    /// Extract important memories from conversation messages using LLM.
+    ///
+    /// `categories` is the caller-supplied list from `ProactiveMemoryConfig::extract_categories`.
+    /// Implementations must restrict extracted memories to these categories so that the
+    /// config is the single source of truth — not a hardcoded list inside the prompt.
+    async fn extract_memories(
+        &self,
+        messages: &[serde_json::Value],
+        categories: &[String],
+    ) -> crate::error::LibreFangResult<ExtractionResult>;
+
+    /// Same as `extract_memories` but also passes the invoking agent's
+    /// id, so implementors can route their LLM call through a forked
+    /// agent turn (shared prompt cache with the parent) instead of a
+    /// standalone provider request. Callers that know the agent id
+    /// (notably auto_memorize, which parses it out of `user_id`) should
+    /// prefer this method. Default delegates to `extract_memories`,
+    /// ignoring `agent_id` — appropriate for the rule-based extractor
+    /// which never touches an LLM.
+    async fn extract_memories_with_agent_id(
+        &self,
+        messages: &[serde_json::Value],
+        _agent_id: &str,
+        categories: &[String],
+    ) -> crate::error::LibreFangResult<ExtractionResult> {
+        self.extract_memories(messages, categories).await
+    }
+
+    /// Decide what to do with a new memory given existing similar memories.
+    ///
+    /// This is the core mem0 decision flow:
+    /// - **Add**: No conflict, store as new memory.
+    /// - **Update(id)**: New info supersedes existing memory `id`.
+    /// - **Noop**: Duplicate or already subsumed by existing memory.
+    ///
+    /// Default implementation uses a tiered heuristic:
+    /// 1. Substring containment (exact / superset / subset detection)
+    /// 2. Vector cosine similarity (when stored embeddings are available —
+    ///    matches mem0's dedup quality)
+    /// 3. Jaccard word overlap (fallback when no embeddings)
+    ///
+    /// LLM-powered implementations should use the model to reason about conflicts.
+    async fn decide_action(
+        &self,
+        new_memory: &MemoryItem,
+        existing_memories: &[MemoryFragment],
+    ) -> crate::error::LibreFangResult<MemoryAction> {
+        let new_lower = new_memory.content.to_lowercase();
+
+        // Track the best update candidate (highest similarity)
+        let mut best_update: Option<(f32, String)> = None;
+
+        for existing in existing_memories {
+            let old_lower = existing.content.to_lowercase();
+
+            // Exact match → skip
+            if new_lower == old_lower {
+                return Ok(MemoryAction::Noop);
+            }
+
+            // Existing already contains new info → skip
+            if old_lower.contains(&new_lower) {
+                return Ok(MemoryAction::Noop);
+            }
+
+            // New info contains old → update (new is more complete)
+            if new_lower.contains(&old_lower) {
+                return Ok(MemoryAction::Update {
+                    existing_id: existing.id.to_string(),
+                });
+            }
+
+            // Compute similarity: prefer vector cosine when the existing
+            // memory has a stored embedding. This matches mem0's dedup
+            // quality — cosine similarity on embeddings captures semantic
+            // equivalence that Jaccard word overlap misses (e.g. synonyms,
+            // rephrasing, different languages).
+            let similarity = if let Some(ref emb) = existing.embedding {
+                // Use the new memory's embedding from metadata if available
+                // (stashed by add_with_decision when embedding driver is active).
+                let new_emb = new_memory
+                    .metadata
+                    .get("_embedding")
+                    .and_then(|v| {
+                        v.as_array().map(|arr| {
+                            arr.iter()
+                                .filter_map(|x| x.as_f64().map(|f| f as f32))
+                                .collect::<Vec<f32>>()
+                        })
+                    })
+                    .filter(|e| !e.is_empty());
+                match new_emb {
+                    // Fall back to text similarity if vectors are not
+                    // comparable (dim mismatch, zero magnitude). 0.0 would
+                    // mean "fully dissimilar" and incorrectly suppress
+                    // legitimate dedup candidates.
+                    Some(ref ne) => cosine_similarity(ne, emb)
+                        .unwrap_or_else(|| text_similarity(&new_lower, &old_lower)),
+                    None => text_similarity(&new_lower, &old_lower),
+                }
+            } else {
+                text_similarity(&new_lower, &old_lower)
+            };
+
+            // Very high similarity (≥ 0.95) → NOOP (near-duplicate)
+            if similarity >= 0.95 {
+                return Ok(MemoryAction::Noop);
+            }
+
+            // High similarity or same category → candidate for UPDATE.
+            //
+            // Thresholds raised from the original 0.5 / 0.6, which were far
+            // too permissive in both metrics: cosine 0.5 matches topically
+            // related but semantically distinct sentences (incl. opposite
+            // meanings sharing keywords), so an UPDATE there silently
+            // replaced unrelated memories. The numbers now align with
+            // mem0's recommended cut-offs (≈ 0.7 same-category, ≈ 0.8
+            // cross-category) and keep the 0.95 NOOP gate for near-exact
+            // duplicates.
+            //
+            // M14: the per-call threshold pair is read from the new
+            // memory's metadata, where `add_with_decision` stashes
+            // `update_threshold_same_category` /
+            // `update_threshold_cross_category` from
+            // `ProactiveMemoryConfig`. Falls back to the const defaults
+            // for callers that invoke `decide_action` directly
+            // (without going through the store).
+            let new_cat = new_memory.category.as_deref().unwrap_or("");
+            let old_cat = existing
+                .metadata
+                .get("category")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let same_cat_threshold = new_memory
+                .metadata
+                .get("_update_threshold_same_cat")
+                .and_then(|v| v.as_f64())
+                .map(|f| f as f32)
+                .unwrap_or(default_update_threshold_same_category());
+            let cross_cat_threshold = new_memory
+                .metadata
+                .get("_update_threshold_cross_cat")
+                .and_then(|v| v.as_f64())
+                .map(|f| f as f32)
+                .unwrap_or(default_update_threshold_cross_category());
+            let update_threshold = if !new_cat.is_empty() && new_cat == old_cat {
+                same_cat_threshold
+            } else {
+                cross_cat_threshold
+            };
+
+            if similarity > update_threshold
+                && best_update
+                    .as_ref()
+                    .is_none_or(|(best_sim, _)| similarity > *best_sim)
+            {
+                best_update = Some((similarity, existing.id.to_string()));
+            }
+        }
+
+        // Return the best update candidate, or ADD if none found
+        if let Some((_, existing_id)) = best_update {
+            Ok(MemoryAction::Update { existing_id })
+        } else {
+            Ok(MemoryAction::Add)
+        }
+    }
+
+    /// Generate a search context from retrieved memories.
+    ///
+    /// Takes retrieved memory items and formats them for injection
+    /// into the agent's context prompt.
+    fn format_context(&self, memories: &[MemoryItem]) -> String;
+}
+
+/// Extract the phrase after a pattern, taking up to the first sentence boundary.
+fn extract_after_pattern(text: &str, pattern: &str) -> Option<String> {
+    let idx = text.find(pattern)?;
+    let rest = &text[idx + pattern.len()..];
+    // Take until sentence boundary or end
+    let end = rest
+        .find(['.', ',', '!', '?', ';', '\n'])
+        .unwrap_or(rest.len());
+    let phrase = rest[..end].trim();
+    if phrase.is_empty() {
+        None
+    } else {
+        Some(phrase.to_string())
+    }
+}
+
+/// Capitalize the first letter of a string.
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().to_string() + chars.as_str(),
+    }
+}
+
+/// Simple word-overlap similarity (Jaccard index on words).
+pub fn text_similarity(a: &str, b: &str) -> f32 {
+    let words_a: std::collections::HashSet<&str> = a.split_whitespace().collect();
+    let words_b: std::collections::HashSet<&str> = b.split_whitespace().collect();
+    if words_a.is_empty() && words_b.is_empty() {
+        return 0.0;
+    }
+    let intersection = words_a.intersection(&words_b).count();
+    let union = words_a.union(&words_b).count();
+    if union == 0 {
+        0.0
+    } else {
+        intersection as f32 / union as f32
+    }
+}
+
+/// Compute cosine similarity between two embedding vectors.
+///
+/// Returns `Some(score)` in `[-1.0, 1.0]` where `1.0` means identical
+/// direction. Returns `None` when the vectors are not comparable:
+/// empty inputs, dimension mismatch, or either vector has zero
+/// magnitude. Callers MUST handle `None` explicitly — folding
+/// "not comparable" into a 0.0 score silently corrupts ranking
+/// because 0.0 means "fully dissimilar" (see #3536).
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> Option<f32> {
+    if a.len() != b.len() || a.is_empty() {
+        return None;
+    }
+    let mut dot = 0.0f32;
+    let mut norm_a = 0.0f32;
+    let mut norm_b = 0.0f32;
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom < f32::EPSILON {
+        None
+    } else {
+        Some(dot / denom)
+    }
+}
+
+/// Helper to push a memory item with extracted content (not the whole message).
+fn push_memory(
+    memories: &mut Vec<MemoryItem>,
+    content: &str,
+    level: MemoryLevel,
+    category: &str,
+    role: &str,
+) {
+    // Dedup: skip if we already extracted identical content
+    if memories.iter().any(|m| m.content == content) {
+        return;
+    }
+    let mut metadata = HashMap::new();
+    metadata.insert("extracted_from".to_string(), serde_json::json!(role));
+    memories.push(MemoryItem {
+        id: Uuid::new_v4().to_string(),
+        content: content.to_string(),
+        level,
+        category: Some(category.to_string()),
+        metadata,
+        created_at: Utc::now(),
+        source: None,
+        confidence: None,
+        accessed_at: None,
+        access_count: None,
+        agent_id: None,
+    });
+}
+
+/// Default implementation of MemoryExtractor that uses simple rule-based extraction.
+///
+/// This provides basic functionality without requiring an LLM.
+pub struct DefaultMemoryExtractor;
+
+#[async_trait]
+impl MemoryExtractor for DefaultMemoryExtractor {
+    async fn extract_memories(
+        &self,
+        messages: &[serde_json::Value],
+        _categories: &[String],
+    ) -> crate::error::LibreFangResult<ExtractionResult> {
+        let mut memories = Vec::new();
+        let mut relations = Vec::new();
+
+        // Simple keyword-based extraction (fallback when no LLM available).
+        // Only extract from user messages to avoid assistant echo.
+        for message in messages {
+            let role = message
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("user");
+            if role != "user" {
+                continue;
+            }
+            let content = message
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let lower = content.to_lowercase();
+
+            // ── Preference patterns ──
+            // Store extracted phrase, not the whole message
+            let pref_patterns: &[(&str, &str)] = &[
+                ("i prefer ", "prefers"),
+                ("i always ", "prefers"),
+                ("i never ", "dislikes"),
+                ("i dislike ", "dislikes"),
+                ("my favorite ", "prefers"),
+                ("i like to ", "prefers"),
+                ("i don't like ", "dislikes"),
+                ("i'd rather ", "prefers"),
+                ("i want ", "prefers"),
+                ("i need ", "prefers"),
+            ];
+            for &(pattern, rel) in pref_patterns {
+                if let Some(phrase) = extract_after_pattern(&lower, pattern) {
+                    let extracted = format!("User {pattern}{phrase}");
+                    push_memory(
+                        &mut memories,
+                        &extracted,
+                        MemoryLevel::User,
+                        "preference",
+                        role,
+                    );
+                    relations.push(RelationTriple {
+                        subject: "User".to_string(),
+                        subject_type: "person".to_string(),
+                        relation: rel.to_string(),
+                        object: capitalize_first(&phrase),
+                        object_type: "concept".to_string(),
+                    });
+                }
+            }
+
+            // ── Identity / fact patterns ──
+            let fact_patterns: &[(&str, &str, &str)] = &[
+                ("my name is ", "is_named", "person"),
+                ("i work at ", "works_at", "organization"),
+                ("i'm working at ", "works_at", "organization"),
+                ("i work on ", "works_on", "project"),
+                ("i'm working on ", "works_on", "project"),
+                ("i live in ", "located_in", "location"),
+                ("i'm from ", "located_in", "location"),
+                ("my job is ", "works_as", "concept"),
+                ("i'm a ", "works_as", "concept"),
+                ("i am a ", "works_as", "concept"),
+                ("my team is ", "part_of", "organization"),
+                ("my project is ", "works_on", "project"),
+                ("our project ", "works_on", "project"),
+                ("we're building ", "works_on", "project"),
+                ("we are building ", "works_on", "project"),
+                ("we're migrating to ", "uses", "tool"),
+                ("we are migrating to ", "uses", "tool"),
+            ];
+            for &(pattern, rel, obj_type) in fact_patterns {
+                if let Some(phrase) = extract_after_pattern(&lower, pattern) {
+                    let extracted = format!("User {pattern}{phrase}");
+                    push_memory(
+                        &mut memories,
+                        &extracted,
+                        MemoryLevel::User,
+                        "personal_detail",
+                        role,
+                    );
+                    relations.push(RelationTriple {
+                        subject: "User".to_string(),
+                        subject_type: "person".to_string(),
+                        relation: rel.to_string(),
+                        object: capitalize_first(&phrase),
+                        object_type: obj_type.to_string(),
+                    });
+                }
+            }
+
+            // ── Tool/technology usage ──
+            let tool_patterns: &[&str] = &[
+                "i use ",
+                "i'm using ",
+                "i am using ",
+                "we use ",
+                "we're using ",
+                "our stack includes ",
+                "our tech stack is ",
+                "i code in ",
+                "i program in ",
+                "i write in ",
+                "i develop in ",
+            ];
+            for pattern in tool_patterns {
+                if let Some(phrase) = extract_after_pattern(&lower, pattern) {
+                    let extracted = format!("User {pattern}{phrase}");
+                    push_memory(
+                        &mut memories,
+                        &extracted,
+                        MemoryLevel::User,
+                        "preference",
+                        role,
+                    );
+                    relations.push(RelationTriple {
+                        subject: "User".to_string(),
+                        subject_type: "person".to_string(),
+                        relation: "uses".to_string(),
+                        object: capitalize_first(&phrase),
+                        object_type: "tool".to_string(),
+                    });
+                }
+            }
+
+            // ── Task context (session-level) ──
+            let task_patterns: &[&str] = &[
+                "i'm trying to ",
+                "i am trying to ",
+                "i want to ",
+                "i need to ",
+                "the goal is to ",
+                "we need to ",
+                "the task is ",
+                "the problem is ",
+                "the issue is ",
+                "the bug is ",
+                "i'm debugging ",
+                "i'm fixing ",
+            ];
+            for pattern in task_patterns {
+                if let Some(phrase) = extract_after_pattern(&lower, pattern) {
+                    // Only extract if the phrase is substantial (>10 chars)
+                    if phrase.len() > 10 {
+                        let extracted = format!("User {pattern}{phrase}");
+                        push_memory(
+                            &mut memories,
+                            &extracted,
+                            MemoryLevel::Session,
+                            "project_context",
+                            role,
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(ExtractionResult {
+            has_content: !memories.is_empty() || !relations.is_empty(),
+            memories,
+            relations,
+            trigger: "default_extractor".to_string(),
+            conflicts: Vec::new(),
+        })
+    }
+
+    fn format_context(&self, memories: &[MemoryItem]) -> String {
+        // The trait method has no config access; fall back to the const
+        // default budget. Callers that have a `ProactiveMemoryConfig`
+        // (the store, not the bare trait) should go through
+        // `ProactiveMemoryStore::format_context*` which uses the
+        // configured `format_context_max_chars`.
+        format_memories_with_budget(memories, FORMAT_CONTEXT_MAX_CHARS)
+    }
+}
+
+/// Default maximum number of characters spent on memory-content
+/// bullets in a single prompt injection (H4). At ~4 chars per token
+/// this caps the memory section at roughly 2000 tokens, which is a
+/// reasonable share of a typical 8k-32k context window.
+///
+/// Pre-fix `format_context` had no cap at all: 10 memories × 2000
+/// chars (`MAX_MEMORY_CONTENT_LENGTH`) could pump 20 KB into every
+/// request. The bullet header counts against this budget too so the
+/// cap is a true ceiling on prompt-section growth, not just per-bullet
+/// content.
+///
+/// Operators on larger context windows can override via
+/// `ProactiveMemoryConfig::format_context_max_chars`
+/// (review-followup #8). The const value is the trait-level fallback
+/// used by callers that don't have access to a `ProactiveMemoryConfig`
+/// (e.g. `DefaultMemoryExtractor` invoked directly from tests).
+pub const FORMAT_CONTEXT_MAX_CHARS: usize = 8000;
+
+/// Shared formatter used by both [`DefaultMemoryExtractor::format_context`]
+/// and the LLM-backed extractor — keeps the H4 budget logic centralized
+/// instead of duplicated.
+///
+/// `max_chars` is the hard ceiling on the returned string length. Pass
+/// `FORMAT_CONTEXT_MAX_CHARS` when no per-call config is available.
+pub fn format_memories_with_budget(memories: &[MemoryItem], max_chars: usize) -> String {
+    if memories.is_empty() {
+        return String::new();
+    }
+
+    let mut context = String::from(
+        "You have the following understanding of this person from previous conversations. \
+         This is knowledge you have — not a list to recite. Let it naturally shape how you \
+         respond:\n\
+         \n\
+         - Reference relevant context when it helps (\"since you're working in Rust...\", \
+         \"keeping it concise like you prefer...\") but only when it genuinely adds value.\n\
+         - Let remembered preferences silently guide your style, format, and depth — you \
+         don't need to announce that you're doing so.\n\
+         - NEVER say \"based on my memory\", \"according to my records\", \"I recall that you...\", \
+         or mechanically list what you know. A friend doesn't preface every remark with \
+         \"I remember you told me...\".\n\
+         - If a memory is clearly outdated or the user contradicts it, trust the current \
+         conversation over stored context.\n\n",
+    );
+
+    let header_len = context.len();
+    let mut included = 0usize;
+    let total = memories.len();
+    for mem in memories {
+        let bullet = format!("- {}\n", mem.content);
+        // Reserve ~64 chars for the truncation footer so we never emit a
+        // bullet that pushes us past the cap and then has no room for the
+        // "[+N more]" note.
+        if context.len() + bullet.len() > max_chars.saturating_sub(64) {
+            break;
+        }
+        context.push_str(&bullet);
+        included += 1;
+    }
+
+    if included < total {
+        let dropped = total - included;
+        context.push_str(&format!(
+            "- [+{dropped} additional memor{plural} omitted to keep the prompt within budget]\n",
+            plural = if dropped == 1 { "y" } else { "ies" }
+        ));
+    }
+
+    // Defense-in-depth: if even the header alone exceeded the cap (unlikely
+    // — header is ~700 chars), at least guarantee the returned string never
+    // exceeds the budget by trimming on a char boundary.
+    if context.len() > max_chars {
+        let mut cutoff = max_chars;
+        while cutoff > 0 && !context.is_char_boundary(cutoff) {
+            cutoff -= 1;
+        }
+        context.truncate(cutoff);
+    }
+    debug_assert!(context.len() <= max_chars);
+    let _ = header_len;
+    context
+}
+
+/// Unique identifier for a memory fragment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MemoryId(pub Uuid);
+
+impl MemoryId {
+    /// Create a new random MemoryId.
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for MemoryId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for MemoryId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Modality of a memory fragment (text, image, or multimodal).
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryModality {
+    /// Pure text memory.
+    #[default]
+    Text,
+    /// Image-only memory.
+    Image,
+    /// Combined text + image memory.
+    MultiModal,
+}
+
+/// Where a memory came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySource {
+    /// From a conversation/interaction.
+    Conversation,
+    /// From a document that was processed.
+    Document,
+    /// From an observation (tool output, web page, etc.).
+    Observation,
+    /// Inferred by the agent from existing knowledge.
+    Inference,
+    /// Explicitly provided by the user.
+    UserProvided,
+    /// From a system event.
+    System,
+}
+
+/// A single unit of memory stored in the semantic store.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MemoryFragment {
+    /// Unique ID.
+    pub id: MemoryId,
+    /// Which agent owns this memory.
+    pub agent_id: AgentId,
+    /// The textual content of this memory.
+    pub content: String,
+    /// Vector embedding (populated by the semantic store).
+    pub embedding: Option<Vec<f32>>,
+    /// Arbitrary metadata.
+    pub metadata: HashMap<String, serde_json::Value>,
+    /// How this memory was created.
+    pub source: MemorySource,
+    /// Confidence score (0.0 - 1.0).
+    pub confidence: f32,
+    /// When this memory was created.
+    pub created_at: DateTime<Utc>,
+    /// When this memory was last accessed.
+    pub accessed_at: DateTime<Utc>,
+    /// How many times this memory has been accessed.
+    pub access_count: u64,
+    /// Memory scope/collection name.
+    pub scope: String,
+    /// Optional URL to an associated image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<String>,
+    /// Optional image embedding vector.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_embedding: Option<Vec<f32>>,
+    /// Modality of this memory (text, image, or multimodal).
+    #[serde(default)]
+    pub modality: MemoryModality,
+}
+
+/// Filter criteria for memory recall.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MemoryFilter {
+    /// Filter by agent ID.
+    pub agent_id: Option<AgentId>,
+    /// Filter by source type.
+    pub source: Option<MemorySource>,
+    /// Filter by scope.
+    pub scope: Option<String>,
+    /// Minimum confidence threshold.
+    pub min_confidence: Option<f32>,
+    /// Only memories created after this time.
+    pub after: Option<DateTime<Utc>>,
+    /// Only memories created before this time.
+    pub before: Option<DateTime<Utc>>,
+    /// Metadata key-value filters.
+    pub metadata: HashMap<String, serde_json::Value>,
+    /// Filter by peer ID (for per-user memory isolation in multi-user channels).
+    pub peer_id: Option<String>,
+}
+
+impl MemoryFilter {
+    /// Create a filter for a specific agent.
+    pub fn agent(agent_id: AgentId) -> Self {
+        Self {
+            agent_id: Some(agent_id),
+            ..Default::default()
+        }
+    }
+
+    /// Create a filter for a specific scope.
+    pub fn scope(scope: impl Into<String>) -> Self {
+        Self {
+            scope: Some(scope.into()),
+            ..Default::default()
+        }
+    }
+}
+
+/// An entity in the knowledge graph.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Entity {
+    /// Unique entity ID.
+    pub id: String,
+    /// Entity type (Person, Organization, Project, etc.).
+    pub entity_type: EntityType,
+    /// Display name.
+    pub name: String,
+    /// Arbitrary properties.
+    pub properties: HashMap<String, serde_json::Value>,
+    /// When this entity was created.
+    pub created_at: DateTime<Utc>,
+    /// When this entity was last updated.
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Types of entities in the knowledge graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityType {
+    /// A person.
+    Person,
+    /// An organization.
+    Organization,
+    /// A project.
+    Project,
+    /// A concept or idea.
+    Concept,
+    /// An event.
+    Event,
+    /// A location.
+    Location,
+    /// A document.
+    Document,
+    /// A tool.
+    Tool,
+    /// A custom type.
+    Custom(String),
+}
+
+/// A relation between two entities in the knowledge graph.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Relation {
+    /// Source entity ID.
+    pub source: String,
+    /// Relation type.
+    pub relation: RelationType,
+    /// Target entity ID.
+    pub target: String,
+    /// Arbitrary properties on the relation.
+    pub properties: HashMap<String, serde_json::Value>,
+    /// Confidence score (0.0 - 1.0).
+    pub confidence: f32,
+    /// When this relation was created.
+    pub created_at: DateTime<Utc>,
+}
+
+/// Types of relations in the knowledge graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationType {
+    /// Entity works at an organization.
+    WorksAt,
+    /// Entity knows about a concept.
+    KnowsAbout,
+    /// Entities are related.
+    RelatedTo,
+    /// Entity depends on another.
+    DependsOn,
+    /// Entity is owned by another.
+    OwnedBy,
+    /// Entity was created by another.
+    CreatedBy,
+    /// Entity is located in another.
+    LocatedIn,
+    /// Entity is part of another.
+    PartOf,
+    /// Entity uses another.
+    Uses,
+    /// Entity produces another.
+    Produces,
+    /// A custom relation type.
+    Custom(String),
+}
+
+/// A pattern for querying the knowledge graph.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GraphPattern {
+    /// Optional source entity filter.
+    pub source: Option<String>,
+    /// Optional relation type filter.
+    pub relation: Option<RelationType>,
+    /// Optional target entity filter.
+    pub target: Option<String>,
+    /// Maximum traversal depth.
+    pub max_depth: u32,
+}
+
+/// A result from a graph query.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GraphMatch {
+    /// The source entity.
+    pub source: Entity,
+    /// The relation.
+    pub relation: Relation,
+    /// The target entity.
+    pub target: Entity,
+}
+
+/// Report from memory consolidation.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConsolidationReport {
+    /// Number of memories merged.
+    pub memories_merged: u64,
+    /// Number of memories whose confidence decayed.
+    pub memories_decayed: u64,
+    /// How long the consolidation took.
+    pub duration_ms: u64,
+}
+
+/// Format for memory export/import.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum ExportFormat {
+    /// JSON format.
+    Json,
+    /// MessagePack binary format.
+    MessagePack,
+}
+
+/// Report from memory import.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ImportReport {
+    /// Number of entities imported.
+    pub entities_imported: u64,
+    /// Number of relations imported.
+    pub relations_imported: u64,
+    /// Number of memories imported.
+    pub memories_imported: u64,
+    /// Errors encountered during import.
+    pub errors: Vec<String>,
+}
+
+/// The unified Memory trait that agents interact with.
+///
+/// This abstracts over the structured store (SQLite), semantic store,
+/// and knowledge graph, presenting a single coherent API.
+#[async_trait]
+pub trait Memory: Send + Sync {
+    // -- Key-value operations (structured store) --
+
+    /// Get a value by key for a specific agent.
+    async fn get(
+        &self,
+        agent_id: AgentId,
+        key: &str,
+    ) -> crate::error::LibreFangResult<Option<serde_json::Value>>;
+
+    /// Set a key-value pair for a specific agent.
+    async fn set(
+        &self,
+        agent_id: AgentId,
+        key: &str,
+        value: serde_json::Value,
+    ) -> crate::error::LibreFangResult<()>;
+
+    /// Delete a key-value pair for a specific agent.
+    async fn delete(&self, agent_id: AgentId, key: &str) -> crate::error::LibreFangResult<()>;
+
+    // -- Semantic operations --
+
+    /// Store a new memory fragment.
+    async fn remember(
+        &self,
+        agent_id: AgentId,
+        content: &str,
+        source: MemorySource,
+        scope: &str,
+        metadata: HashMap<String, serde_json::Value>,
+        peer_id: Option<&str>,
+    ) -> crate::error::LibreFangResult<MemoryId>;
+
+    /// Semantic search for relevant memories.
+    async fn recall(
+        &self,
+        query: &str,
+        limit: usize,
+        filter: Option<MemoryFilter>,
+    ) -> crate::error::LibreFangResult<Vec<MemoryFragment>>;
+
+    /// Soft-delete a memory fragment.
+    async fn forget(&self, id: MemoryId) -> crate::error::LibreFangResult<()>;
+
+    // -- Knowledge graph operations --
+
+    /// Add an entity to the knowledge graph.
+    async fn add_entity(&self, entity: Entity) -> crate::error::LibreFangResult<String>;
+
+    /// Add a relation between entities.
+    async fn add_relation(&self, relation: Relation) -> crate::error::LibreFangResult<String>;
+
+    /// Query the knowledge graph.
+    async fn query_graph(
+        &self,
+        pattern: GraphPattern,
+    ) -> crate::error::LibreFangResult<Vec<GraphMatch>>;
+
+    // -- Maintenance --
+
+    /// Consolidate and optimize memory.
+    async fn consolidate(&self) -> crate::error::LibreFangResult<ConsolidationReport>;
+
+    /// Export all memory data.
+    async fn export(&self, format: ExportFormat) -> crate::error::LibreFangResult<Vec<u8>>;
+
+    /// Import memory data.
+    async fn import(
+        &self,
+        data: &[u8],
+        format: ExportFormat,
+    ) -> crate::error::LibreFangResult<ImportReport>;
+}
+
+/// Trait for proactive memory operations (mem0-style API).
+///
+/// This provides a simple, unified API for memory operations similar to mem0:
+/// - search() - semantic search
+/// - add() - store with automatic extraction
+/// - get() - retrieve user preferences
+/// - list() - list memories by category
+#[async_trait]
+pub trait ProactiveMemory: Send + Sync {
+    /// Semantic search for relevant memories.
+    async fn search(
+        &self,
+        query: &str,
+        user_id: &str,
+        limit: usize,
+    ) -> crate::error::LibreFangResult<Vec<MemoryItem>>;
+
+    /// Add memories with automatic extraction (LLM-powered).
+    /// Defaults to Session level storage.
+    /// Returns the list of memories that were stored.
+    async fn add(
+        &self,
+        messages: &[serde_json::Value],
+        user_id: &str,
+    ) -> crate::error::LibreFangResult<Vec<MemoryItem>>;
+
+    /// Add memories at a specific memory level (User/Session/Agent).
+    async fn add_with_level(
+        &self,
+        messages: &[serde_json::Value],
+        user_id: &str,
+        level: MemoryLevel,
+    ) -> crate::error::LibreFangResult<()>;
+
+    /// Get user preferences/memories.
+    async fn get(&self, user_id: &str) -> crate::error::LibreFangResult<Vec<MemoryItem>>;
+
+    /// List memories by category.
+    async fn list(
+        &self,
+        user_id: &str,
+        category: Option<&str>,
+    ) -> crate::error::LibreFangResult<Vec<MemoryItem>>;
+
+    /// Delete a specific memory by ID.
+    async fn delete(&self, memory_id: &str, user_id: &str) -> crate::error::LibreFangResult<bool>;
+
+    /// Update a memory's content (delete + re-add with same metadata).
+    async fn update(
+        &self,
+        memory_id: &str,
+        user_id: &str,
+        content: &str,
+    ) -> crate::error::LibreFangResult<bool>;
+}
+
+/// Metadata key under which `auto_memorize` tags memories with their
+/// originating `(channel, chat)` scope. Format mirrors the kernel's
+/// `sender_channel`: either a bare channel type (`"telegram"`) or a
+/// chat-qualified form (`"whatsapp:<chatJid>"`). When present, recall
+/// filters this against the active request's `chat_scope` so a memory
+/// extracted from a group chat cannot bleed into a DM with the same
+/// peer — and vice versa (#5227).
+///
+/// Memories without this key are treated as chat-agnostic (legacy /
+/// manually-stored / `MemoryLevel::User`) and remain recallable across
+/// all chats for the same `(agent, peer)` pair.
+pub const CHAT_SCOPE_METADATA_KEY: &str = "chat_scope";
+
+/// Decide whether a memory (identified by its stored `scope` string and
+/// `metadata` map) is allowed to surface in a recall whose active
+/// `(channel, chat)` scope is `current`. Returns `true` for three
+/// classes that must always cross chats:
+///
+/// 1. `MemoryLevel::User` — stable per-user facts (the `scope` column
+///    stores `"user_memory"` for these). Cross-chat by design.
+/// 2. Memories with no `CHAT_SCOPE_METADATA_KEY` tag — pre-#5227
+///    rows plus anything written through a non-channel path
+///    (dashboard, direct API). Treating them as chat-agnostic avoids
+///    silently hiding existing data.
+/// 3. Memories whose stamped `chat_scope` equals `current`.
+///
+/// All other tagged memories are filtered out.
+///
+/// Pulled out into the types crate so every recall site — proactive
+/// (`MemoryItem`), substrate (`MemoryFragment`), context engine — uses
+/// the same predicate and cannot drift.
+pub fn memory_scope_allows_recall(
+    scope: &str,
+    metadata: &HashMap<String, serde_json::Value>,
+    current: &str,
+) -> bool {
+    // Class 1 — user-level memories cross chats by design.
+    if scope == MemoryLevel::User.scope_str() {
+        return true;
+    }
+    match metadata.get(CHAT_SCOPE_METADATA_KEY) {
+        // Class 3 — stamped scope matches the active one.
+        Some(serde_json::Value::String(s)) if s == current => true,
+        // Stamped scope is set but differs → block.
+        Some(serde_json::Value::String(_)) => false,
+        // Class 2 — no tag (or non-string sentinel) → chat-agnostic.
+        _ => true,
+    }
+}
+
+/// Trait for proactive memory hooks (auto_memorize, auto_retrieve).
+///
+/// This provides hooks for automatic memory extraction and retrieval:
+/// - auto_memorize() - extract important info after agent runs
+/// - auto_retrieve() - proactively load context before agent runs
+#[async_trait]
+pub trait ProactiveMemoryHooks: Send + Sync {
+    /// Extract and store important information after agent execution.
+    /// When `peer_id` is `Some`, memories are scoped to that peer for isolation.
+    /// When `chat_scope` is `Some`, the originating `(channel, chat)` scope is
+    /// stamped onto each memory's metadata so subsequent recalls in a
+    /// **different** chat (same peer) will not surface it (#5227). Pass `None`
+    /// when the caller has no channel context (e.g. direct API, dashboard) —
+    /// memories then remain chat-agnostic.
+    async fn auto_memorize(
+        &self,
+        user_id: &str,
+        conversation: &[serde_json::Value],
+        peer_id: Option<&str>,
+        chat_scope: Option<&str>,
+    ) -> crate::error::LibreFangResult<ExtractionResult>;
+
+    /// Proactively retrieve relevant context before agent execution.
+    /// When `peer_id` is `Some`, only retrieves memories for that peer.
+    /// When `chat_scope` is `Some`, memories tagged with a **different**
+    /// chat scope are filtered out post-recall — chat-agnostic memories
+    /// (no scope tag, or stamped with the current scope) still surface.
+    /// This is the read side of the #5227 cross-chat isolation guard.
+    async fn auto_retrieve(
+        &self,
+        user_id: &str,
+        query: &str,
+        peer_id: Option<&str>,
+        chat_scope: Option<&str>,
+    ) -> crate::error::LibreFangResult<Vec<MemoryItem>>;
+}
+
+// ---------------------------------------------------------------------------
+// VectorStore trait — backend-agnostic vector storage abstraction
+// ---------------------------------------------------------------------------
+
+/// Search result from a vector store query.
+#[derive(Debug, Clone)]
+pub struct VectorSearchResult {
+    /// The memory ID.
+    pub id: String,
+    /// The stored text payload.
+    pub payload: String,
+    /// Cosine similarity score (0.0–1.0).
+    pub score: f32,
+    /// Arbitrary metadata.
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Backend-agnostic vector store interface.
+///
+/// This trait abstracts the vector storage layer, enabling pluggable backends
+/// (SQLite, Qdrant, Pinecone, Chroma, PgVector, Milvus, etc.).
+///
+/// The default implementation uses SQLite with BLOB-serialized embeddings and
+/// in-process cosine similarity re-ranking. External backends can implement
+/// this trait to offload ANN search to a dedicated vector database.
+///
+/// # Example (implementing for Qdrant)
+///
+/// ```ignore
+/// struct QdrantVectorStore { client: QdrantClient, collection: String }
+///
+/// #[async_trait]
+/// impl VectorStore for QdrantVectorStore {
+///     async fn insert(&self, id: &str, embedding: &[f32], payload: &str,
+///                     metadata: HashMap<String, serde_json::Value>) -> LibreFangResult<()> {
+///         self.client.upsert_points(&self.collection, vec![point]).await?;
+///         Ok(())
+///     }
+///     // ...
+/// }
+/// ```
+#[async_trait]
+pub trait VectorStore: Send + Sync {
+    /// Insert or update a vector with its payload and metadata.
+    async fn insert(
+        &self,
+        id: &str,
+        embedding: &[f32],
+        payload: &str,
+        metadata: HashMap<String, serde_json::Value>,
+    ) -> crate::error::LibreFangResult<()>;
+
+    /// Search for the `limit` nearest vectors to `query_embedding`.
+    ///
+    /// The returned results are ordered by descending similarity score.
+    /// Implementations should apply the provided `filter` (agent, scope, etc.).
+    async fn search(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+        filter: Option<MemoryFilter>,
+    ) -> crate::error::LibreFangResult<Vec<VectorSearchResult>>;
+
+    /// Delete a vector by ID.
+    async fn delete(&self, id: &str) -> crate::error::LibreFangResult<()>;
+
+    /// Retrieve stored embeddings for a batch of IDs.
+    ///
+    /// Returns a map of `id -> embedding`. IDs without stored embeddings
+    /// are omitted from the result.
+    async fn get_embeddings(
+        &self,
+        ids: &[&str],
+    ) -> crate::error::LibreFangResult<HashMap<String, Vec<f32>>>;
+
+    /// Return the name of this backend (e.g. "sqlite", "qdrant", "pinecone").
+    fn backend_name(&self) -> &str;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_filter_agent() {
+        let id = AgentId::new();
+        let filter = MemoryFilter::agent(id);
+        assert_eq!(filter.agent_id, Some(id));
+        assert!(filter.source.is_none());
+    }
+
+    #[test]
+    fn test_memory_fragment_serialization() {
+        let fragment = MemoryFragment {
+            id: MemoryId::new(),
+            agent_id: AgentId::new(),
+            content: "Test memory".to_string(),
+            embedding: None,
+            metadata: HashMap::new(),
+            source: MemorySource::Conversation,
+            confidence: 0.95,
+            created_at: Utc::now(),
+            accessed_at: Utc::now(),
+            access_count: 0,
+            scope: "episodic".to_string(),
+            image_url: None,
+            image_embedding: None,
+            modality: Default::default(),
+        };
+        let json = serde_json::to_string(&fragment).unwrap();
+        let deserialized: MemoryFragment = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.content, "Test memory");
+    }
+
+    #[test]
+    fn test_memory_item_creation() {
+        let item = MemoryItem::user("Prefers dark mode");
+        assert_eq!(item.level, MemoryLevel::User);
+        assert_eq!(item.content, "Prefers dark mode");
+    }
+
+    #[test]
+    fn test_memory_item_with_category() {
+        let item = MemoryItem::session("User asked about pricing").with_category("inquiry");
+        assert_eq!(item.category, Some("inquiry".to_string()));
+    }
+
+    #[test]
+    fn test_proactive_memory_config_default() {
+        let config = ProactiveMemoryConfig::default();
+        assert!(config.auto_memorize);
+        assert!(config.auto_retrieve);
+        assert_eq!(config.max_retrieve, 10);
+    }
+
+    #[test]
+    fn test_proactive_memory_overrides_default_inherits_global() {
+        // No fields set → resolution returns the global truth verbatim.
+        let global = ProactiveMemoryConfig::default();
+        let overrides = ProactiveMemoryOverrides::default();
+        assert!(overrides.is_empty());
+        assert!(overrides.resolve_auto_retrieve(&global));
+        assert!(overrides.resolve_auto_memorize(&global));
+
+        let disabled_global = ProactiveMemoryConfig {
+            auto_memorize: false,
+            ..ProactiveMemoryConfig::default()
+        };
+        assert!(!overrides.resolve_auto_memorize(&disabled_global));
+    }
+
+    #[test]
+    fn test_proactive_memory_overrides_per_field_disable() {
+        // The issue's main use case: cron sub-agents disable memorize
+        // while the global remains on for the user-facing agent.
+        let global = ProactiveMemoryConfig::default();
+        let overrides = ProactiveMemoryOverrides {
+            auto_memorize: Some(false),
+            ..Default::default()
+        };
+        assert!(!overrides.resolve_auto_memorize(&global));
+        assert!(
+            overrides.resolve_auto_retrieve(&global),
+            "retrieve untouched when only auto_memorize override is set"
+        );
+    }
+
+    #[test]
+    fn test_proactive_memory_overrides_master_switch_disables_both() {
+        let global = ProactiveMemoryConfig::default();
+        let overrides = ProactiveMemoryOverrides {
+            enabled: Some(false),
+            auto_memorize: Some(true), // Set but should be ignored.
+            auto_retrieve: Some(true),
+            extraction_model: None,
+        };
+        assert!(
+            !overrides.resolve_auto_memorize(&global),
+            "enabled=false wins over per-field auto_memorize=true"
+        );
+        assert!(
+            !overrides.resolve_auto_retrieve(&global),
+            "enabled=false wins over per-field auto_retrieve=true"
+        );
+    }
+
+    #[test]
+    fn test_proactive_memory_overrides_extraction_model_resolution() {
+        // #5475: agent override wins over global, global wins over None.
+        let mut global = ProactiveMemoryConfig::default();
+        let none_override = ProactiveMemoryOverrides::default();
+        assert_eq!(
+            none_override.resolve_extraction_model(&global),
+            None,
+            "no override, no global → None"
+        );
+
+        global.extraction_model = Some("openai/gpt-4o-mini".to_string());
+        assert_eq!(
+            none_override.resolve_extraction_model(&global),
+            Some("openai/gpt-4o-mini".to_string()),
+            "no override → inherit global"
+        );
+
+        let agent_override = ProactiveMemoryOverrides {
+            extraction_model: Some("anthropic/claude-haiku-4-5".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            agent_override.resolve_extraction_model(&global),
+            Some("anthropic/claude-haiku-4-5".to_string()),
+            "agent override wins over global"
+        );
+
+        // Empty-string override is treated as unset (operators sometimes
+        // write `extraction_model = ""` to mean "no override").
+        let empty_override = ProactiveMemoryOverrides {
+            extraction_model: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(
+            empty_override.resolve_extraction_model(&global),
+            Some("openai/gpt-4o-mini".to_string()),
+            "empty-string override falls through to global"
+        );
+
+        // `is_empty()` accounts for the new field.
+        assert!(!agent_override.is_empty());
+        assert!(none_override.is_empty());
+    }
+
+    #[test]
+    fn test_proactive_memory_overrides_global_disabled_inherits_off() {
+        // Global says off → no override fields set → per-agent stays off.
+        let global = ProactiveMemoryConfig {
+            enabled: false,
+            ..ProactiveMemoryConfig::default()
+        };
+        let overrides = ProactiveMemoryOverrides::default();
+        assert!(!overrides.resolve_auto_memorize(&global));
+        assert!(!overrides.resolve_auto_retrieve(&global));
+    }
+
+    #[test]
+    fn test_proactive_memory_overrides_serde_roundtrip() {
+        let overrides = ProactiveMemoryOverrides {
+            enabled: None,
+            auto_memorize: Some(false),
+            auto_retrieve: None,
+            extraction_model: Some("openai/gpt-4o-mini".to_string()),
+        };
+        let toml = toml::to_string(&overrides).expect("serialize");
+        // Only the set fields are emitted (skip_serializing_if on None).
+        assert!(toml.contains("auto_memorize"));
+        assert!(toml.contains("extraction_model"));
+        assert!(toml.contains("openai/gpt-4o-mini"));
+        assert!(!toml.contains("auto_retrieve"));
+        assert!(!toml.contains("enabled"));
+        let parsed: ProactiveMemoryOverrides = toml::from_str(&toml).expect("deserialize");
+        assert_eq!(parsed.auto_memorize, Some(false));
+        assert_eq!(parsed.auto_retrieve, None);
+        assert_eq!(parsed.enabled, None);
+        assert_eq!(
+            parsed.extraction_model,
+            Some("openai/gpt-4o-mini".to_string())
+        );
+    }
+
+    #[test]
+    fn test_cosine_similarity_identical() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![1.0, 0.0, 0.0];
+        let sim = cosine_similarity(&a, &b).expect("identical vectors are comparable");
+        assert!((sim - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let a = vec![1.0, 0.0];
+        let b = vec![0.0, 1.0];
+        let sim = cosine_similarity(&a, &b).expect("orthogonal vectors are comparable");
+        assert!(sim.abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_empty() {
+        // Empty vectors are not comparable — must return None, not 0.0.
+        assert_eq!(cosine_similarity(&[], &[]), None);
+    }
+
+    #[test]
+    fn test_cosine_similarity_length_mismatch() {
+        // Dim mismatch is not comparable — must return None, not 0.0.
+        let a = vec![1.0, 2.0];
+        let b = vec![1.0, 2.0, 3.0];
+        assert_eq!(cosine_similarity(&a, &b), None);
+    }
+
+    #[test]
+    fn test_cosine_similarity_zero_vector() {
+        // Zero magnitude → undefined direction → None (not 0.0).
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![1.0, 2.0, 3.0];
+        assert_eq!(cosine_similarity(&a, &b), None);
+        assert_eq!(cosine_similarity(&b, &a), None);
+    }
+}

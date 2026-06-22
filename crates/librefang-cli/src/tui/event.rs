@@ -1,0 +1,3043 @@
+//! Event system: crossterm polling, tick timer, streaming bridges.
+
+use librefang_kernel::AgentSubsystemApi;
+use librefang_kernel::LibreFangKernel;
+use librefang_kernel::McpSubsystemApi;
+use librefang_kernel::SkillsSubsystemApi;
+use librefang_runtime::agent_loop::AgentLoopResult;
+use librefang_runtime::llm_driver::StreamEvent;
+use librefang_types::agent::AgentId;
+use ratatui::crossterm::event::{self, Event as CtEvent, KeyEvent, KeyEventKind};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
+
+use super::screens::{
+    audit::AuditEntry,
+    dashboard::AuditRow,
+    extensions::{ExtensionHealthInfo, ExtensionInfo},
+    hands::{HandInfo, HandInstanceInfo},
+    logs::LogEntry,
+    memory::{AgentEntry, KvPair},
+    peers::PeerInfo,
+    security::SecurityFeature,
+    sessions::SessionInfo,
+    settings::{ModelInfo, ProviderInfo, TestResult, ToolInfo},
+    skills::{ClawHubResult, McpServerInfo, SkillInfo},
+    templates::ProviderAuth,
+    triggers::TriggerInfo,
+    usage::{AgentUsage, ModelUsage, UsageSummary},
+    workflows::{WorkflowInfo, WorkflowRun},
+};
+
+// ── BackendRef ──────────────────────────────────────────────────────────────
+
+/// Lightweight reference to the active backend, for passing to spawn functions.
+#[derive(Clone)]
+pub enum BackendRef {
+    Daemon {
+        base_url: String,
+        /// API key for `Authorization: Bearer` auth, if the daemon requires it.
+        api_key: Option<String>,
+    },
+    InProcess(Arc<LibreFangKernel>),
+}
+
+// ── AppEvent ────────────────────────────────────────────────────────────────
+
+/// Unified application event.
+#[allow(clippy::large_enum_variant)] // AgentLoopResult is inherently large
+pub enum AppEvent {
+    /// A crossterm key press event (filtered to Press only).
+    Key(KeyEvent),
+    /// Periodic tick for animations (spinners, etc.).
+    Tick,
+    /// Terminal was resized to the given (width, height).
+    Resize(u16, u16),
+    /// Bracketed-paste text received from the terminal.
+    Paste(String),
+    /// A streaming event from the LLM (daemon SSE or kernel mpsc).
+    Stream(StreamEvent),
+    /// The streaming agent loop finished.
+    StreamDone(Result<AgentLoopResult, String>),
+    /// The kernel finished booting in the background.
+    KernelReady(Arc<LibreFangKernel>),
+    /// The kernel failed to boot.
+    KernelError(String),
+    /// An agent was successfully spawned (daemon mode).
+    AgentSpawned { id: String, name: String },
+    /// Agent spawn failed.
+    AgentSpawnError(String),
+    /// Daemon detection result from background thread.
+    DaemonDetected {
+        url: Option<String>,
+        agent_count: u64,
+    },
+
+    // ── New tab events ──────────────────────────────────────────────────────
+    /// Dashboard data loaded.
+    DashboardData {
+        agent_count: u64,
+        uptime_secs: u64,
+        version: String,
+        provider: String,
+        model: String,
+    },
+    /// Audit trail loaded.
+    AuditLoaded(Vec<AuditRow>),
+    /// Auto-dream status loaded. Surfaces on the Dashboard's dream strip.
+    DreamsLoaded {
+        enabled: bool,
+        rows: Vec<crate::tui::screens::dashboard::DreamRow>,
+    },
+    // `ChannelListLoaded` + `ChannelTestResult` removed alongside the
+    // TUI Channels tab.
+    /// Workflow list loaded.
+    WorkflowListLoaded(Vec<WorkflowInfo>),
+    /// Workflow runs loaded for a specific workflow.
+    WorkflowRunsLoaded(Vec<WorkflowRun>),
+    /// Workflow run completed.
+    WorkflowRunResult(String),
+    /// Workflow created successfully.
+    WorkflowCreated(String),
+    /// Trigger list loaded.
+    TriggerListLoaded(Vec<TriggerInfo>),
+    /// Trigger created.
+    TriggerCreated(String),
+    /// Trigger deleted.
+    TriggerDeleted(String),
+    /// Agent killed successfully.
+    AgentKilled { id: String },
+    /// Agent kill failed.
+    AgentKillError(String),
+    /// Generic fetch error for any tab.
+    FetchError(String),
+
+    // ── New screen events ──────────────────────────────────────────────────
+    /// Sessions loaded.
+    SessionsLoaded(Vec<SessionInfo>),
+    /// Session deleted.
+    SessionDeleted(String),
+    /// Memory agents loaded (for agent selector).
+    MemoryAgentsLoaded(Vec<AgentEntry>),
+    /// Memory KV pairs loaded.
+    MemoryKvLoaded(Vec<KvPair>),
+    /// Memory KV saved.
+    MemoryKvSaved { key: String },
+    /// Memory KV deleted.
+    MemoryKvDeleted(String),
+    /// Skills loaded.
+    SkillsLoaded(Vec<SkillInfo>),
+    /// ClawHub results loaded.
+    ClawHubLoaded(Vec<ClawHubResult>),
+    /// Skill installed.
+    SkillInstalled(String),
+    /// Skill uninstalled.
+    SkillUninstalled(String),
+    /// MCP servers loaded.
+    McpServersLoaded(Vec<McpServerInfo>),
+    /// Templates providers loaded (auth status).
+    TemplateProvidersLoaded(Vec<ProviderAuth>),
+    /// Security features loaded.
+    SecurityLoaded(Vec<SecurityFeature>),
+    /// Security chain verification result.
+    SecurityChainVerified { valid: bool, message: String },
+    /// Audit entries loaded (full audit screen).
+    AuditEntriesLoaded(Vec<AuditEntry>),
+    /// Audit chain verified.
+    AuditChainVerified(bool),
+    /// Usage summary loaded.
+    UsageSummaryLoaded(UsageSummary),
+    /// Usage by model loaded.
+    UsageByModelLoaded(Vec<ModelUsage>),
+    /// Usage by agent loaded.
+    UsageByAgentLoaded(Vec<AgentUsage>),
+    /// Settings providers loaded.
+    SettingsProvidersLoaded(Vec<ProviderInfo>),
+    /// Settings models loaded.
+    SettingsModelsLoaded(Vec<ModelInfo>),
+    /// Settings tools loaded.
+    SettingsToolsLoaded(Vec<ToolInfo>),
+    /// Provider key saved.
+    ProviderKeySaved(String),
+    /// Provider key deleted.
+    ProviderKeyDeleted(String),
+    /// Provider test result.
+    ProviderTestResult(TestResult),
+    /// Peers loaded.
+    PeersLoaded(Vec<PeerInfo>),
+    /// Log entries loaded.
+    LogsLoaded(Vec<LogEntry>),
+    /// Hand definitions loaded (marketplace).
+    HandsLoaded(Vec<HandInfo>),
+    /// Active hand instances loaded.
+    ActiveHandsLoaded(Vec<HandInstanceInfo>),
+    /// Hand activated.
+    HandActivated(String),
+    /// Hand deactivated.
+    HandDeactivated(String),
+    /// Hand paused.
+    HandPaused(String),
+    /// Hand resumed.
+    HandResumed(String),
+    /// Extensions loaded (available + installed).
+    ExtensionsLoaded(Vec<ExtensionInfo>),
+    /// Extension health loaded.
+    ExtensionHealthLoaded(Vec<ExtensionHealthInfo>),
+    /// Extension installed.
+    ExtensionInstalled(String),
+    /// Extension removed.
+    ExtensionRemoved(String),
+    /// Extension reconnected.
+    ExtensionReconnected(String, usize),
+    /// Agent skills loaded (for edit screen).
+    AgentSkillsLoaded {
+        assigned: Vec<String>,
+        available: Vec<String>,
+    },
+    /// Agent MCP servers loaded (for edit screen).
+    AgentMcpServersLoaded {
+        assigned: Vec<String>,
+        available: Vec<String>,
+    },
+    /// Agent skills updated.
+    AgentSkillsUpdated(String),
+    /// Agent MCP servers updated.
+    AgentMcpServersUpdated(String),
+    /// Comms topology loaded.
+    CommsTopologyLoaded {
+        nodes: Vec<super::screens::comms::CommsNode>,
+        edges: Vec<super::screens::comms::CommsEdge>,
+    },
+    /// Comms events loaded.
+    CommsEventsLoaded(Vec<super::screens::comms::CommsEventItem>),
+    /// Comms send result.
+    CommsSendResult(String),
+    /// Comms task post result.
+    CommsTaskResult(String),
+
+    // ── Async chat helpers (previously blocking on the event-loop thread) ──
+    /// Agent model label fetched for chat header.
+    ChatModelLabelLoaded { agent_id: String, label: String },
+    /// Model list loaded for the model picker in chat.
+    ChatModelsForPicker(Vec<super::screens::chat::ModelEntry>),
+    /// Agent list loaded for the /agents chat command.
+    ChatAgentListLoaded(Vec<String>),
+}
+
+/// Spawn the crossterm polling + tick thread. Returns sender + receiver.
+pub fn spawn_event_thread(
+    tick_rate: Duration,
+) -> (mpsc::Sender<AppEvent>, mpsc::Receiver<AppEvent>) {
+    let (tx, rx) = mpsc::channel();
+    let poll_tx = tx.clone();
+
+    std::thread::spawn(move || {
+        loop {
+            if event::poll(tick_rate).unwrap_or(false) {
+                if let Ok(ev) = event::read() {
+                    let sent = match ev {
+                        // CRITICAL: only forward Press events — Windows sends
+                        // Release and Repeat too, which causes double/triple input
+                        CtEvent::Key(key) if key.kind == KeyEventKind::Press => {
+                            poll_tx.send(AppEvent::Key(key))
+                        }
+                        CtEvent::Resize(w, h) => poll_tx.send(AppEvent::Resize(w, h)),
+                        CtEvent::Paste(text) => poll_tx.send(AppEvent::Paste(text)),
+                        _ => Ok(()),
+                    };
+                    if sent.is_err() {
+                        break;
+                    }
+                }
+            } else {
+                // No event within tick_rate → send tick for spinner animations
+                if poll_tx.send(AppEvent::Tick).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    (tx, rx)
+}
+
+// ── Stream cancellation ─────────────────────────────────────────────────────
+
+/// A cancellation token for a background SSE/in-process stream thread.
+///
+/// Setting the flag to `true` causes the thread to stop reading and exit on
+/// its next iteration. Dropping the token without cancelling is a no-op.
+#[derive(Clone)]
+pub struct StreamCancelToken(Arc<AtomicBool>);
+
+impl StreamCancelToken {
+    fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+
+    /// Signal the stream thread to stop.
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+// ── Original spawn functions ────────────────────────────────────────────────
+
+/// Detect daemon in a background thread (non-blocking).
+pub fn spawn_daemon_detect(tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || {
+        let url = crate::find_daemon();
+        let mut agent_count = 0u64;
+
+        if let Some(ref u) = url {
+            if let Ok(client) = crate::http_client::client_builder()
+                .timeout(Duration::from_secs(2))
+                .build()
+            {
+                if let Ok(resp) = client.get(format!("{u}/api/status")).send() {
+                    if let Ok(body) = resp.json::<serde_json::Value>() {
+                        agent_count = body["agent_count"].as_u64().unwrap_or(0);
+                    }
+                }
+            }
+        }
+
+        let _ = tx.send(AppEvent::DaemonDetected { url, agent_count });
+    });
+}
+
+/// Spawn a background thread that boots the kernel.
+pub fn spawn_kernel_boot(config: Option<std::path::PathBuf>, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || {
+        // Create a tokio runtime context so any tokio::spawn calls during
+        // boot (e.g. publish_event via set_self_handle) find the reactor.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        match LibreFangKernel::boot(config.as_deref()) {
+            Ok(k) => {
+                let k = Arc::new(k);
+                k.set_self_handle();
+                let _ = tx.send(AppEvent::KernelReady(k));
+            }
+            Err(e) => {
+                let _ = tx.send(AppEvent::KernelError(format!("{e}")));
+            }
+        }
+    });
+}
+
+/// Spawn a background thread for in-process streaming.
+///
+/// Returns a [`StreamCancelToken`] that the caller can use to abort the stream
+/// when the user navigates away or starts a new chat session.
+pub fn spawn_inprocess_stream(
+    kernel: Arc<LibreFangKernel>,
+    agent_id: AgentId,
+    message: String,
+    tx: mpsc::Sender<AppEvent>,
+) -> StreamCancelToken {
+    let token = StreamCancelToken::new();
+    let cancel = token.clone();
+    std::thread::spawn(move || {
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                let _ = tx.send(AppEvent::StreamDone(Err(crate::i18n::t_args(
+                    "tui-event-stream-runtime-error",
+                    &[("error", &e.to_string())],
+                ))));
+                return;
+            }
+        };
+
+        // Enter the runtime context so tokio::spawn inside
+        // send_message_streaming() finds the reactor.
+        let _guard = rt.enter();
+
+        match rt.block_on(kernel.send_message_streaming_with_routing(agent_id, &message, None)) {
+            Ok((mut rx, handle)) => {
+                rt.block_on(async {
+                    while let Some(ev) = rx.recv().await {
+                        if cancel.is_cancelled() {
+                            break;
+                        }
+                        if tx.send(AppEvent::Stream(ev)).is_err() {
+                            return;
+                        }
+                    }
+                    if cancel.is_cancelled() {
+                        return;
+                    }
+                    let result = handle
+                        .await
+                        .map_err(|e| e.to_string())
+                        .and_then(|r| r.map_err(|e| e.to_string()));
+                    let _ = tx.send(AppEvent::StreamDone(result));
+                });
+            }
+            Err(e) => {
+                let _ = tx.send(AppEvent::StreamDone(Err(format!("{e}"))));
+            }
+        }
+    });
+    token
+}
+
+/// Spawn a background thread for daemon SSE streaming.
+///
+/// Returns a [`StreamCancelToken`] that the caller can use to abort the stream
+/// when the user navigates away or starts a new chat session.
+pub fn spawn_daemon_stream(
+    base_url: String,
+    agent_id: String,
+    message: String,
+    api_key: Option<String>,
+    tx: mpsc::Sender<AppEvent>,
+) -> StreamCancelToken {
+    let token = StreamCancelToken::new();
+    let cancel = token.clone();
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Read};
+
+        let client = make_daemon_client_with_timeout(api_key.as_deref(), Duration::from_secs(300));
+
+        let url = format!("{base_url}/api/agents/{agent_id}/message/stream");
+        let resp = client
+            .post(&url)
+            .json(&serde_json::json!({"message": message}))
+            .send();
+
+        let resp = match resp {
+            Ok(r) if r.status().is_success() => r,
+            Ok(_) => {
+                let fallback = daemon_fallback(&base_url, &agent_id, &message, api_key.as_deref());
+                let _ = tx.send(AppEvent::StreamDone(fallback));
+                return;
+            }
+            Err(e) => {
+                let _ = tx.send(AppEvent::StreamDone(Err(crate::i18n::t_args(
+                    "tui-event-stream-connection-failed",
+                    &[("error", &e.to_string())],
+                ))));
+                return;
+            }
+        };
+
+        struct RespReader(reqwest::blocking::Response);
+        impl Read for RespReader {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.0.read(buf)
+            }
+        }
+
+        // Accumulate usage across all iterations (tool-use loops send
+        // multiple ContentComplete events — one per LLM call).  Do NOT
+        // return early on "done": true — the SSE stream continues until
+        // the server closes the connection after the agent loop finishes.
+        let mut total_input_tokens: u64 = 0;
+        let mut total_output_tokens: u64 = 0;
+
+        let reader = BufReader::new(RespReader(resp));
+        for line in reader.lines() {
+            if cancel.is_cancelled() {
+                return;
+            }
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => break,
+            };
+            if line.is_empty() || line.starts_with("event:") {
+                continue;
+            }
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(content) = json.get("content").and_then(|c| c.as_str()) {
+                        let _ = tx.send(AppEvent::Stream(StreamEvent::TextDelta {
+                            text: content.to_string(),
+                        }));
+                    }
+                    if let Some(tool) = json.get("tool").and_then(|t| t.as_str()) {
+                        if json.get("input").is_none() {
+                            let _ = tx.send(AppEvent::Stream(StreamEvent::ToolUseStart {
+                                id: String::new(),
+                                name: tool.to_string(),
+                            }));
+                        } else {
+                            let _ = tx.send(AppEvent::Stream(StreamEvent::ToolUseEnd {
+                                id: String::new(),
+                                name: tool.to_string(),
+                                input: json["input"].clone(),
+                            }));
+                        }
+                    }
+                    if json.get("done").and_then(|d| d.as_bool()) == Some(true) {
+                        let usage = json.get("usage").cloned().unwrap_or_default();
+                        total_input_tokens += usage
+                            .get("input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        total_output_tokens += usage
+                            .get("output_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        // Forward as ContentComplete so the UI can update
+                        // token display, but do NOT terminate — the agent
+                        // loop may continue with tool results.
+                        let _ = tx.send(AppEvent::Stream(StreamEvent::ContentComplete {
+                            stop_reason: librefang_types::message::StopReason::EndTurn,
+                            usage: librefang_types::message::TokenUsage {
+                                input_tokens: total_input_tokens,
+                                output_tokens: total_output_tokens,
+                                ..Default::default()
+                            },
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Connection closed — agent loop is truly done.
+        let _ = tx.send(AppEvent::StreamDone(Ok(AgentLoopResult {
+            response: String::new(),
+            total_usage: librefang_types::message::TokenUsage {
+                input_tokens: total_input_tokens,
+                output_tokens: total_output_tokens,
+                ..Default::default()
+            },
+            iterations: 0,
+            cost_usd: None,
+            silent: false,
+            directives: Default::default(),
+            decision_traces: Vec::new(),
+            memories_saved: Vec::new(),
+            memories_used: Vec::new(),
+            memory_conflicts: Vec::new(),
+            provider_not_configured: false,
+            experiment_context: None,
+            latency_ms: 0,
+            // TUI doesn't use the session-slice index; N/A.
+            new_messages_start: 0,
+            skill_evolution_suggested: false,
+            owner_notice: None,
+            // The TUI streams over the daemon's SSE bridge, which does
+            // not surface the fallback-chain provider tag. Metering on
+            // the daemon side has already billed against the right
+            // provider; no value to forward here.
+            actual_provider: None,
+            actual_model: None,
+        })));
+    });
+    token
+}
+
+/// Blocking fallback for daemon chat (non-streaming).
+fn daemon_fallback(
+    base_url: &str,
+    agent_id: &str,
+    message: &str,
+    api_key: Option<&str>,
+) -> Result<AgentLoopResult, String> {
+    let client = make_daemon_client_with_timeout(api_key, Duration::from_secs(120));
+
+    let resp = client
+        .post(format!("{base_url}/api/agents/{agent_id}/message"))
+        .json(&serde_json::json!({"message": message}))
+        .send()
+        .map_err(|e| e.to_string())?;
+
+    let body: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    if let Some(response) = body.get("response").and_then(|r| r.as_str()) {
+        let input_tokens = body["input_tokens"].as_u64().unwrap_or(0);
+        let output_tokens = body["output_tokens"].as_u64().unwrap_or(0);
+        Ok(AgentLoopResult {
+            response: response.to_string(),
+            total_usage: librefang_types::message::TokenUsage {
+                input_tokens,
+                output_tokens,
+                ..Default::default()
+            },
+            iterations: body["iterations"].as_u64().unwrap_or(0) as u32,
+            cost_usd: body["cost_usd"].as_f64(),
+            silent: false,
+            directives: Default::default(),
+            decision_traces: Vec::new(),
+            memories_saved: Vec::new(),
+            memories_used: Vec::new(),
+            memory_conflicts: Vec::new(),
+            provider_not_configured: false,
+            experiment_context: None,
+            latency_ms: 0,
+            // TUI doesn't use the session-slice index; N/A.
+            new_messages_start: 0,
+            skill_evolution_suggested: false,
+            owner_notice: None,
+            // Daemon's `POST /agents/<id>/message` JSON shape does not
+            // include the fallback-chain provider tag. Metering on the
+            // daemon side has already billed against the right
+            // provider; no value to forward here.
+            actual_provider: None,
+            actual_model: None,
+        })
+    } else {
+        Err(body["error"]
+            .as_str()
+            .unwrap_or("Unknown error")
+            .to_string())
+    }
+}
+
+/// Spawn a background thread that spawns an agent on the daemon.
+pub fn spawn_daemon_agent(
+    base_url: String,
+    toml_content: String,
+    api_key: Option<String>,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || {
+        let client = make_daemon_client_with_timeout(api_key.as_deref(), Duration::from_secs(30));
+
+        let resp = client
+            .post(format!("{base_url}/api/agents"))
+            .json(&serde_json::json!({"manifest_toml": toml_content}))
+            .send();
+
+        match resp {
+            Ok(r) => {
+                let body: serde_json::Value = r.json().unwrap_or_default();
+                if let Some(id) = body.get("agent_id").and_then(|v| v.as_str()) {
+                    let name = body["name"].as_str().unwrap_or("agent").to_string();
+                    let _ = tx.send(AppEvent::AgentSpawned {
+                        id: id.to_string(),
+                        name,
+                    });
+                } else {
+                    let _ = tx.send(AppEvent::AgentSpawnError(
+                        body["error"]
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| {
+                                crate::i18n::t("tui-event-agent-spawn-failed-fallback")
+                            }),
+                    ));
+                }
+            }
+            Err(e) => {
+                let _ = tx.send(AppEvent::AgentSpawnError(format!("{e}")));
+            }
+        }
+    });
+}
+
+// ── New spawn functions for tabs ────────────────────────────────────────────
+
+/// Fetch dashboard data in background.
+pub fn spawn_fetch_dashboard(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+
+            if let Ok(resp) = client.get(format!("{base_url}/api/status")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let _ = tx.send(AppEvent::DashboardData {
+                        agent_count: body["agent_count"].as_u64().unwrap_or(0),
+                        uptime_secs: body["uptime_secs"].as_u64().unwrap_or(0),
+                        version: body["version"].as_str().unwrap_or("?").to_string(),
+                        provider: body["provider"].as_str().unwrap_or("").to_string(),
+                        model: body["model"].as_str().unwrap_or("").to_string(),
+                    });
+                }
+            }
+
+            // Try to fetch audit trail
+            if let Ok(resp) = client.get(format!("{base_url}/api/audit/recent")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let rows: Vec<AuditRow> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|r| AuditRow {
+                                    timestamp: r["timestamp"].as_str().unwrap_or("").to_string(),
+                                    agent: r["agent"].as_str().unwrap_or("").to_string(),
+                                    action: r["action"].as_str().unwrap_or("").to_string(),
+                                    detail: r["detail"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::AuditLoaded(rows));
+                }
+            }
+
+            // Try to fetch auto-dream status. Silent skip on any failure —
+            // this endpoint is optional and the dashboard should keep
+            // working if auto-dream is not wired up.
+            if let Ok(resp) = client
+                .get(format!("{base_url}/api/auto-dream/status"))
+                .send()
+            {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let enabled = body
+                        .get("enabled")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let rows: Vec<crate::tui::screens::dashboard::DreamRow> = body
+                        .get("agents")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|a| {
+                                    let progress = a.get("progress")?;
+                                    if progress.is_null() {
+                                        return None;
+                                    }
+                                    Some(crate::tui::screens::dashboard::DreamRow {
+                                        agent_name: a
+                                            .get("agent_name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("?")
+                                            .to_string(),
+                                        status: progress
+                                            .get("status")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("?")
+                                            .to_string(),
+                                        phase: progress
+                                            .get("phase")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        memories_touched: progress
+                                            .get("memories_touched")
+                                            .and_then(|v| v.as_array())
+                                            .map(|a| a.len() as u32)
+                                            .unwrap_or(0),
+                                        tool_use_count: progress
+                                            .get("tool_use_count")
+                                            .and_then(|v| v.as_u64())
+                                            .unwrap_or(0)
+                                            as u32,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::DreamsLoaded { enabled, rows });
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            let count = kernel.agent_registry_ref().count() as u64;
+            let _ = tx.send(AppEvent::DashboardData {
+                agent_count: count,
+                uptime_secs: 0,
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                provider: String::new(),
+                model: String::new(),
+            });
+            // In-process mode doesn't have a REST audit endpoint yet
+            let _ = tx.send(AppEvent::AuditLoaded(Vec::new()));
+
+            // Pull auto-dream status directly off the kernel. Without this
+            // the DREAMS strip never receives data in standalone TUI mode
+            // (no daemon), even though the local kernel's dream flow is
+            // fully active. `current_status` is async so we spin up a
+            // throwaway runtime on this worker thread.
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(_) => return,
+            };
+            let status = rt.block_on(librefang_kernel::auto_dream::current_status(&kernel));
+            let rows: Vec<crate::tui::screens::dashboard::DreamRow> = status
+                .agents
+                .iter()
+                .filter_map(|a| {
+                    let progress = a.progress.as_ref()?;
+                    let status_str = match progress.status {
+                        librefang_kernel::auto_dream::DreamStatus::Running => "running",
+                        librefang_kernel::auto_dream::DreamStatus::Completed => "completed",
+                        librefang_kernel::auto_dream::DreamStatus::Failed => "failed",
+                        librefang_kernel::auto_dream::DreamStatus::Aborted => "aborted",
+                    };
+                    Some(crate::tui::screens::dashboard::DreamRow {
+                        agent_name: a.agent_name.clone(),
+                        status: status_str.to_string(),
+                        phase: progress.phase.clone(),
+                        memories_touched: progress.memories_touched.len() as u32,
+                        tool_use_count: progress.tool_use_count,
+                    })
+                })
+                .collect();
+            let _ = tx.send(AppEvent::DreamsLoaded {
+                enabled: status.enabled,
+                rows,
+            });
+        }
+    });
+}
+
+// `spawn_fetch_channels` + `spawn_test_channel` retired alongside
+// the TUI Channels tab.
+
+/// Fetch workflow list in background.
+pub fn spawn_fetch_workflows(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+
+            if let Ok(resp) = client.get(format!("{base_url}/api/workflows")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let workflows: Vec<WorkflowInfo> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|wf| WorkflowInfo {
+                                    id: wf["id"].as_str().unwrap_or("?").to_string(),
+                                    name: wf["name"].as_str().unwrap_or("?").to_string(),
+                                    steps: wf["steps"].as_u64().unwrap_or(0) as usize,
+                                    created: wf["created"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::WorkflowListLoaded(workflows));
+                }
+            }
+        }
+        BackendRef::InProcess(_kernel) => {
+            // Workflows in in-process mode - return empty for now
+            let _ = tx.send(AppEvent::WorkflowListLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Fetch workflow runs in background.
+pub fn spawn_fetch_workflow_runs(
+    backend: BackendRef,
+    workflow_id: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+
+            if let Ok(resp) = client
+                .get(format!("{base_url}/api/workflows/{workflow_id}/runs"))
+                .send()
+            {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let runs: Vec<WorkflowRun> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|r| WorkflowRun {
+                                    id: r["id"].as_str().unwrap_or("?").to_string(),
+                                    state: r["state"].as_str().unwrap_or("?").to_string(),
+                                    duration: r["duration"].as_str().unwrap_or("").to_string(),
+                                    output_preview: r["output"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::WorkflowRunsLoaded(runs));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::WorkflowRunsLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Run a workflow in background.
+pub fn spawn_run_workflow(
+    backend: BackendRef,
+    workflow_id: String,
+    input: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client =
+                make_daemon_client_with_timeout(api_key.as_deref(), Duration::from_secs(60));
+
+            match client
+                .post(format!("{base_url}/api/workflows/{workflow_id}/run"))
+                .json(&serde_json::json!({"input": input}))
+                .send()
+            {
+                Ok(resp) => {
+                    let body: serde_json::Value = resp.json().unwrap_or_default();
+                    let result = body["output"]
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| crate::i18n::t("tui-event-workflow-completed"));
+                    let _ = tx.send(AppEvent::WorkflowRunResult(result));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::WorkflowRunResult(format!("Error: {e}")));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::WorkflowRunResult(crate::i18n::t(
+                "tui-event-workflow-exec-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Create a workflow in background.
+pub fn spawn_create_workflow(
+    backend: BackendRef,
+    name: String,
+    description: String,
+    steps_json: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client =
+                make_daemon_client_with_timeout(api_key.as_deref(), Duration::from_secs(10));
+
+            match client
+                .post(format!("{base_url}/api/workflows"))
+                .json(&serde_json::json!({
+                    "name": name,
+                    "description": description,
+                    "steps": steps_json,
+                }))
+                .send()
+            {
+                Ok(resp) => {
+                    let body: serde_json::Value = resp.json().unwrap_or_default();
+                    let id = body["id"].as_str().unwrap_or("created").to_string();
+                    let _ = tx.send(AppEvent::WorkflowCreated(id));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::FetchError(format!("Create workflow: {e}")));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-workflow-create-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Fetch triggers in background.
+pub fn spawn_fetch_triggers(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+
+            if let Ok(resp) = client.get(format!("{base_url}/api/triggers")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let triggers: Vec<TriggerInfo> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|tr| TriggerInfo {
+                                    id: tr["id"].as_str().unwrap_or("?").to_string(),
+                                    agent_id: tr["agent_id"].as_str().unwrap_or("?").to_string(),
+                                    pattern: tr["pattern"].as_str().unwrap_or("?").to_string(),
+                                    fires: tr["fires"].as_u64().unwrap_or(0),
+                                    enabled: tr["enabled"].as_bool().unwrap_or(true),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::TriggerListLoaded(triggers));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::TriggerListLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Create a trigger in background.
+pub fn spawn_create_trigger(
+    backend: BackendRef,
+    agent_id: String,
+    pattern_type: String,
+    pattern_param: String,
+    prompt: String,
+    max_fires: u64,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client =
+                make_daemon_client_with_timeout(api_key.as_deref(), Duration::from_secs(10));
+
+            match client
+                .post(format!("{base_url}/api/triggers"))
+                .json(&serde_json::json!({
+                    "agent_id": agent_id,
+                    "pattern_type": pattern_type,
+                    "pattern_param": pattern_param,
+                    "prompt": prompt,
+                    "max_fires": max_fires,
+                }))
+                .send()
+            {
+                Ok(resp) => {
+                    let body: serde_json::Value = resp.json().unwrap_or_default();
+                    let id = body["id"].as_str().unwrap_or("created").to_string();
+                    let _ = tx.send(AppEvent::TriggerCreated(id));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::FetchError(format!("Create trigger: {e}")));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-trigger-create-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Delete a trigger in background.
+pub fn spawn_delete_trigger(backend: BackendRef, trigger_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+
+            match client
+                .delete(format!("{base_url}/api/triggers/{trigger_id}"))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::TriggerDeleted(trigger_id));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-trigger-delete-failed",
+                        &[("trigger_id", &trigger_id)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-trigger-delete-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Kill an agent in background (for detail view action).
+pub fn spawn_kill_agent(backend: BackendRef, agent_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+
+            match client
+                .delete(format!("{base_url}/api/agents/{agent_id}"))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::AgentKilled { id: agent_id });
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::AgentKillError(crate::i18n::t_args(
+                        "tui-event-agent-kill-failed",
+                        &[("agent_id", &agent_id)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            // Try to parse as UUID-based AgentId
+            if let Ok(uuid) = uuid::Uuid::parse_str(&agent_id) {
+                let aid = AgentId(uuid);
+                match kernel.kill_agent(aid) {
+                    Ok(()) => {
+                        let _ = tx.send(AppEvent::AgentKilled { id: agent_id });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AppEvent::AgentKillError(format!("{e}")));
+                    }
+                }
+            } else {
+                let _ = tx.send(AppEvent::AgentKillError(crate::i18n::t_args(
+                    "tui-event-agent-invalid-id",
+                    &[("agent_id", &agent_id)],
+                )));
+            }
+        }
+    });
+}
+
+/// Fetch skill assignment for an agent.
+pub fn spawn_fetch_agent_skills(backend: BackendRef, agent_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client
+                .get(format!("{base_url}/api/agents/{agent_id}/skills"))
+                .send()
+            {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let assigned: Vec<String> = body["assigned"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let available: Vec<String> = body["available"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::AgentSkillsLoaded {
+                        assigned,
+                        available,
+                    });
+                    return;
+                }
+            }
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-skills-fetch-failed",
+            )));
+        }
+        BackendRef::InProcess(kernel) => {
+            if let Ok(uuid) = uuid::Uuid::parse_str(&agent_id) {
+                let aid = librefang_types::agent::AgentId(uuid);
+                let assigned = kernel
+                    .agent_registry_ref()
+                    .get(aid)
+                    .map(|e| e.manifest.skills.clone())
+                    .unwrap_or_default();
+                let available = kernel
+                    .skill_registry_ref()
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .skill_names();
+                let _ = tx.send(AppEvent::AgentSkillsLoaded {
+                    assigned,
+                    available,
+                });
+            }
+        }
+    });
+}
+
+/// Fetch MCP server assignment for an agent.
+pub fn spawn_fetch_agent_mcp_servers(
+    backend: BackendRef,
+    agent_id: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client
+                .get(format!("{base_url}/api/agents/{agent_id}/mcp_servers"))
+                .send()
+            {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let assigned: Vec<String> = body["assigned"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let available: Vec<String> = body["available"]
+                        .as_array()
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::AgentMcpServersLoaded {
+                        assigned,
+                        available,
+                    });
+                    return;
+                }
+            }
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-mcp-fetch-failed",
+            )));
+        }
+        BackendRef::InProcess(kernel) => {
+            if let Ok(uuid) = uuid::Uuid::parse_str(&agent_id) {
+                let aid = librefang_types::agent::AgentId(uuid);
+                let assigned = kernel
+                    .agent_registry_ref()
+                    .get(aid)
+                    .map(|e| e.manifest.mcp_servers.clone())
+                    .unwrap_or_default();
+                let mut available = Vec::new();
+                if let Ok(mcp_tools) = kernel.tools_ref().lock() {
+                    let configured_servers: Vec<String> = kernel
+                        .effective_servers_ref()
+                        .read()
+                        .map(|servers| servers.iter().map(|s| s.name.clone()).collect())
+                        .unwrap_or_default();
+                    let mut seen = std::collections::HashSet::new();
+                    for tool in mcp_tools.iter() {
+                        if let Some(server) = librefang_runtime::mcp::resolve_mcp_server_from_known(
+                            &tool.name,
+                            configured_servers.iter().map(String::as_str),
+                        ) {
+                            if seen.insert(server.to_string()) {
+                                available.push(server.to_string());
+                            }
+                        }
+                    }
+                }
+                let _ = tx.send(AppEvent::AgentMcpServersLoaded {
+                    assigned,
+                    available,
+                });
+            }
+        }
+    });
+}
+
+/// Update an agent's skills.
+pub fn spawn_update_agent_skills(
+    backend: BackendRef,
+    agent_id: String,
+    skills: Vec<String>,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .put(format!("{base_url}/api/agents/{agent_id}/skills"))
+                .json(&serde_json::json!({"skills": skills}))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::AgentSkillsUpdated(agent_id));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                        "tui-event-skills-update-failed",
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            if let Ok(uuid) = uuid::Uuid::parse_str(&agent_id) {
+                let aid = librefang_types::agent::AgentId(uuid);
+                match kernel.set_agent_skills(aid, skills) {
+                    Ok(()) => {
+                        let _ = tx.send(AppEvent::AgentSkillsUpdated(agent_id));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                            "tui-event-skills-update-error",
+                            &[("error", &e.to_string())],
+                        )));
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// Update an agent's MCP servers.
+pub fn spawn_update_agent_mcp_servers(
+    backend: BackendRef,
+    agent_id: String,
+    servers: Vec<String>,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .put(format!("{base_url}/api/agents/{agent_id}/mcp_servers"))
+                .json(&serde_json::json!({"mcp_servers": servers}))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::AgentMcpServersUpdated(agent_id));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                        "tui-event-mcp-update-failed",
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            if let Ok(uuid) = uuid::Uuid::parse_str(&agent_id) {
+                let aid = librefang_types::agent::AgentId(uuid);
+                match kernel.set_agent_mcp_servers(aid, servers) {
+                    Ok(()) => {
+                        let _ = tx.send(AppEvent::AgentMcpServersUpdated(agent_id));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                            "tui-event-mcp-update-error",
+                            &[("error", &e.to_string())],
+                        )));
+                    }
+                }
+            }
+        }
+    });
+}
+
+// ── New screen spawn functions ───────────────────────────────────────────────
+
+/// Build a blocking reqwest client for daemon calls.
+///
+/// When `api_key` is `Some`, attaches an `Authorization: Bearer <key>` default
+/// header so every request through this client is authenticated.
+fn make_daemon_client(api_key: Option<&str>) -> reqwest::blocking::Client {
+    make_daemon_client_with_timeout(api_key, Duration::from_secs(5))
+}
+
+/// Build a blocking reqwest client for daemon calls with a custom timeout.
+///
+/// When `api_key` is `Some`, attaches an `Authorization: Bearer <key>` default
+/// header so every request through this client is authenticated.
+fn make_daemon_client_with_timeout(
+    api_key: Option<&str>,
+    timeout: Duration,
+) -> reqwest::blocking::Client {
+    let mut builder = crate::http_client::client_builder().timeout(timeout);
+    if let Some(key) = api_key {
+        let mut headers = reqwest::header::HeaderMap::new();
+        if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}")) {
+            headers.insert(reqwest::header::AUTHORIZATION, val);
+        }
+        builder = builder.default_headers(headers);
+    }
+    builder
+        .build()
+        .unwrap_or_else(|_| crate::http_client::new_client())
+}
+
+/// Fetch sessions list.
+pub fn spawn_fetch_sessions(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/sessions")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let sessions: Vec<SessionInfo> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|s| SessionInfo {
+                                    id: s["id"].as_str().unwrap_or("").to_string(),
+                                    agent_name: s["agent_name"].as_str().unwrap_or("").to_string(),
+                                    agent_id: s["agent_id"].as_str().unwrap_or("").to_string(),
+                                    message_count: s["message_count"].as_u64().unwrap_or(0),
+                                    created: s["created"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::SessionsLoaded(sessions));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::SessionsLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Delete a session.
+pub fn spawn_delete_session(backend: BackendRef, session_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .delete(format!("{base_url}/api/sessions/{session_id}"))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::SessionDeleted(session_id));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-session-delete-failed",
+                        &[("session_id", &session_id)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-session-management-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Fetch agents for memory screen agent selector.
+pub fn spawn_fetch_memory_agents(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/agents")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let agents: Vec<AgentEntry> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|a| AgentEntry {
+                                    id: a["id"].as_str().unwrap_or("").to_string(),
+                                    name: a["name"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::MemoryAgentsLoaded(agents));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            let agents: Vec<AgentEntry> = kernel
+                .agent_registry_ref()
+                .list()
+                .iter()
+                .map(|e| AgentEntry {
+                    id: format!("{}", e.id),
+                    name: e.name.clone(),
+                })
+                .collect();
+            let _ = tx.send(AppEvent::MemoryAgentsLoaded(agents));
+        }
+    });
+}
+
+/// Fetch KV pairs for an agent.
+pub fn spawn_fetch_memory_kv(backend: BackendRef, agent_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client
+                .get(format!("{base_url}/api/memory/agents/{agent_id}/kv"))
+                .send()
+            {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let pairs: Vec<KvPair> = if let Some(obj) = body.as_object() {
+                        obj.iter()
+                            .map(|(k, v)| KvPair {
+                                key: k.clone(),
+                                value: v.as_str().unwrap_or(&v.to_string()).to_string(),
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let _ = tx.send(AppEvent::MemoryKvLoaded(pairs));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::MemoryKvLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Save a KV pair.
+pub fn spawn_save_memory_kv(
+    backend: BackendRef,
+    agent_id: String,
+    key: String,
+    value: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .put(format!("{base_url}/api/memory/agents/{agent_id}/kv/{key}"))
+                .json(&serde_json::json!({"value": value}))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::MemoryKvSaved { key });
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                        "tui-event-kv-save-failed",
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-kv-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Delete a KV pair.
+pub fn spawn_delete_memory_kv(
+    backend: BackendRef,
+    agent_id: String,
+    key: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .delete(format!("{base_url}/api/memory/agents/{agent_id}/kv/{key}"))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::MemoryKvDeleted(key));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                        "tui-event-kv-delete-failed",
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-kv-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Fetch installed skills.
+pub fn spawn_fetch_skills(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/skills")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let skills: Vec<SkillInfo> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|s| SkillInfo {
+                                    name: s["name"].as_str().unwrap_or("").to_string(),
+                                    runtime: s["runtime"].as_str().unwrap_or("").to_string(),
+                                    source: s["source"].as_str().unwrap_or("").to_string(),
+                                    description: s["description"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::SkillsLoaded(skills));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::SkillsLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Search ClawHub marketplace.
+pub fn spawn_search_clawhub(backend: BackendRef, query: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            let encoded: String = query
+                .chars()
+                .map(|c| {
+                    if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
+                        c.to_string()
+                    } else {
+                        format!("%{:02X}", c as u32)
+                    }
+                })
+                .collect();
+            let url = format!("{base_url}/api/clawhub/search?q={encoded}");
+            if let Ok(resp) = client.get(&url).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let results = parse_clawhub_results(&body);
+                    let _ = tx.send(AppEvent::ClawHubLoaded(results));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::ClawHubLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Browse ClawHub marketplace.
+pub fn spawn_browse_clawhub(backend: BackendRef, sort: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            let url = format!("{base_url}/api/clawhub/browse?sort={sort}");
+            if let Ok(resp) = client.get(&url).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let results = parse_clawhub_results(&body);
+                    let _ = tx.send(AppEvent::ClawHubLoaded(results));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::ClawHubLoaded(Vec::new()));
+        }
+    });
+}
+
+fn parse_clawhub_results(body: &serde_json::Value) -> Vec<ClawHubResult> {
+    // API returns {"items": [...]} wrapper, fall back to bare array for compat
+    let items = body
+        .get("items")
+        .and_then(|v| v.as_array())
+        .or_else(|| body.as_array());
+
+    items
+        .map(|arr| {
+            arr.iter()
+                .map(|r| ClawHubResult {
+                    name: r["name"].as_str().unwrap_or("").to_string(),
+                    slug: r["slug"].as_str().unwrap_or("").to_string(),
+                    description: r["description"].as_str().unwrap_or("").to_string(),
+                    downloads: r["downloads"].as_u64().unwrap_or(0),
+                    runtime: r["runtime"].as_str().unwrap_or("").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Install a skill from ClawHub.
+pub fn spawn_install_skill(backend: BackendRef, slug: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .post(format!("{base_url}/api/clawhub/install"))
+                .json(&serde_json::json!({"slug": slug}))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::SkillInstalled(slug));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-skill-install-failed",
+                        &[("slug", &slug)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-skill-install-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Uninstall a skill.
+pub fn spawn_uninstall_skill(backend: BackendRef, name: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .post(format!("{base_url}/api/skills/uninstall"))
+                .json(&serde_json::json!({"name": name}))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::SkillUninstalled(name));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-skill-uninstall-failed",
+                        &[("name", &name)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-skill-uninstall-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Fetch MCP servers.
+pub fn spawn_fetch_mcp_servers(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/mcp/servers")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let servers: Vec<McpServerInfo> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|s| McpServerInfo {
+                                    name: s["name"].as_str().unwrap_or("").to_string(),
+                                    connected: s["connected"].as_bool().unwrap_or(false),
+                                    tool_count: s["tool_count"].as_u64().unwrap_or(0) as usize,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::McpServersLoaded(servers));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::McpServersLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Fetch provider auth status for templates screen.
+pub fn spawn_fetch_template_providers(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/providers")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    // API returns { "providers": [...], "total": N }
+                    let arr = body["providers"].as_array();
+                    let providers: Vec<ProviderAuth> = arr
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|p| {
+                                    let auth = p["auth_status"].as_str().unwrap_or("missing");
+                                    ProviderAuth {
+                                        name: p["id"].as_str().unwrap_or("").to_string(),
+                                        configured: auth == "configured" || auth == "not_required",
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::TemplateProvidersLoaded(providers));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::TemplateProvidersLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Fetch security status.
+pub fn spawn_fetch_security(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/security")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let features: Vec<SecurityFeature> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|f| {
+                                    use super::screens::security::SecuritySection;
+                                    let section = match f["section"].as_str().unwrap_or("core") {
+                                        "configurable" => SecuritySection::Configurable,
+                                        "monitoring" => SecuritySection::Monitoring,
+                                        _ => SecuritySection::Core,
+                                    };
+                                    SecurityFeature {
+                                        name: f["name"].as_str().unwrap_or("").to_string(),
+                                        active: f["active"].as_bool().unwrap_or(true),
+                                        description: f["description"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        section,
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if !features.is_empty() {
+                        let _ = tx.send(AppEvent::SecurityLoaded(features));
+                    }
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            // Use builtin defaults (already loaded in SecurityState::new())
+        }
+    });
+}
+
+/// Verify audit chain.
+pub fn spawn_verify_chain(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client.get(format!("{base_url}/api/audit/verify")).send() {
+                Ok(resp) => {
+                    let body: serde_json::Value = resp.json().unwrap_or_default();
+                    let valid = body["valid"].as_bool().unwrap_or(false);
+                    let message = body["message"]
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| {
+                            crate::i18n::t("tui-event-security-verification-complete")
+                        });
+                    let _ = tx.send(AppEvent::SecurityChainVerified { valid, message });
+                    let _ = tx.send(AppEvent::AuditChainVerified(valid));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::SecurityChainVerified {
+                        valid: false,
+                        message: format!("{e}"),
+                    });
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::SecurityChainVerified {
+                valid: true,
+                message: crate::i18n::t("tui-event-security-chain-not-applicable"),
+            });
+        }
+    });
+}
+
+/// Fetch audit entries (for dedicated audit screen).
+pub fn spawn_fetch_audit(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client
+                .get(format!("{base_url}/api/audit/recent?n=200"))
+                .send()
+            {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let entries: Vec<AuditEntry> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|e| AuditEntry {
+                                    timestamp: e["timestamp"].as_str().unwrap_or("").to_string(),
+                                    action: e["action"].as_str().unwrap_or("").to_string(),
+                                    agent: e["agent"].as_str().unwrap_or("").to_string(),
+                                    detail: e["detail"].as_str().unwrap_or("").to_string(),
+                                    tip_hash: e["tip_hash"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::AuditEntriesLoaded(entries));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::AuditEntriesLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Fetch usage summary.
+pub fn spawn_fetch_usage(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            // Summary
+            if let Ok(resp) = client.get(format!("{base_url}/api/usage/summary")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let _ = tx.send(AppEvent::UsageSummaryLoaded(UsageSummary {
+                        total_input_tokens: body["total_input_tokens"].as_u64().unwrap_or(0),
+                        total_output_tokens: body["total_output_tokens"].as_u64().unwrap_or(0),
+                        total_cost_usd: body["total_cost_usd"].as_f64().unwrap_or(0.0),
+                        total_calls: body["total_calls"].as_u64().unwrap_or(0),
+                    }));
+                }
+            }
+            // By model
+            if let Ok(resp) = client.get(format!("{base_url}/api/usage/by-model")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let models: Vec<ModelUsage> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|m| ModelUsage {
+                                    model_id: m["model_id"].as_str().unwrap_or("").to_string(),
+                                    input_tokens: m["input_tokens"].as_u64().unwrap_or(0),
+                                    output_tokens: m["output_tokens"].as_u64().unwrap_or(0),
+                                    cost_usd: m["cost_usd"].as_f64().unwrap_or(0.0),
+                                    calls: m["calls"].as_u64().unwrap_or(0),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::UsageByModelLoaded(models));
+                }
+            }
+            // By agent
+            if let Ok(resp) = client.get(format!("{base_url}/api/usage")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let agents: Vec<AgentUsage> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|a| AgentUsage {
+                                    agent_name: a["agent_name"].as_str().unwrap_or("").to_string(),
+                                    agent_id: a["agent_id"].as_str().unwrap_or("").to_string(),
+                                    total_tokens: a["total_tokens"].as_u64().unwrap_or(0),
+                                    cost_usd: a["cost_usd"].as_f64().unwrap_or(0.0),
+                                    tool_calls: a["tool_calls"].as_u64().unwrap_or(0),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::UsageByAgentLoaded(agents));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::UsageSummaryLoaded(UsageSummary::default()));
+            let _ = tx.send(AppEvent::UsageByModelLoaded(Vec::new()));
+            let _ = tx.send(AppEvent::UsageByAgentLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Fetch settings providers.
+pub fn spawn_fetch_providers(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/providers")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    // API returns { "providers": [...], "total": N }
+                    let arr = body["providers"].as_array();
+                    let providers: Vec<ProviderInfo> = arr
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|p| {
+                                    let auth = p["auth_status"].as_str().unwrap_or("missing");
+                                    let key_required = p["key_required"].as_bool().unwrap_or(true);
+                                    let configured = auth == "configured" || auth == "not_required";
+                                    let is_local =
+                                        p["is_local"].as_bool().unwrap_or(false) || !key_required;
+                                    ProviderInfo {
+                                        name: p["id"].as_str().unwrap_or("").to_string(),
+                                        configured,
+                                        env_var: p["api_key_env"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        is_local,
+                                        reachable: if is_local {
+                                            p["reachable"].as_bool()
+                                        } else {
+                                            None
+                                        },
+                                        latency_ms: if is_local {
+                                            p["latency_ms"].as_u64()
+                                        } else {
+                                            None
+                                        },
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::SettingsProvidersLoaded(providers));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::SettingsProvidersLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Fetch settings models.
+pub fn spawn_fetch_models(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/models")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let models: Vec<ModelInfo> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|m| ModelInfo {
+                                    id: m["id"].as_str().unwrap_or("").to_string(),
+                                    provider: m["provider"].as_str().unwrap_or("").to_string(),
+                                    tier: m["tier"].as_str().unwrap_or("").to_string(),
+                                    context_window: m["context_window"].as_u64().unwrap_or(0),
+                                    cost_input: m["cost_input"].as_f64().unwrap_or(0.0),
+                                    cost_output: m["cost_output"].as_f64().unwrap_or(0.0),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::SettingsModelsLoaded(models));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::SettingsModelsLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Fetch settings tools.
+pub fn spawn_fetch_tools(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/tools")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let tools: Vec<ToolInfo> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|t| ToolInfo {
+                                    name: t["name"].as_str().unwrap_or("").to_string(),
+                                    description: t["description"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::SettingsToolsLoaded(tools));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::SettingsToolsLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Save a provider API key.
+pub fn spawn_save_provider_key(
+    backend: BackendRef,
+    name: String,
+    api_key: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon {
+            base_url,
+            api_key: daemon_api_key,
+        } => {
+            let client = make_daemon_client(daemon_api_key.as_deref());
+            match client
+                .post(format!("{base_url}/api/providers/{name}/key"))
+                .json(&serde_json::json!({"key": api_key}))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::ProviderKeySaved(name));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-provider-save-key-failed",
+                        &[("name", &name)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-provider-key-management-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Delete a provider API key.
+pub fn spawn_delete_provider_key(backend: BackendRef, name: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .delete(format!("{base_url}/api/providers/{name}/key"))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::ProviderKeyDeleted(name));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-provider-delete-key-failed",
+                        &[("name", &name)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-provider-key-management-not-available-in-process",
+            )));
+        }
+    });
+}
+
+/// Test a provider connection.
+pub fn spawn_test_provider(backend: BackendRef, name: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client =
+                make_daemon_client_with_timeout(api_key.as_deref(), Duration::from_secs(15));
+            let start = std::time::Instant::now();
+            match client
+                .post(format!("{base_url}/api/providers/{name}/test"))
+                .send()
+            {
+                Ok(resp) => {
+                    let latency = start.elapsed().as_millis() as u64;
+                    let success = resp.status().is_success();
+                    let body: serde_json::Value = resp.json().unwrap_or_default();
+                    let message = body["message"]
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| {
+                            if success {
+                                crate::i18n::t("tui-event-provider-connection-ok")
+                            } else {
+                                crate::i18n::t("tui-event-provider-test-failed")
+                            }
+                        });
+                    let _ = tx.send(AppEvent::ProviderTestResult(TestResult {
+                        provider: name,
+                        success,
+                        latency_ms: latency,
+                        message,
+                    }));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::ProviderTestResult(TestResult {
+                        provider: name,
+                        success: false,
+                        latency_ms: 0,
+                        message: format!("{e}"),
+                    }));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::ProviderTestResult(TestResult {
+                provider: name,
+                success: false,
+                latency_ms: 0,
+                message: crate::i18n::t("tui-event-provider-test-not-available-in-process"),
+            }));
+        }
+    });
+}
+
+/// Fetch peers.
+pub fn spawn_fetch_peers(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/peers")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let peers: Vec<PeerInfo> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|p| PeerInfo {
+                                    node_id: p["node_id"].as_str().unwrap_or("").to_string(),
+                                    node_name: p["node_name"].as_str().unwrap_or("").to_string(),
+                                    address: p["address"].as_str().unwrap_or("").to_string(),
+                                    state: p["state"].as_str().unwrap_or("").to_string(),
+                                    agent_count: p["agent_count"].as_u64().unwrap_or(0),
+                                    protocol_version: p["protocol_version"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::PeersLoaded(peers));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::PeersLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Fetch log entries (uses audit endpoint, polled frequently).
+pub fn spawn_fetch_logs(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client
+                .get(format!("{base_url}/api/audit/recent?n=200"))
+                .send()
+            {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let entries: Vec<LogEntry> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|e| {
+                                    let action = e["action"].as_str().unwrap_or("").to_string();
+                                    let detail = e["detail"].as_str().unwrap_or("").to_string();
+                                    let level =
+                                        super::screens::logs::classify_level(&action, &detail);
+                                    LogEntry {
+                                        timestamp: e["timestamp"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        level,
+                                        action,
+                                        detail,
+                                        agent: e["agent"].as_str().unwrap_or("").to_string(),
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::LogsLoaded(entries));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::LogsLoaded(Vec::new()));
+        }
+    });
+}
+
+// ── Hands events ────────────────────────────────────────────────────────────
+
+/// Fetch hand definitions (marketplace).
+pub fn spawn_fetch_hands(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/hands")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let hands: Vec<HandInfo> = body["hands"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|h| HandInfo {
+                                    id: h["id"].as_str().unwrap_or("").to_string(),
+                                    name: h["name"].as_str().unwrap_or("").to_string(),
+                                    description: h["description"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    category: h["category"].as_str().unwrap_or("").to_string(),
+                                    icon: h["icon"].as_str().unwrap_or("").to_string(),
+                                    requirements_met: h["requirements_met"]
+                                        .as_bool()
+                                        .unwrap_or(false),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::HandsLoaded(hands));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            let defs = kernel.hand_registry_ref().list_definitions();
+            let hands: Vec<HandInfo> = defs
+                .iter()
+                .map(|d| {
+                    let reqs_met = kernel
+                        .hand_registry_ref()
+                        .check_requirements(&d.id)
+                        .map(|r| r.iter().all(|(_, ok)| *ok))
+                        .unwrap_or(false);
+                    HandInfo {
+                        id: d.id.clone(),
+                        name: d.name.clone(),
+                        description: d.description.clone(),
+                        category: d.category.to_string(),
+                        icon: d.icon.clone(),
+                        requirements_met: reqs_met,
+                    }
+                })
+                .collect();
+            let _ = tx.send(AppEvent::HandsLoaded(hands));
+        }
+    });
+}
+
+/// Fetch active hand instances.
+pub fn spawn_fetch_active_hands(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/hands/active")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let instances: Vec<HandInstanceInfo> = body["instances"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|i| HandInstanceInfo {
+                                    instance_id: i["instance_id"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    hand_id: i["hand_id"].as_str().unwrap_or("").to_string(),
+                                    status: i["status"].as_str().unwrap_or("").to_string(),
+                                    agent_name: i["agent_name"].as_str().unwrap_or("").to_string(),
+                                    agent_id: i["agent_id"].as_str().unwrap_or("").to_string(),
+                                    activated_at: i["activated_at"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::ActiveHandsLoaded(instances));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            let instances: Vec<HandInstanceInfo> = kernel
+                .hand_registry_ref()
+                .list_instances()
+                .iter()
+                .map(|i| HandInstanceInfo {
+                    instance_id: i.instance_id.to_string(),
+                    hand_id: i.hand_id.clone(),
+                    status: i.status.to_string(),
+                    agent_name: i.agent_name().to_string(),
+                    agent_id: i.agent_id().map(|a| a.to_string()).unwrap_or_default(),
+                    activated_at: i.activated_at.to_rfc3339(),
+                })
+                .collect();
+            let _ = tx.send(AppEvent::ActiveHandsLoaded(instances));
+        }
+    });
+}
+
+/// Activate a hand.
+pub fn spawn_activate_hand(backend: BackendRef, hand_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .post(format!("{base_url}/api/hands/{hand_id}/activate"))
+                .json(&serde_json::json!({}))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::HandActivated(hand_id));
+                }
+                Ok(resp) => {
+                    let msg = resp
+                        .json::<serde_json::Value>()
+                        .ok()
+                        .and_then(|b| b["error"].as_str().map(|s| s.to_string()))
+                        .unwrap_or_else(|| crate::i18n::t("tui-event-hand-activation-failed"));
+                    let _ = tx.send(AppEvent::FetchError(msg));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-hand-activate-failed-error",
+                        &[("error", &e.to_string())],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            match kernel.activate_hand(&hand_id, std::collections::HashMap::new()) {
+                Ok(_) => {
+                    let _ = tx.send(AppEvent::HandActivated(hand_id));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-hand-activation-failed-error",
+                        &[("error", &e.to_string())],
+                    )));
+                }
+            }
+        }
+    });
+}
+
+/// Deactivate a hand instance.
+pub fn spawn_deactivate_hand(backend: BackendRef, instance_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .delete(format!("{base_url}/api/hands/instances/{instance_id}"))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::HandDeactivated(instance_id));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-hand-deactivate-failed",
+                        &[("instance_id", &instance_id)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => match uuid::Uuid::parse_str(&instance_id) {
+            Ok(uuid) => match kernel.deactivate_hand(uuid) {
+                Ok(()) => {
+                    let _ = tx.send(AppEvent::HandDeactivated(instance_id));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-hand-deactivate-failed-error",
+                        &[("error", &e.to_string())],
+                    )));
+                }
+            },
+            Err(e) => {
+                let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                    "tui-event-hand-invalid-instance-id",
+                    &[("error", &e.to_string())],
+                )));
+            }
+        },
+    });
+}
+
+/// Pause a hand instance.
+pub fn spawn_pause_hand(backend: BackendRef, instance_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .post(format!(
+                    "{base_url}/api/hands/instances/{instance_id}/pause"
+                ))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::HandPaused(instance_id));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-hand-pause-failed",
+                        &[("instance_id", &instance_id)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => match uuid::Uuid::parse_str(&instance_id) {
+            Ok(uuid) => match kernel.pause_hand(uuid) {
+                Ok(()) => {
+                    let _ = tx.send(AppEvent::HandPaused(instance_id));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-hand-pause-failed-error",
+                        &[("error", &e.to_string())],
+                    )));
+                }
+            },
+            Err(e) => {
+                let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                    "tui-event-hand-invalid-instance-id",
+                    &[("error", &e.to_string())],
+                )));
+            }
+        },
+    });
+}
+
+/// Resume a hand instance.
+pub fn spawn_resume_hand(backend: BackendRef, instance_id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .post(format!(
+                    "{base_url}/api/hands/instances/{instance_id}/resume"
+                ))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::HandResumed(instance_id));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-hand-resume-failed",
+                        &[("instance_id", &instance_id)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => match uuid::Uuid::parse_str(&instance_id) {
+            Ok(uuid) => match kernel.resume_hand(uuid) {
+                Ok(()) => {
+                    let _ = tx.send(AppEvent::HandResumed(instance_id));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-hand-resume-failed-error",
+                        &[("error", &e.to_string())],
+                    )));
+                }
+            },
+            Err(e) => {
+                let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                    "tui-event-hand-invalid-instance-id",
+                    &[("error", &e.to_string())],
+                )));
+            }
+        },
+    });
+}
+
+// ── Extension spawn functions ───────────────────────────────────────────────
+
+/// Fetch all extensions (available + installed).
+pub fn spawn_fetch_extensions(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/mcp/catalog")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let extensions: Vec<ExtensionInfo> = body["entries"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|e| {
+                                    let id = e["id"].as_str().unwrap_or("").to_string();
+                                    let installed = e["installed"].as_bool().unwrap_or(false);
+                                    ExtensionInfo {
+                                        id: id.clone(),
+                                        name: e["name"].as_str().unwrap_or("").to_string(),
+                                        description: e["description"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        icon: e["icon"].as_str().unwrap_or("").to_string(),
+                                        category: e["category"].as_str().unwrap_or("").to_string(),
+                                        installed,
+                                        status: if installed {
+                                            "installed".to_string()
+                                        } else {
+                                            "available".to_string()
+                                        },
+                                        tags: e["tags"]
+                                            .as_array()
+                                            .map(|t| {
+                                                t.iter()
+                                                    .filter_map(|v| v.as_str().map(String::from))
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default(),
+                                        has_oauth: e["has_oauth"].as_bool().unwrap_or(false),
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::ExtensionsLoaded(extensions));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            let installed_ids: std::collections::HashSet<String> = kernel
+                .config_ref()
+                .mcp_servers
+                .iter()
+                .filter_map(|s| s.template_id.clone())
+                .collect();
+            let catalog = kernel.mcp_catalog_load();
+            let extensions: Vec<ExtensionInfo> = catalog
+                .list()
+                .iter()
+                .map(|t| {
+                    let installed = installed_ids.contains(&t.id);
+                    ExtensionInfo {
+                        id: t.id.clone(),
+                        name: t.name.clone(),
+                        description: t.description.clone(),
+                        icon: t.icon.clone(),
+                        category: t.category.to_string(),
+                        installed,
+                        status: if installed {
+                            "installed".to_string()
+                        } else {
+                            "available".to_string()
+                        },
+                        tags: t.tags.clone(),
+                        has_oauth: t.oauth.is_some(),
+                    }
+                })
+                .collect();
+            let _ = tx.send(AppEvent::ExtensionsLoaded(extensions));
+        }
+    });
+}
+
+/// Fetch extension health data.
+pub fn spawn_fetch_extension_health(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            if let Ok(resp) = client.get(format!("{base_url}/api/mcp/health")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let entries: Vec<ExtensionHealthInfo> = body["health"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|h| ExtensionHealthInfo {
+                                    id: h["id"].as_str().unwrap_or("").to_string(),
+                                    status: h["status"].as_str().unwrap_or("").to_string(),
+                                    tool_count: h["tool_count"].as_u64().unwrap_or(0) as usize,
+                                    last_ok: h["last_ok"].as_str().unwrap_or("").to_string(),
+                                    last_error: h["last_error"].as_str().unwrap_or("").to_string(),
+                                    consecutive_failures: h["consecutive_failures"]
+                                        .as_u64()
+                                        .unwrap_or(0)
+                                        as u32,
+                                    reconnecting: h["reconnecting"].as_bool().unwrap_or(false),
+                                    connected_since: h["connected_since"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::ExtensionHealthLoaded(entries));
+                }
+            }
+        }
+        BackendRef::InProcess(kernel) => {
+            let health = kernel.health().all_health();
+            let entries: Vec<ExtensionHealthInfo> = health
+                .iter()
+                .map(|h| ExtensionHealthInfo {
+                    id: h.id.clone(),
+                    status: h.status.to_string(),
+                    tool_count: h.tool_count,
+                    last_ok: h.last_ok.map(|t| t.to_rfc3339()).unwrap_or_default(),
+                    last_error: h.last_error.clone().unwrap_or_default(),
+                    consecutive_failures: h.consecutive_failures,
+                    reconnecting: h.reconnecting,
+                    connected_since: h
+                        .connected_since
+                        .map(|t| t.to_rfc3339())
+                        .unwrap_or_default(),
+                })
+                .collect();
+            let _ = tx.send(AppEvent::ExtensionHealthLoaded(entries));
+        }
+    });
+}
+
+/// Install an extension.
+pub fn spawn_install_extension(backend: BackendRef, id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .post(format!("{base_url}/api/mcp/servers"))
+                .json(&serde_json::json!({"template_id": id}))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::ExtensionInstalled(id));
+                }
+                Ok(resp) => {
+                    let body = resp.json::<serde_json::Value>().ok();
+                    let err = body
+                        .and_then(|b| b["error"].as_str().map(String::from))
+                        .unwrap_or_else(|| {
+                            crate::i18n::t_args(
+                                "tui-event-extension-install-failed",
+                                &[("id", &id)],
+                            )
+                        });
+                    let _ = tx.send(AppEvent::FetchError(err));
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-extension-install-failed-error",
+                        &[("error", &e.to_string())],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-extension-install-not-supported",
+            )));
+        }
+    });
+}
+
+/// Remove an extension.
+///
+/// Routes through `/api/extensions/uninstall` rather than
+/// `DELETE /api/mcp/servers/{name}` because the UI list carries the
+/// catalog `entry.id` (template_id), and that can diverge from the
+/// configured server name (user renamed it, or the catalog entry id
+/// doesn't match the final server name). The extensions endpoint
+/// resolves either form; the MCP endpoint only accepts the exact name.
+pub fn spawn_remove_extension(backend: BackendRef, id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .post(format!("{base_url}/api/extensions/uninstall"))
+                .json(&serde_json::json!({ "name": id }))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let _ = tx.send(AppEvent::ExtensionRemoved(id));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-extension-remove-failed",
+                        &[("id", &id)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-extension-remove-not-supported",
+            )));
+        }
+    });
+}
+
+/// Reconnect an extension's MCP server.
+pub fn spawn_reconnect_extension(backend: BackendRef, id: String, tx: mpsc::Sender<AppEvent>) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            match client
+                .post(format!("{base_url}/api/mcp/servers/{id}/reconnect"))
+                .send()
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    let tool_count = resp
+                        .json::<serde_json::Value>()
+                        .ok()
+                        .and_then(|b| b["tool_count"].as_u64())
+                        .unwrap_or(0) as usize;
+                    let _ = tx.send(AppEvent::ExtensionReconnected(id, tool_count));
+                }
+                _ => {
+                    let _ = tx.send(AppEvent::FetchError(crate::i18n::t_args(
+                        "tui-event-extension-reconnect-failed",
+                        &[("id", &id)],
+                    )));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::FetchError(crate::i18n::t(
+                "tui-event-extension-reconnect-not-supported",
+            )));
+        }
+    });
+}
+
+/// Fetch comms topology + events.
+pub fn spawn_fetch_comms(backend: BackendRef, tx: mpsc::Sender<AppEvent>) {
+    use super::screens::comms::{CommsEdge, CommsEventItem, CommsNode};
+
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            // Fetch topology
+            if let Ok(resp) = client.get(format!("{base_url}/api/comms/topology")).send() {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let nodes: Vec<CommsNode> = body["nodes"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|n| CommsNode {
+                                    id: n["id"].as_str().unwrap_or("").to_string(),
+                                    name: n["name"].as_str().unwrap_or("").to_string(),
+                                    state: n["state"].as_str().unwrap_or("").to_string(),
+                                    model: n["model"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let edges: Vec<CommsEdge> = body["edges"]
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|e| CommsEdge {
+                                    from: e["from"].as_str().unwrap_or("").to_string(),
+                                    to: e["to"].as_str().unwrap_or("").to_string(),
+                                    kind: e["kind"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::CommsTopologyLoaded { nodes, edges });
+                }
+            }
+            // Fetch events
+            if let Ok(resp) = client
+                .get(format!("{base_url}/api/comms/events?limit=100"))
+                .send()
+            {
+                if let Ok(body) = resp.json::<serde_json::Value>() {
+                    let events: Vec<CommsEventItem> = body
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|e| CommsEventItem {
+                                    id: e["id"].as_str().unwrap_or("").to_string(),
+                                    timestamp: e["timestamp"].as_str().unwrap_or("").to_string(),
+                                    kind: e["kind"].as_str().unwrap_or("").to_string(),
+                                    source_name: e["source_name"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    target_name: e["target_name"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    detail: e["detail"].as_str().unwrap_or("").to_string(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let _ = tx.send(AppEvent::CommsEventsLoaded(events));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::CommsTopologyLoaded {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+            });
+            let _ = tx.send(AppEvent::CommsEventsLoaded(Vec::new()));
+        }
+    });
+}
+
+/// Send a message between agents via comms endpoint.
+pub fn spawn_comms_send(
+    backend: BackendRef,
+    from: String,
+    to: String,
+    msg: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            let body = serde_json::json!({
+                "from_agent_id": from,
+                "to_agent_id": to,
+                "message": msg,
+            });
+            match client
+                .post(format!("{base_url}/api/comms/send"))
+                .json(&body)
+                .send()
+            {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        let _ = tx.send(AppEvent::CommsSendResult(crate::i18n::t(
+                            "tui-event-comms-message-sent",
+                        )));
+                    } else {
+                        let err = resp
+                            .json::<serde_json::Value>()
+                            .ok()
+                            .and_then(|v| v["error"].as_str().map(String::from))
+                            .unwrap_or_else(|| crate::i18n::t("tui-event-comms-send-failed"));
+                        let _ = tx.send(AppEvent::CommsSendResult(err));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::CommsSendResult(format!("Error: {e}")));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::CommsSendResult(crate::i18n::t(
+                "tui-event-comms-send-not-supported-in-process",
+            )));
+        }
+    });
+}
+
+/// Post a task via comms endpoint.
+pub fn spawn_comms_task(
+    backend: BackendRef,
+    title: String,
+    desc: String,
+    assign: String,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || match backend {
+        BackendRef::Daemon { base_url, api_key } => {
+            let client = make_daemon_client(api_key.as_deref());
+            let mut body = serde_json::json!({
+                "title": title,
+                "description": desc,
+            });
+            if !assign.is_empty() {
+                body["assigned_to"] = serde_json::Value::String(assign);
+            }
+            match client
+                .post(format!("{base_url}/api/comms/task"))
+                .json(&body)
+                .send()
+            {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        let _ = tx.send(AppEvent::CommsTaskResult(crate::i18n::t(
+                            "tui-event-comms-task-posted",
+                        )));
+                    } else {
+                        let err = resp
+                            .json::<serde_json::Value>()
+                            .ok()
+                            .and_then(|v| v["error"].as_str().map(String::from))
+                            .unwrap_or_else(|| crate::i18n::t("tui-event-comms-post-failed"));
+                        let _ = tx.send(AppEvent::CommsTaskResult(err));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(AppEvent::CommsTaskResult(format!("Error: {e}")));
+                }
+            }
+        }
+        BackendRef::InProcess(_) => {
+            let _ = tx.send(AppEvent::CommsTaskResult(crate::i18n::t(
+                "tui-event-comms-post-not-supported-in-process",
+            )));
+        }
+    });
+}
+
+/// Fetch the model label for a daemon agent (used when entering chat).
+/// Sends `ChatModelLabelLoaded` so the event loop can update `chat.model_label`
+/// without blocking the render/input thread.
+pub fn spawn_fetch_agent_model_label(
+    base_url: String,
+    agent_id: String,
+    api_key: Option<String>,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || {
+        let client = make_daemon_client(api_key.as_deref());
+        if let Ok(resp) = client
+            .get(format!("{base_url}/api/agents/{agent_id}"))
+            .send()
+        {
+            if let Ok(body) = resp.json::<serde_json::Value>() {
+                let provider = body["model_provider"].as_str().unwrap_or("?");
+                let model = body["model_name"].as_str().unwrap_or("?");
+                let label = format!("{provider}/{model}");
+                let _ = tx.send(AppEvent::ChatModelLabelLoaded { agent_id, label });
+            }
+        }
+    });
+}
+
+/// Fetch the model list from the daemon for the chat model picker.
+/// Sends `ChatModelsForPicker` so the event loop can open the picker
+/// without blocking the render/input thread.
+pub fn spawn_fetch_models_for_picker(
+    base_url: String,
+    api_key: Option<String>,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || {
+        let client = make_daemon_client(api_key.as_deref());
+        if let Ok(resp) = client.get(format!("{base_url}/api/models")).send() {
+            if let Ok(body) = resp.json::<serde_json::Value>() {
+                let models: Vec<super::screens::chat::ModelEntry> = body["models"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter(|m| m["available"].as_bool().unwrap_or(false))
+                            .map(|m| super::screens::chat::ModelEntry {
+                                id: m["id"].as_str().unwrap_or("").to_string(),
+                                display_name: m["display_name"].as_str().unwrap_or("").to_string(),
+                                provider: m["provider"].as_str().unwrap_or("").to_string(),
+                                tier: m["tier"].as_str().unwrap_or("Balanced").to_string(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let _ = tx.send(AppEvent::ChatModelsForPicker(models));
+            }
+        }
+    });
+}
+
+/// Fetch the agent list from the daemon for the /agents chat command.
+/// Sends `ChatAgentListLoaded` so the event loop can push the reply
+/// without blocking the render/input thread.
+pub fn spawn_fetch_agents_for_chat(
+    base_url: String,
+    api_key: Option<String>,
+    tx: mpsc::Sender<AppEvent>,
+) {
+    std::thread::spawn(move || {
+        let client = make_daemon_client(api_key.as_deref());
+        if let Ok(resp) = client.get(format!("{base_url}/api/agents")).send() {
+            if let Ok(body) = resp.json::<serde_json::Value>() {
+                let arr = if let Some(arr) = body.as_array() {
+                    arr.clone()
+                } else if let Some(items) = body.get("items").and_then(|v| v.as_array()) {
+                    items.clone()
+                } else {
+                    Vec::new()
+                };
+                let lines: Vec<String> = arr
+                    .iter()
+                    .map(|a| {
+                        format!(
+                            "{} [{}] {}",
+                            a["name"].as_str().unwrap_or("?"),
+                            a["state"].as_str().unwrap_or("?"),
+                            a["model_name"].as_str().unwrap_or("?"),
+                        )
+                    })
+                    .collect();
+                let _ = tx.send(AppEvent::ChatAgentListLoaded(lines));
+            }
+        }
+    });
+}

@@ -1,0 +1,1156 @@
+//! Agent router — routes incoming channel messages to the correct agent.
+
+use crate::types::ChannelType;
+use dashmap::DashMap;
+use librefang_types::agent::AgentId;
+use librefang_types::config::{AgentBinding, BroadcastConfig, BroadcastStrategy};
+use smallvec::SmallVec;
+use std::borrow::Cow;
+use std::sync::Mutex;
+use tracing::warn;
+
+/// Context for evaluating binding match rules against incoming messages.
+///
+/// Uses `Cow<str>` and `SmallVec` to avoid heap allocations on the hot dispatch path
+/// when fields can borrow from the incoming `ChannelMessage`.
+#[derive(Debug, Default)]
+pub struct BindingContext<'a> {
+    /// Channel type string (e.g., "telegram", "discord").
+    pub channel: Cow<'a, str>,
+    /// Account/bot ID within the channel.
+    pub account_id: Option<Cow<'a, str>>,
+    /// Peer/user ID (platform_user_id).
+    pub peer_id: Cow<'a, str>,
+    /// Guild/server ID.
+    pub guild_id: Option<Cow<'a, str>>,
+    /// User's roles. SmallVec avoids heap allocation for typical role counts (0-4).
+    pub roles: SmallVec<[Cow<'a, str>; 4]>,
+}
+
+/// Routes incoming messages to the correct agent.
+///
+/// Routing priority: bindings (most specific first) > direct routes > user defaults > system default.
+pub struct AgentRouter {
+    /// Default agent per user.
+    ///
+    /// Keyed by `(channel_account_key, user_key)`, where `channel_account_key`
+    /// is either `Some("<channel_type>:<account_id>")` (per-bot scope, e.g.
+    /// `Some("telegram:bot-a")`) or `None` (channel-agnostic / global scope,
+    /// the legacy semantics used by tests and pre-#5672 callers).
+    ///
+    /// `user_key` is the platform user ID or `librefang_user` mapping.
+    ///
+    /// Resolution probes the per-channel-account key first, then falls back
+    /// to the global key — so a `/agent` command issued in `bot-a` no longer
+    /// leaks across to `bot-b` for the same user (#5672).
+    user_defaults: DashMap<(Option<String>, String), AgentId>,
+    /// Direct routes: (channel_type_key, platform_user_id) -> AgentId.
+    direct_routes: DashMap<(String, String), AgentId>,
+    /// System-wide default agent.
+    default_agent: Option<AgentId>,
+    /// Per-channel-type default agent (e.g., Telegram -> agent_a, Discord -> agent_b).
+    channel_defaults: DashMap<String, AgentId>,
+    /// Per-channel-type default agent name for stale-ID re-resolution after respawn.
+    channel_default_names: DashMap<String, String>,
+    /// Sorted bindings (most specific first). Uses Mutex for runtime updates via Arc.
+    bindings: Mutex<Vec<(AgentBinding, String)>>,
+    /// Broadcast configuration. Uses Mutex for runtime updates via Arc.
+    broadcast: Mutex<BroadcastConfig>,
+    /// Agent name -> AgentId cache for binding resolution.
+    agent_name_cache: DashMap<String, AgentId>,
+}
+
+impl AgentRouter {
+    /// Create a new router.
+    pub fn new() -> Self {
+        Self {
+            user_defaults: DashMap::new(),
+            direct_routes: DashMap::new(),
+            default_agent: None,
+            channel_defaults: DashMap::new(),
+            channel_default_names: DashMap::new(),
+            bindings: Mutex::new(Vec::new()),
+            broadcast: Mutex::new(BroadcastConfig::default()),
+            agent_name_cache: DashMap::new(),
+        }
+    }
+
+    /// Set the system-wide default agent.
+    pub fn set_default(&mut self, agent_id: AgentId) {
+        self.default_agent = Some(agent_id);
+    }
+
+    /// Set a per-channel-type default agent (e.g., "telegram" -> agent_id).
+    pub fn set_channel_default(&self, channel_key: String, agent_id: AgentId) {
+        self.channel_defaults.insert(channel_key, agent_id);
+    }
+
+    /// Set a per-channel-type default agent and preserve its configured name.
+    pub fn set_channel_default_with_name(
+        &self,
+        channel_key: String,
+        agent_id: AgentId,
+        agent_name: String,
+    ) {
+        self.channel_default_names
+            .insert(channel_key.clone(), agent_name);
+        self.channel_defaults.insert(channel_key, agent_id);
+    }
+
+    /// Get the configured default agent name for a channel type.
+    pub fn channel_default_name(&self, channel_key: &str) -> Option<String> {
+        self.channel_default_names
+            .get(channel_key)
+            .map(|entry| entry.value().clone())
+    }
+
+    /// Get the cached default agent ID for a channel type.
+    pub fn channel_default(&self, channel_key: &str) -> Option<AgentId> {
+        self.channel_defaults
+            .get(channel_key)
+            .map(|entry| *entry.value())
+    }
+
+    /// Set a user's default agent at **global** scope (channel-agnostic).
+    ///
+    /// This matches the user across every channel and account. Prefer
+    /// [`Self::set_user_default_for_channel`] when the override should be
+    /// scoped to a specific bot, so a `/agent` in `bot-a` does not leak
+    /// across to `bot-b` for the same platform user (#5672).
+    pub fn set_user_default(&self, user_key: String, agent_id: AgentId) {
+        self.user_defaults.insert((None, user_key), agent_id);
+    }
+
+    /// Set a user's default agent scoped to a specific `channel_account_key`
+    /// (e.g. `"telegram:bot-a"`).
+    ///
+    /// Used by the `/agent` channel-side command so that selecting an agent
+    /// in one bot does not silently override the channel default of every
+    /// other bot the same user can also message (#5672 Layer B).
+    pub fn set_user_default_for_channel(
+        &self,
+        channel_account_key: String,
+        user_key: String,
+        agent_id: AgentId,
+    ) {
+        self.user_defaults
+            .insert((Some(channel_account_key), user_key), agent_id);
+    }
+
+    /// Set a direct route for a specific (channel, user) pair.
+    pub fn set_direct_route(
+        &self,
+        channel_key: String,
+        platform_user_id: String,
+        agent_id: AgentId,
+    ) {
+        self.direct_routes
+            .insert((channel_key, platform_user_id), agent_id);
+    }
+
+    /// Load agent bindings from configuration. Sorts by specificity (most specific first).
+    pub fn load_bindings(&self, bindings: &[AgentBinding]) {
+        let mut sorted: Vec<(AgentBinding, String)> = bindings
+            .iter()
+            .map(|b| (b.clone(), b.agent.clone()))
+            .collect();
+        // Sort by specificity descending (most specific first)
+        sorted.sort_by(|a, b| {
+            b.0.match_rule
+                .specificity()
+                .cmp(&a.0.match_rule.specificity())
+        });
+        *self.bindings.lock().unwrap_or_else(|e| e.into_inner()) = sorted;
+    }
+
+    /// Load broadcast configuration.
+    pub fn load_broadcast(&self, broadcast: BroadcastConfig) {
+        *self.broadcast.lock().unwrap_or_else(|e| e.into_inner()) = broadcast;
+    }
+
+    /// Register an agent name -> ID mapping for binding resolution.
+    pub fn register_agent(&self, name: String, id: AgentId) {
+        self.agent_name_cache.insert(name, id);
+    }
+
+    /// Update the cached channel default agent ID after a successful re-resolution.
+    pub fn update_channel_default(&self, channel_key: &str, agent_id: AgentId) {
+        self.channel_defaults
+            .insert(channel_key.to_string(), agent_id);
+    }
+
+    /// Resolve which agent should handle a message.
+    ///
+    /// Priority: bindings > direct route > user default > system default.
+    pub fn resolve(
+        &self,
+        channel_type: &ChannelType,
+        platform_user_id: &str,
+        user_key: Option<&str>,
+    ) -> Option<AgentId> {
+        let channel_key = channel_type_to_str(channel_type).to_string();
+
+        // 0. Check bindings (most specific first)
+        let ctx = BindingContext {
+            channel: Cow::Borrowed(channel_type_to_str(channel_type)),
+            account_id: None,
+            peer_id: Cow::Borrowed(platform_user_id),
+            guild_id: None,
+            roles: SmallVec::new(),
+        };
+        if let Some(agent_id) = self.resolve_binding(&ctx) {
+            return Some(agent_id);
+        }
+
+        // 1. Check direct routes
+        if let Some(agent) = self
+            .direct_routes
+            .get(&(channel_key.clone(), platform_user_id.to_string()))
+        {
+            return Some(*agent);
+        }
+
+        // 2. Check user defaults — context-less form only probes the global
+        //    (channel-agnostic) scope. Per-channel-account overrides require
+        //    `resolve_with_context` so the `account_id` can be passed in.
+        if let Some(key) = user_key {
+            if let Some(agent) = self.user_defaults.get(&(None, key.to_string())) {
+                return Some(*agent);
+            }
+        }
+        // Also check by platform_user_id
+        if let Some(agent) = self
+            .user_defaults
+            .get(&(None, platform_user_id.to_string()))
+        {
+            return Some(*agent);
+        }
+
+        // 3. Per-channel-type default
+        if let Some(agent) = self.channel_defaults.get(&channel_key) {
+            return Some(*agent);
+        }
+
+        // 4. System default
+        self.default_agent
+    }
+
+    /// Resolve with full binding context (supports guild_id, roles, account_id).
+    pub fn resolve_with_context(
+        &self,
+        channel_type: &ChannelType,
+        platform_user_id: &str,
+        user_key: Option<&str>,
+        ctx: &BindingContext<'_>,
+    ) -> Option<AgentId> {
+        // 0. Check bindings first
+        if let Some(agent_id) = self.resolve_binding(ctx) {
+            return Some(agent_id);
+        }
+        // Fall back to standard resolution
+        let channel_key = channel_type_to_str(channel_type).to_string();
+        if let Some(agent) = self
+            .direct_routes
+            .get(&(channel_key.clone(), platform_user_id.to_string()))
+        {
+            return Some(*agent);
+        }
+        // User defaults: probe the per-channel-account scope first (so
+        // `/agent agent-C` issued in `bot-a` only affects `bot-a`), then fall
+        // back to the channel-agnostic global scope (legacy semantics).
+        let channel_account_key = ctx
+            .account_id
+            .as_deref()
+            .map(|aid| format!("{channel_key}:{aid}"));
+        if let Some(key) = user_key {
+            if let Some(ref scoped) = channel_account_key {
+                if let Some(agent) = self
+                    .user_defaults
+                    .get(&(Some(scoped.clone()), key.to_string()))
+                {
+                    return Some(*agent);
+                }
+            }
+            if let Some(agent) = self.user_defaults.get(&(None, key.to_string())) {
+                return Some(*agent);
+            }
+        }
+        if let Some(ref scoped) = channel_account_key {
+            if let Some(agent) = self
+                .user_defaults
+                .get(&(Some(scoped.clone()), platform_user_id.to_string()))
+            {
+                return Some(*agent);
+            }
+        }
+        if let Some(agent) = self
+            .user_defaults
+            .get(&(None, platform_user_id.to_string()))
+        {
+            return Some(*agent);
+        }
+        // Account-specific channel default takes priority over the generic channel default.
+        // Keys are stored as "telegram:account_id" when account_id is known.
+        if let Some(ref account_key) = channel_account_key {
+            if let Some(agent) = self.channel_defaults.get(account_key) {
+                return Some(*agent);
+            }
+        }
+        if let Some(agent) = self.channel_defaults.get(&channel_key) {
+            return Some(*agent);
+        }
+        self.default_agent
+    }
+
+    /// Resolve broadcast: returns all agents that should receive a message for the given peer.
+    pub fn resolve_broadcast(&self, peer_id: &str) -> Vec<(String, Option<AgentId>)> {
+        let bc = self.broadcast.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(agent_names) = bc.routes.get(peer_id) {
+            agent_names
+                .iter()
+                .map(|name| {
+                    let id = self.agent_name_cache.get(name).map(|r| *r);
+                    (name.clone(), id)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get broadcast strategy.
+    pub fn broadcast_strategy(&self) -> BroadcastStrategy {
+        self.broadcast
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .strategy
+    }
+
+    /// Check if a peer has broadcast routing configured.
+    pub fn has_broadcast(&self, peer_id: &str) -> bool {
+        self.broadcast
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .routes
+            .contains_key(peer_id)
+    }
+
+    /// Get current bindings (read-only).
+    pub fn bindings(&self) -> Vec<AgentBinding> {
+        self.bindings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|(b, _)| b.clone())
+            .collect()
+    }
+
+    /// Add a single binding at runtime.
+    pub fn add_binding(&self, binding: AgentBinding) {
+        let name = binding.agent.clone();
+        let mut bindings = self.bindings.lock().unwrap_or_else(|e| e.into_inner());
+        bindings.push((binding, name));
+        // Re-sort by specificity
+        bindings.sort_by(|a, b| {
+            b.0.match_rule
+                .specificity()
+                .cmp(&a.0.match_rule.specificity())
+        });
+    }
+
+    /// Remove a binding by index (original insertion order after sort).
+    pub fn remove_binding(&self, index: usize) -> Option<AgentBinding> {
+        let mut bindings = self.bindings.lock().unwrap_or_else(|e| e.into_inner());
+        if index < bindings.len() {
+            Some(bindings.remove(index).0)
+        } else {
+            None
+        }
+    }
+
+    /// Recipient peer IDs reachable on `(channel_str, account_id)` whose
+    /// `AgentBinding` resolves to `agent_id`.
+    ///
+    /// This is the binding-side counterpart of [`Self::channel_default`] used
+    /// by the approval listener (#5002): adapters configured with
+    /// `default_agent = None` but routed entirely via `AgentBinding` would
+    /// otherwise silently drop approvals — `channel_default` returns `None`,
+    /// and the listener has no other handle to "which chat belongs to the
+    /// requesting agent on this adapter".
+    ///
+    /// Filtering rules — a binding is yielded iff ALL of the following hold
+    /// (consistent with the inbound resolver in [`Self::binding_matches`],
+    /// re-stated rather than reused because that function takes a full
+    /// `BindingContext` for incoming messages, whereas here we only have the
+    /// adapter-level identity and want the *set* of bound peers, not the
+    /// first inbound match):
+    ///
+    /// 1. The binding's `agent` name resolves via `agent_name_cache` to the
+    ///    given `agent_id`. Bindings whose name is not in the cache (agent
+    ///    not yet spawned / typo in config) are silently skipped — the
+    ///    inbound resolver already logs that case, and dropping them here
+    ///    avoids double-noise.
+    /// 2. `match_rule.channel` is either unset or equals `channel_str`.
+    /// 3. `match_rule.account_id` is either unset or equals `account_id`.
+    ///    Note: this matches the inbound semantics — a binding with no
+    ///    `account_id` constraint applies to every adapter on that channel
+    ///    type, including multi-bot adapters.
+    /// 4. `match_rule.peer_id` is `Some(_)`. A binding without a `peer_id`
+    ///    names no chat to deliver to and is useless for fan-out (it would
+    ///    just route inbound messages from anyone to the agent). It does
+    ///    NOT count as a recipient.
+    ///
+    /// Role/guild constraints are intentionally NOT filtered here: roles are
+    /// per-message context we don't have for outbound approval fan-out, and
+    /// a role-gated binding still names a real `peer_id` chat the operator
+    /// wants the agent to be reachable in. If the operator wants approvals
+    /// to skip role-gated chats they should bind on a non-role-gated rule
+    /// for the same `peer_id`.
+    pub fn bound_recipients_for_agent(
+        &self,
+        agent_id: AgentId,
+        channel_str: &str,
+        account_id: Option<&str>,
+    ) -> Vec<String> {
+        let bindings = self.bindings.lock().unwrap_or_else(|e| e.into_inner());
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (binding, _agent_name) in bindings.iter() {
+            // Rule 1: name → id resolves to the requesting agent.
+            let resolved = match self.agent_name_cache.get(&binding.agent) {
+                Some(id) => *id,
+                None => continue,
+            };
+            if resolved != agent_id {
+                continue;
+            }
+            // Rule 2: channel constraint.
+            if let Some(ref ch) = binding.match_rule.channel {
+                if ch != channel_str {
+                    continue;
+                }
+            }
+            // Rule 3: account_id constraint.
+            if let Some(ref acc) = binding.match_rule.account_id {
+                match account_id {
+                    Some(ctx_acc) if ctx_acc == acc.as_str() => {}
+                    _ => continue,
+                }
+            }
+            // Rule 4: peer_id must be set to be a delivery target.
+            let Some(ref peer) = binding.match_rule.peer_id else {
+                continue;
+            };
+            // De-dup: two bindings can name the same peer with different
+            // role/guild gates. We only want one notification per chat.
+            if seen.insert(peer.clone()) {
+                out.push(peer.clone());
+            }
+        }
+        out
+    }
+
+    /// Evaluate bindings against a context, returning the first matching agent ID.
+    fn resolve_binding(&self, ctx: &BindingContext<'_>) -> Option<AgentId> {
+        let bindings = self.bindings.lock().unwrap_or_else(|e| e.into_inner());
+        for (binding, _agent_name) in bindings.iter() {
+            if self.binding_matches(binding, ctx) {
+                // Look up agent by name in cache
+                if let Some(id) = self.agent_name_cache.get(&binding.agent) {
+                    return Some(*id);
+                }
+                warn!(
+                    agent = %binding.agent,
+                    "Binding matched but agent not found in cache"
+                );
+            }
+        }
+        None
+    }
+
+    /// Evaluate only *specific* bindings — those whose `match_rule` pins a
+    /// `peer_id` (a per-conversation route, e.g. a Matrix room or a DM peer).
+    ///
+    /// The inbound dispatcher uses this to rank an operator's explicit
+    /// per-conversation binding **above** the channel-wide instance default
+    /// (`[[sidecar_channels]] agent`). Without that ranking a sidecar
+    /// `default_agent` shadows every per-room binding: the channel-wide default
+    /// is consulted first and the more-specific `[[bindings]]` entry never gets
+    /// a turn, collapsing all inbound traffic onto the default agent.
+    ///
+    /// Channel-only bindings (no `peer_id`) are intentionally excluded here —
+    /// they stay in the lower-precedence [`resolve`] / [`resolve_with_context`]
+    /// chain, below the instance default, preserving the #5671 precedence.
+    /// Returns `None` when no peer-specific binding matches.
+    pub fn resolve_specific_binding(&self, ctx: &BindingContext<'_>) -> Option<AgentId> {
+        let bindings = self.bindings.lock().unwrap_or_else(|e| e.into_inner());
+        for (binding, _agent_name) in bindings.iter() {
+            if binding.match_rule.peer_id.is_none() {
+                continue;
+            }
+            if self.binding_matches(binding, ctx) {
+                if let Some(id) = self.agent_name_cache.get(&binding.agent) {
+                    return Some(*id);
+                }
+                warn!(
+                    agent = %binding.agent,
+                    "Specific binding matched but agent not found in cache"
+                );
+            }
+        }
+        None
+    }
+
+    /// Check if a single binding's match_rule matches the context.
+    ///
+    /// Delegates to [`BindingMatchRule::matches`] in `librefang-types` — the
+    /// single source of truth for binding semantics, shared with the kernel's
+    /// outbound `channel_send` mirror owner resolution so the two matchers can
+    /// never drift (that drift was the root cause of the #4824 mirror regression).
+    #[inline]
+    fn binding_matches(&self, binding: &AgentBinding, ctx: &BindingContext<'_>) -> bool {
+        // `BindingMatchRule::matches` takes `roles` as `&[String]`; the hot
+        // dispatch path carries `Cow<str>` roles, so materialize them only
+        // when the rule actually gates on roles. The common case is an empty
+        // role list, which never allocates.
+        let roles: Vec<String> = if binding.match_rule.roles.is_empty() {
+            Vec::new()
+        } else {
+            ctx.roles.iter().map(|r| r.as_ref().to_string()).collect()
+        };
+        binding.match_rule.matches(
+            &ctx.channel,
+            ctx.account_id.as_deref(),
+            &ctx.peer_id,
+            ctx.guild_id.as_deref(),
+            &roles,
+        )
+    }
+}
+
+/// Convert ChannelType to lowercase string for binding matching.
+#[inline]
+pub fn channel_type_to_str(ct: &ChannelType) -> &str {
+    match ct {
+        ChannelType::Telegram => "telegram",
+        ChannelType::Discord => "discord",
+        ChannelType::Slack => "slack",
+        ChannelType::WhatsApp => "whatsapp",
+        ChannelType::Signal => "signal",
+        ChannelType::Matrix => "matrix",
+        ChannelType::Email => "email",
+        ChannelType::Teams => "teams",
+        ChannelType::Mattermost => "mattermost",
+        ChannelType::WeChat => "wechat",
+        ChannelType::WebChat => "webchat",
+        ChannelType::CLI => "cli",
+        ChannelType::Custom(s) => s.as_str(),
+    }
+}
+
+impl Default for AgentRouter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_routing_priority() {
+        let mut router = AgentRouter::new();
+        let default_agent = AgentId::new();
+        let user_agent = AgentId::new();
+        let direct_agent = AgentId::new();
+
+        router.set_default(default_agent);
+        router.set_user_default("alice".to_string(), user_agent);
+        router.set_direct_route("telegram".to_string(), "tg_123".to_string(), direct_agent);
+
+        // Direct route wins
+        let resolved = router.resolve(&ChannelType::Telegram, "tg_123", Some("alice"));
+        assert_eq!(resolved, Some(direct_agent));
+
+        // User default for non-direct-routed user
+        let resolved = router.resolve(&ChannelType::WhatsApp, "wa_456", Some("alice"));
+        assert_eq!(resolved, Some(user_agent));
+
+        // System default for unknown user
+        let resolved = router.resolve(&ChannelType::Discord, "dc_789", None);
+        assert_eq!(resolved, Some(default_agent));
+    }
+
+    #[test]
+    fn test_no_route() {
+        let router = AgentRouter::new();
+        let resolved = router.resolve(&ChannelType::CLI, "local", None);
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn test_channel_default_name_and_id_can_be_updated_independently() {
+        let router = AgentRouter::new();
+        let channel = "telegram".to_string();
+        let old_id = AgentId(Uuid::new_v4());
+        let new_id = AgentId(Uuid::new_v4());
+
+        router.set_channel_default_with_name(channel.clone(), old_id, "assistant".to_string());
+        assert_eq!(
+            router.channel_default_name(&channel),
+            Some("assistant".to_string())
+        );
+        assert_eq!(
+            router.resolve(&ChannelType::Telegram, "u1", None),
+            Some(old_id)
+        );
+
+        router.update_channel_default(&channel, new_id);
+        assert_eq!(
+            router.channel_default_name(&channel),
+            Some("assistant".to_string())
+        );
+        assert_eq!(
+            router.resolve(&ChannelType::Telegram, "u1", None),
+            Some(new_id)
+        );
+    }
+
+    #[test]
+    fn resolve_specific_binding_only_matches_peer_id_rules() {
+        let router = AgentRouter::new();
+        let room_agent = AgentId::new();
+        let channel_agent = AgentId::new();
+        router.register_agent("room-agent".to_string(), room_agent);
+        router.register_agent("channel-agent".to_string(), channel_agent);
+        router.load_bindings(&[
+            // Peer-specific binding (a room) — this is what should win over a
+            // channel-wide instance default.
+            AgentBinding {
+                agent: "room-agent".to_string(),
+                match_rule: librefang_types::config::BindingMatchRule {
+                    channel: Some("matrix".to_string()),
+                    peer_id: Some("!room:example.org".to_string()),
+                    ..Default::default()
+                },
+            },
+            // Channel-only binding — must be IGNORED by resolve_specific_binding
+            // (it stays in the lower-precedence chain, under the instance default).
+            AgentBinding {
+                agent: "channel-agent".to_string(),
+                match_rule: librefang_types::config::BindingMatchRule {
+                    channel: Some("matrix".to_string()),
+                    ..Default::default()
+                },
+            },
+        ]);
+
+        let room_ctx = BindingContext {
+            channel: std::borrow::Cow::Borrowed("matrix"),
+            account_id: None,
+            peer_id: std::borrow::Cow::Borrowed("!room:example.org"),
+            guild_id: None,
+            roles: SmallVec::new(),
+        };
+        assert_eq!(
+            router.resolve_specific_binding(&room_ctx),
+            Some(room_agent),
+            "peer-specific binding must resolve"
+        );
+
+        // A different room: no peer-specific binding matches, and the
+        // channel-only binding must NOT be returned here.
+        let other_ctx = BindingContext {
+            channel: std::borrow::Cow::Borrowed("matrix"),
+            account_id: None,
+            peer_id: std::borrow::Cow::Borrowed("!other:example.org"),
+            guild_id: None,
+            roles: SmallVec::new(),
+        };
+        assert_eq!(
+            router.resolve_specific_binding(&other_ctx),
+            None,
+            "channel-only binding must be excluded from specific resolution"
+        );
+    }
+
+    #[test]
+    fn test_binding_channel_match() {
+        let router = AgentRouter::new();
+        let agent_id = AgentId::new();
+        router.register_agent("coder".to_string(), agent_id);
+        router.load_bindings(&[AgentBinding {
+            agent: "coder".to_string(),
+            match_rule: librefang_types::config::BindingMatchRule {
+                channel: Some("telegram".to_string()),
+                ..Default::default()
+            },
+        }]);
+
+        // Should match telegram
+        let resolved = router.resolve(&ChannelType::Telegram, "user1", None);
+        assert_eq!(resolved, Some(agent_id));
+
+        // Should NOT match discord
+        let resolved = router.resolve(&ChannelType::Discord, "user1", None);
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn test_binding_peer_id_match() {
+        let router = AgentRouter::new();
+        let agent_id = AgentId::new();
+        router.register_agent("support".to_string(), agent_id);
+        router.load_bindings(&[AgentBinding {
+            agent: "support".to_string(),
+            match_rule: librefang_types::config::BindingMatchRule {
+                peer_id: Some("vip_user".to_string()),
+                ..Default::default()
+            },
+        }]);
+
+        let resolved = router.resolve(&ChannelType::Discord, "vip_user", None);
+        assert_eq!(resolved, Some(agent_id));
+
+        let resolved = router.resolve(&ChannelType::Discord, "other_user", None);
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn test_binding_guild_and_role_match() {
+        let router = AgentRouter::new();
+        let agent_id = AgentId::new();
+        router.register_agent("admin-bot".to_string(), agent_id);
+        router.load_bindings(&[AgentBinding {
+            agent: "admin-bot".to_string(),
+            match_rule: librefang_types::config::BindingMatchRule {
+                guild_id: Some("guild_123".to_string()),
+                roles: vec!["admin".to_string()],
+                ..Default::default()
+            },
+        }]);
+
+        let ctx = BindingContext {
+            channel: Cow::Borrowed("discord"),
+            peer_id: Cow::Borrowed("user1"),
+            guild_id: Some(Cow::Borrowed("guild_123")),
+            roles: smallvec::smallvec![Cow::Borrowed("admin"), Cow::Borrowed("user")],
+            ..Default::default()
+        };
+        let resolved = router.resolve_with_context(&ChannelType::Discord, "user1", None, &ctx);
+        assert_eq!(resolved, Some(agent_id));
+
+        // Wrong guild
+        let ctx2 = BindingContext {
+            channel: Cow::Borrowed("discord"),
+            peer_id: Cow::Borrowed("user1"),
+            guild_id: Some(Cow::Borrowed("guild_999")),
+            roles: smallvec::smallvec![Cow::Borrowed("admin")],
+            ..Default::default()
+        };
+        let resolved = router.resolve_with_context(&ChannelType::Discord, "user1", None, &ctx2);
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn test_binding_specificity_ordering() {
+        let router = AgentRouter::new();
+        let general_id = AgentId::new();
+        let specific_id = AgentId::new();
+        router.register_agent("general".to_string(), general_id);
+        router.register_agent("specific".to_string(), specific_id);
+
+        // Load in wrong order — less specific first
+        router.load_bindings(&[
+            AgentBinding {
+                agent: "general".to_string(),
+                match_rule: librefang_types::config::BindingMatchRule {
+                    channel: Some("discord".to_string()),
+                    ..Default::default()
+                },
+            },
+            AgentBinding {
+                agent: "specific".to_string(),
+                match_rule: librefang_types::config::BindingMatchRule {
+                    channel: Some("discord".to_string()),
+                    peer_id: Some("user1".to_string()),
+                    guild_id: Some("guild_1".to_string()),
+                    ..Default::default()
+                },
+            },
+        ]);
+
+        // More specific binding should win despite being loaded second
+        let ctx = BindingContext {
+            channel: Cow::Borrowed("discord"),
+            peer_id: Cow::Borrowed("user1"),
+            guild_id: Some(Cow::Borrowed("guild_1")),
+            ..Default::default()
+        };
+        let resolved = router.resolve_with_context(&ChannelType::Discord, "user1", None, &ctx);
+        assert_eq!(resolved, Some(specific_id));
+    }
+
+    #[test]
+    fn test_broadcast_routing() {
+        let router = AgentRouter::new();
+        let id1 = AgentId::new();
+        let id2 = AgentId::new();
+        router.register_agent("agent-a".to_string(), id1);
+        router.register_agent("agent-b".to_string(), id2);
+
+        let mut routes = std::collections::HashMap::new();
+        routes.insert(
+            "vip_user".to_string(),
+            vec!["agent-a".to_string(), "agent-b".to_string()],
+        );
+        router.load_broadcast(BroadcastConfig {
+            strategy: BroadcastStrategy::Parallel,
+            routes,
+        });
+
+        assert!(router.has_broadcast("vip_user"));
+        assert!(!router.has_broadcast("normal_user"));
+
+        let targets = router.resolve_broadcast("vip_user");
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].0, "agent-a");
+        assert_eq!(targets[0].1, Some(id1));
+        assert_eq!(targets[1].0, "agent-b");
+        assert_eq!(targets[1].1, Some(id2));
+    }
+
+    #[test]
+    fn test_channel_default_routing() {
+        let mut router = AgentRouter::new();
+        let system_default = AgentId::new();
+        let telegram_default = AgentId::new();
+        let discord_default = AgentId::new();
+
+        router.set_default(system_default);
+        router.set_channel_default("telegram".to_string(), telegram_default);
+        router.set_channel_default("discord".to_string(), discord_default);
+
+        // Telegram should use Telegram-specific default
+        let resolved = router.resolve(&ChannelType::Telegram, "user1", None);
+        assert_eq!(resolved, Some(telegram_default));
+
+        // Discord should use Discord-specific default
+        let resolved = router.resolve(&ChannelType::Discord, "user1", None);
+        assert_eq!(resolved, Some(discord_default));
+
+        // WhatsApp has no channel default — falls to system default
+        let resolved = router.resolve(&ChannelType::WhatsApp, "user1", None);
+        assert_eq!(resolved, Some(system_default));
+    }
+
+    /// Regression test for #2140: multi-bot Telegram routing must use account_id,
+    /// not first-match on allowed_users.
+    #[test]
+    fn test_multi_bot_account_id_routing() {
+        let router = AgentRouter::new();
+        let samapoedu_agent = AgentId::new();
+        let admin_agent = AgentId::new();
+
+        // Register two Telegram bots, each with their own account-qualified key.
+        router.set_channel_default_with_name(
+            "telegram:samapoedu-bot".to_string(),
+            samapoedu_agent,
+            "nika".to_string(),
+        );
+        router.set_channel_default_with_name(
+            "telegram:admin-bot".to_string(),
+            admin_agent,
+            "nick-assistant".to_string(),
+        );
+
+        // User in both bots' allowed_users — routing must be by account_id, not first-match.
+        let ctx_admin = BindingContext {
+            channel: Cow::Borrowed("telegram"),
+            account_id: Some(Cow::Borrowed("admin-bot")),
+            peer_id: Cow::Borrowed("23244855"),
+            ..Default::default()
+        };
+        let resolved =
+            router.resolve_with_context(&ChannelType::Telegram, "23244855", None, &ctx_admin);
+        assert_eq!(
+            resolved,
+            Some(admin_agent),
+            "admin-bot should route to nick-assistant"
+        );
+
+        let ctx_samapoedu = BindingContext {
+            channel: Cow::Borrowed("telegram"),
+            account_id: Some(Cow::Borrowed("samapoedu-bot")),
+            peer_id: Cow::Borrowed("23244855"),
+            ..Default::default()
+        };
+        let resolved =
+            router.resolve_with_context(&ChannelType::Telegram, "23244855", None, &ctx_samapoedu);
+        assert_eq!(
+            resolved,
+            Some(samapoedu_agent),
+            "samapoedu-bot should route to nika"
+        );
+    }
+
+    #[test]
+    fn channel_default_resolves_with_lowercase_key() {
+        let router = AgentRouter::new();
+        let telegram_default = AgentId::new();
+        router.set_channel_default("telegram".to_string(), telegram_default);
+
+        let resolved = router.resolve(&ChannelType::Telegram, "user1", None);
+        assert_eq!(resolved, Some(telegram_default));
+    }
+
+    #[test]
+    fn test_empty_bindings_legacy_behavior() {
+        let mut router = AgentRouter::new();
+        let default_id = AgentId::new();
+        router.set_default(default_id);
+        router.load_bindings(&[]);
+
+        // Should fall through to system default
+        let resolved = router.resolve(&ChannelType::Telegram, "user1", None);
+        assert_eq!(resolved, Some(default_id));
+    }
+
+    #[test]
+    fn test_binding_nonexistent_agent_warning() {
+        let router = AgentRouter::new();
+        // Don't register the agent — binding should match but resolve_binding returns None
+        router.load_bindings(&[AgentBinding {
+            agent: "ghost-agent".to_string(),
+            match_rule: librefang_types::config::BindingMatchRule {
+                channel: Some("telegram".to_string()),
+                ..Default::default()
+            },
+        }]);
+
+        let resolved = router.resolve(&ChannelType::Telegram, "user1", None);
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn test_add_remove_binding() {
+        let router = AgentRouter::new();
+        let id = AgentId::new();
+        router.register_agent("test".to_string(), id);
+
+        assert!(router.bindings().is_empty());
+
+        router.add_binding(AgentBinding {
+            agent: "test".to_string(),
+            match_rule: librefang_types::config::BindingMatchRule {
+                channel: Some("slack".to_string()),
+                ..Default::default()
+            },
+        });
+        assert_eq!(router.bindings().len(), 1);
+
+        let removed = router.remove_binding(0);
+        assert!(removed.is_some());
+        assert!(router.bindings().is_empty());
+    }
+
+    #[test]
+    fn test_binding_specificity_scores() {
+        use librefang_types::config::BindingMatchRule;
+
+        let empty = BindingMatchRule::default();
+        assert_eq!(empty.specificity(), 0);
+
+        let channel_only = BindingMatchRule {
+            channel: Some("discord".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(channel_only.specificity(), 1);
+
+        let full = BindingMatchRule {
+            channel: Some("discord".to_string()),
+            peer_id: Some("user".to_string()),
+            guild_id: Some("guild".to_string()),
+            roles: vec!["admin".to_string()],
+            account_id: Some("bot".to_string()),
+        };
+        assert_eq!(full.specificity(), 17); // 8+4+2+2+1
+    }
+
+    /// Regression test for #5672 Layer B: a `/agent` selection in `bot-a`
+    /// must NOT leak across to `bot-b` for the same platform user.
+    #[test]
+    fn user_default_does_not_leak_across_bots() {
+        let router = AgentRouter::new();
+        let agent_a = AgentId::new();
+        let agent_b = AgentId::new();
+        let agent_c = AgentId::new();
+
+        // bot-a defaults to agent-A; bot-b defaults to agent-B.
+        router.set_channel_default("telegram:bot-a".to_string(), agent_a);
+        router.set_channel_default("telegram:bot-b".to_string(), agent_b);
+
+        // User issues `/agent agent-C` in bot-a — scoped to bot-a only.
+        router.set_user_default_for_channel(
+            "telegram:bot-a".to_string(),
+            "user-1".to_string(),
+            agent_c,
+        );
+
+        // bot-a resolution for the same user picks up the override.
+        let ctx_a = BindingContext {
+            channel: Cow::Borrowed("telegram"),
+            account_id: Some(Cow::Borrowed("bot-a")),
+            peer_id: Cow::Borrowed("user-1"),
+            ..Default::default()
+        };
+        let resolved = router.resolve_with_context(&ChannelType::Telegram, "user-1", None, &ctx_a);
+        assert_eq!(
+            resolved,
+            Some(agent_c),
+            "bot-a should honour the user override (agent-C)"
+        );
+
+        // bot-b resolution for the same user must NOT see the override —
+        // it falls through to bot-b's channel default (agent-B).
+        let ctx_b = BindingContext {
+            channel: Cow::Borrowed("telegram"),
+            account_id: Some(Cow::Borrowed("bot-b")),
+            peer_id: Cow::Borrowed("user-1"),
+            ..Default::default()
+        };
+        let resolved = router.resolve_with_context(&ChannelType::Telegram, "user-1", None, &ctx_b);
+        assert_eq!(
+            resolved,
+            Some(agent_b),
+            "bot-b must NOT inherit bot-a's /agent override"
+        );
+    }
+
+    /// Regression test for #5672 Layer B: explicit channel-scoped override
+    /// beats the global (channel-agnostic) override for the matching bot.
+    #[test]
+    fn channel_scoped_user_default_overrides_global() {
+        let router = AgentRouter::new();
+        let global_agent = AgentId::new();
+        let scoped_agent = AgentId::new();
+
+        router.set_user_default("user-1".to_string(), global_agent);
+        router.set_user_default_for_channel(
+            "telegram:bot-a".to_string(),
+            "user-1".to_string(),
+            scoped_agent,
+        );
+
+        let ctx_a = BindingContext {
+            channel: Cow::Borrowed("telegram"),
+            account_id: Some(Cow::Borrowed("bot-a")),
+            peer_id: Cow::Borrowed("user-1"),
+            ..Default::default()
+        };
+        assert_eq!(
+            router.resolve_with_context(&ChannelType::Telegram, "user-1", None, &ctx_a),
+            Some(scoped_agent),
+            "per-(channel,account) scope must win over global"
+        );
+
+        // A different bot still sees only the global override.
+        let ctx_b = BindingContext {
+            channel: Cow::Borrowed("telegram"),
+            account_id: Some(Cow::Borrowed("bot-b")),
+            peer_id: Cow::Borrowed("user-1"),
+            ..Default::default()
+        };
+        assert_eq!(
+            router.resolve_with_context(&ChannelType::Telegram, "user-1", None, &ctx_b),
+            Some(global_agent),
+            "bot-b sees only the global override, not bot-a's scoped one"
+        );
+    }
+
+    /// `set_user_default` (legacy unqualified form) keeps channel-agnostic
+    /// semantics — relied on by existing integration tests and benches.
+    #[test]
+    fn legacy_set_user_default_is_channel_agnostic() {
+        let router = AgentRouter::new();
+        let agent = AgentId::new();
+        router.set_user_default("alice".to_string(), agent);
+
+        // Any channel / account resolves to the global override.
+        let ctx = BindingContext {
+            channel: Cow::Borrowed("telegram"),
+            account_id: Some(Cow::Borrowed("bot-a")),
+            peer_id: Cow::Borrowed("alice"),
+            ..Default::default()
+        };
+        assert_eq!(
+            router.resolve_with_context(&ChannelType::Telegram, "alice", None, &ctx),
+            Some(agent)
+        );
+        // Even without an account_id.
+        assert_eq!(
+            router.resolve(&ChannelType::Discord, "alice", None),
+            Some(agent)
+        );
+    }
+
+    /// Regression test for #5955: two Telegram sidecars that share the
+    /// `"telegram"` channel type but carry distinct config `name`s must
+    /// register under distinct `"telegram:<name>"` channel-default keys,
+    /// not collide on the bare `"telegram"` key (last-writer-wins).
+    ///
+    /// This reproduces the exact key-building the daemon performs in
+    /// `librefang-api/src/channel_bridge.rs`: with `account_id = Some(name)`
+    /// the key is `"<channel>:<name>"`; the buggy `account_id = None` path
+    /// collapsed both sidecars onto `"<channel>"`, so whichever sidecar
+    /// registered last won every chat. We assert each bot resolves to its
+    /// own default independently.
+    #[test]
+    fn sidecar_default_does_not_collide_across_bots() {
+        let router = AgentRouter::new();
+        let agent_a = AgentId::new();
+        let agent_b = AgentId::new();
+
+        // Mirror channel_bridge.rs: account_id = Some(sidecar.name) ⇒
+        // key = "telegram:<name>".
+        let ct = ChannelType::Telegram;
+        for (name, agent) in [("bot-a", agent_a), ("bot-b", agent_b)] {
+            let channel_key = format!("{}:{}", channel_type_to_str(&ct), name);
+            router.set_channel_default_with_name(channel_key, agent, name.to_string());
+        }
+
+        // Each bot's qualified key resolves to its own default — no
+        // last-writer-wins collision.
+        assert_eq!(
+            router.channel_default("telegram:bot-a"),
+            Some(agent_a),
+            "bot-a must keep its own channel default"
+        );
+        assert_eq!(
+            router.channel_default("telegram:bot-b"),
+            Some(agent_b),
+            "bot-b must keep its own channel default — not bot-a's, and \
+             not lost to a bare `telegram` collision"
+        );
+        // The configured names are preserved per-bot too (used by the
+        // reply-precheck bot-name lookup in bridge.rs).
+        assert_eq!(
+            router.channel_default_name("telegram:bot-a").as_deref(),
+            Some("bot-a")
+        );
+        assert_eq!(
+            router.channel_default_name("telegram:bot-b").as_deref(),
+            Some("bot-b")
+        );
+        // The bare `"telegram"` key was never written under the fixed
+        // keying, so it does not silently shadow either bot.
+        assert_eq!(
+            router.channel_default("telegram"),
+            None,
+            "no sidecar should claim the unqualified `telegram` default \
+             when each carries a distinct account_id"
+        );
+    }
+}

@@ -1,0 +1,5109 @@
+import { ApiError } from "./lib/http/errors";
+import {
+  startRegistration,
+  startAuthentication,
+  type PublicKeyCredentialCreationOptionsJSON,
+  type PublicKeyCredentialRequestOptionsJSON,
+} from "@simplewebauthn/browser";
+
+export interface HealthCheck {
+  name: string;
+  status: string;
+}
+
+export interface HealthResponse {
+  status?: string;
+  checks?: HealthCheck[];
+}
+
+export interface StatusResponse {
+  version?: string;
+  agent_count?: number;
+  active_agent_count?: number;
+  memory_used_mb?: number;
+  uptime_seconds?: number;
+  default_provider?: string;
+  default_model?: string;
+  api_listen?: string;
+  home_dir?: string;
+  log_level?: string;
+  /** Machine hostname. Only populated on authenticated endpoints
+   *  (`/api/status`, `/api/dashboard/snapshot`) — `/api/version` is public
+   *  and deliberately omits it. */
+  hostname?: string;
+  network_enabled?: boolean;
+  terminal_enabled?: boolean;
+  session_count?: number;
+  config_exists?: boolean;
+}
+
+export interface VersionResponse {
+  name?: string;
+  version?: string;
+  build_date?: string;
+  git_sha?: string;
+  rust_version?: string;
+  platform?: string;
+  arch?: string;
+  hostname?: string;
+}
+
+export interface ProviderItem {
+  id: string;
+  display_name?: string;
+  auth_status?: string;
+  reachable?: boolean;
+  model_count?: number;
+  latency_ms?: number;
+  api_key_env?: string;
+  base_url?: string;
+  proxy_url?: string;
+  key_required?: boolean;
+  health?: string;
+  media_capabilities?: string[];
+  is_custom?: boolean;
+  error_message?: string;
+  last_tested?: string;
+  /** True when the user explicitly suppressed this provider via
+   *  `DELETE /api/providers/{id}/key`. Pairs with the
+   *  `POST /api/providers/{id}/enable` endpoint that revives it.
+   *  Lets the dashboard distinguish "user-hidden" from "never configured"
+   *  for the otherwise indistinguishable `auth_status: "missing"`. */
+  suppressed?: boolean;
+  /** True when this provider is a coding-agent CLI (claude-code, codex-cli,
+   *  gemini-cli, qwen-code, codewhale) rather than a raw provider API.
+   *  Sourced from the backend (`is_coding_agent_provider`) so the dashboard
+   *  can group coding agents apart from providers. */
+  is_coding_agent?: boolean;
+  /** Headline max-output-token limit for the provider's representative
+   *  (default, else first) model: the user's `max_tokens` override when set,
+   *  otherwise the model's catalog `max_output_tokens`. Absent when the
+   *  provider has no usable model or declares no output limit (#6209). */
+  max_output_tokens?: number;
+}
+
+export interface MediaProvider {
+  name: string;
+  configured: boolean;
+  capabilities: string[];
+}
+
+export interface MediaImageResult {
+  images: { data_base64: string; url?: string }[];
+  model: string;
+  provider: string;
+  revised_prompt?: string;
+}
+
+export interface MediaTtsResult {
+  format: string;
+  provider: string;
+  model: string;
+  duration_ms?: number;
+}
+
+export interface MediaVideoSubmitResult {
+  task_id: string;
+  provider: string;
+}
+
+export interface MediaVideoResult {
+  file_url: string;
+  width?: number;
+  height?: number;
+  duration_secs?: number;
+  provider: string;
+  model: string;
+}
+
+export interface MediaVideoStatus {
+  status: string;
+  task_id?: string;
+  result?: MediaVideoResult;
+  error?: string;
+}
+
+export interface MediaMusicResult {
+  url: string;
+  format: string;
+  provider: string;
+  model: string;
+  duration_ms?: number;
+  sample_rate?: number;
+}
+
+export interface ChannelField {
+  key: string;
+  label?: string;
+  type?: string;
+  required?: boolean;
+  advanced?: boolean;
+  has_value?: boolean;
+  env_var?: string | null;
+  placeholder?: string | null;
+  value?: string;
+  options?: string[];
+  show_when?: string;
+  readonly?: boolean;
+}
+
+export interface ChannelItem {
+  name: string;
+  display_name?: string;
+  configured?: boolean;
+  /** True iff every required secret env var on the sidecar manifest
+   *  is present and non-empty. The backend computes this per row. */
+  has_token?: boolean;
+  category?: string;
+  description?: string;
+  icon?: string;
+  /** Schema-driven configure form for a sidecar adapter (returned by
+   *  `python -m <module> --describe` and cached daemon-side). */
+  fields?: ChannelField[];
+  /** Set on an unconfigured sidecar row when `--describe` failed at daemon boot and there is no static fallback — i.e. `fields` is empty and the configure form would otherwise be a blank drawer.
+   *  Carries the actionable reason (typically: the Python sidecar SDK is not installed), surfaced in the configure form so the operator knows why the form is empty and how to fix it. */
+  schema_error?: string;
+  /** Read-only TOML snippet the operator can copy into config.toml
+   *  if they prefer hand-editing over the configure drawer. Emitted
+   *  by the backend on every row. */
+  config_template?: string;
+  /** Messages exchanged through this channel in the last 24 hours.
+   *  Computed via a single grouped query on `usage_events` keyed by
+   *  the `channel` column. Surfaced as the `kind · N msgs/24h`
+   *  meta-line on the Channels page card. */
+  msgs_24h?: number;
+}
+
+export interface SkillItem {
+  name: string;
+  version?: string;
+  description?: string;
+  runtime?: string;
+  enabled?: boolean;
+  author?: string;
+  tools_count?: number;
+  tags?: string[];
+  source?: {
+    type?: string;
+    slug?: string;
+    version?: string;
+  };
+}
+
+export interface SkillsResponse {
+  items?: SkillItem[];
+  total?: number;
+  offset?: number;
+  limit?: number | null;
+  categories?: string[];
+}
+
+// Skill evolution types
+export interface SkillVersionEntry {
+  version: string;
+  timestamp: string;
+  changelog: string;
+  content_hash: string;
+  author?: string | null;
+}
+
+export interface SkillEvolutionMeta {
+  versions: SkillVersionEntry[];
+  use_count: number;
+  /** Total version entries written, incl. initial creation. */
+  evolution_count: number;
+  /** Mutations after creation (update/patch/rollback). 0 on fresh skill. */
+  mutation_count: number;
+}
+
+export interface SkillToolInfo {
+  name: string;
+  description: string;
+}
+
+export interface SkillDetail {
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  license: string;
+  tags: string[];
+  runtime: string;
+  tools: SkillToolInfo[];
+  has_prompt_context: boolean;
+  prompt_context_length: number;
+  prompt_context?: string | null;
+  /** Backend-supplied skill source descriptor. Treated as opaque on the
+   *  dashboard — no UI introspects it today, so leave the shape unconstrained
+   *  rather than freezing a partial picture into the type. */
+  source: unknown;
+  enabled: boolean;
+  path: string;
+  linked_files: Record<string, string[]>;
+  evolution: SkillEvolutionMeta;
+}
+
+export interface EvolutionResult {
+  success: boolean;
+  message: string;
+  skill_name: string;
+  version?: string;
+  /** Set only on patch ops: which fuzzy strategy matched. */
+  match_strategy?: "Exact" | "WhitespaceStripped" | "LineTrimmed" | "WhitespaceNormalized" | "IndentFlexible" | "BlockAnchor";
+  /** Set only on patch ops: replaced occurrence count. */
+  match_count?: number;
+  /** Post-op version-history size (includes initial creation). */
+  evolution_count?: number;
+  /** Post-op mutation counter (post-create edits only — 0 on fresh create). */
+  mutation_count?: number;
+  /** Post-op usage counter. */
+  use_count?: number;
+}
+
+export interface ProvidersResponse {
+  providers?: ProviderItem[];
+  total?: number;
+}
+
+export interface ChannelsResponse {
+  // Canonical PaginatedResponse envelope (#3842).
+  items?: ChannelItem[];
+  total?: number;
+  offset?: number;
+  limit?: number | null;
+  configured_count?: number;
+}
+
+export interface DashboardSnapshot {
+  health: HealthResponse;
+  status: StatusResponse;
+  providers: ProviderItem[];
+  channels: ChannelItem[];
+  agents: AgentItem[];
+  skillCount: number;
+  workflowCount: number;
+  webSearchAvailable: boolean;
+}
+
+export interface AgentIdentity {
+  emoji?: string;
+  avatar_url?: string;
+  color?: string;
+}
+
+/** Reason for the most recent automatic session reset.
+ *  Mirrors `librefang_types::config::SessionResetReason` — wire form is the
+ *  snake_case variant name. */
+export type SessionResetReason =
+  | "idle"
+  | "daily"
+  | "suspended"
+  | "manual";
+
+export interface AgentItem {
+  id: string;
+  name: string;
+  state?: string;
+  mode?: string;
+  created_at?: string;
+  last_active?: string;
+  model_provider?: string;
+  model_name?: string;
+  model_tier?: string;
+  auth_status?: string;
+  supports_thinking?: boolean;
+  ready?: boolean;
+  profile?: string;
+  /** Human-readable schedule summary: "manual" for reactive agents,
+   *  the cron expression for periodic agents, "proactive", or
+   *  "continuous · Ns" for continuous agents. */
+  schedule?: string;
+  /** Sessions whose `created_at` is within the last 24 hours. Computed
+   *  in a single grouped SQL pass on the list endpoint so row UIs can
+   *  render KPI without a global /api/sessions aggregation. */
+  sessions_24h?: number;
+  /** Sum of `usage_events.cost_usd` for the agent in the last 24 hours. */
+  cost_24h?: number;
+  identity?: AgentIdentity;
+  is_hand?: boolean;
+  web_search_augmentation?: "off" | "auto" | "always";
+  /** UUID of the parent agent that spawned this one, if any.
+   *  Wire field emitted by `GET /api/agents` is `parent_agent_id`; the raw
+   *  `AgentEntry` serde form is `parent`. Both are accepted so the type is
+   *  forward-compatible with endpoints that return the struct directly. */
+  parent_agent_id?: string | null;
+  /** Raw serde field from `AgentEntry::parent` — present on endpoints that
+   *  serialize the kernel struct directly. */
+  parent?: string | null;
+  /** UUIDs of child agents spawned by this agent (fork tree). */
+  children?: string[];
+  /** Active session UUID. */
+  session_id?: string;
+  /** Categorisation tags. */
+  tags?: string[];
+  /** Whether onboarding (bootstrap) has been completed. */
+  onboarding_completed?: boolean;
+  /** RFC3339 timestamp of when onboarding completed, if any. */
+  onboarding_completed_at?: string | null;
+  /** When `true`, the next dispatch will hard-reset (wipe) the session
+   *  history before processing. Set by operator action or stuck-loop
+   *  recovery. */
+  force_session_wipe?: boolean;
+  /** When `true`, the agent was interrupted by restart/shutdown but
+   *  recovery is expected; the existing `session_id` is preserved. */
+  resume_pending?: boolean;
+  /** Reason for the most recent automatic session reset, if any. */
+  reset_reason?: SessionResetReason | null;
+  /** Sticky flag: `true` once the agent has processed at least one real
+   *  inbound message, channel event, or autonomous tick. */
+  has_processed_message?: boolean;
+}
+
+export interface PaginatedResponse<T> {
+  items?: T[];
+  total?: number;
+  offset?: number;
+  limit?: number | null;
+}
+
+export interface AgentTool {
+  name?: string;
+  input?: unknown;
+  result?: string;
+  is_error?: boolean;
+  running?: boolean;
+  expanded?: boolean;
+}
+
+export interface AgentSessionImage {
+  file_id: string;
+  filename?: string;
+  /** Optional — backend currently only emits image attachments here, so
+   *  the renderer treats a missing value as image. Threading the field
+   *  through keeps the chat transcript correct if the server starts
+   *  serializing non-image attachments (PDF/text) into history. */
+  content_type?: string;
+}
+
+/** Reference passed back to the agent's `/message` endpoint or WS frame
+ *  after a successful upload. Mirrors `crate::types::AttachmentRef`. */
+export interface AttachmentRef {
+  file_id: string;
+  filename?: string;
+  content_type?: string;
+}
+
+export interface AgentFileUploadResult {
+  file_id: string;
+  filename: string;
+  content_type: string;
+  size: number;
+  /** Whisper transcription, populated only for audio uploads. */
+  transcription?: string;
+}
+
+/** Mirrors `ContentBlock` in `crates/librefang-types/src/message.rs` —
+ *  serde-tagged on `type`. Keep variants in sync with the Rust enum;
+ *  unknown server-side variants land in `ContentBlockUnknown` so the
+ *  client never throws on a forward-compatible payload. */
+export interface ContentBlockText {
+  type: "text";
+  text: string;
+  provider_metadata?: unknown;
+}
+
+export interface ContentBlockThinking {
+  type: "thinking";
+  thinking: string;
+  provider_metadata?: unknown;
+}
+
+export interface ContentBlockToolUse {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: unknown;
+  provider_metadata?: unknown;
+}
+
+export interface ContentBlockToolResult {
+  type: "tool_result";
+  tool_use_id: string;
+  tool_name?: string;
+  content: string;
+  is_error: boolean;
+  status?: unknown;
+  approval_request_id?: string;
+}
+
+export interface ContentBlockImage {
+  type: "image";
+  media_type: string;
+  data: string;
+}
+
+export interface ContentBlockImageFile {
+  type: "image_file";
+  media_type: string;
+  path: string;
+}
+
+/** Forward-compat fallback for variants the Rust enum may add later.
+ *  Intentionally NOT part of the `ContentBlock` discriminated union below:
+ *  if `type: string` were a member, TypeScript could not narrow
+ *  `block.type === "text"` to `ContentBlockText` (the `string` literal
+ *  overlap collapses every variant). Walkers that need to tolerate
+ *  unknown shapes do so at runtime via `"type" in block`, which keeps
+ *  forward-compat without losing narrowing in the typed branches. */
+export interface ContentBlockUnknown {
+  type: string;
+  [key: string]: unknown;
+}
+
+export type ContentBlock =
+  | ContentBlockText
+  | ContentBlockThinking
+  | ContentBlockToolUse
+  | ContentBlockToolResult
+  | ContentBlockImage
+  | ContentBlockImageFile;
+
+export interface AgentSessionMessage {
+  role?: string;
+  /** Either a plain string (legacy `MessageContent::Text`) or an array
+   *  of structured blocks (`MessageContent::Blocks`) — the Rust enum is
+   *  `#[serde(untagged)]` so both shapes appear on the wire.
+   *
+   *  The agent-scoped session endpoint (`/api/agents/{id}/session`) flattens
+   *  blocks server-side and returns a string here; the raw-blocks endpoint
+   *  (`/api/sessions/{id}`) returns the full `ContentBlock[]`. The mapper
+   *  handles both shapes via `extractAssistantHistoryParts`. */
+  content?: string | ContentBlock[];
+  tools?: AgentTool[];
+  images?: AgentSessionImage[];
+  /** RFC 3339 timestamp from the server; may be absent for messages
+   * persisted before the field was introduced. */
+  timestamp?: string;
+  /** Flat reasoning trace surfaced by the agent-scoped session endpoint
+   *  for assistant messages that contained `ContentBlock::Thinking`. The
+   *  server joins multiple thinking blocks with a blank line, mirroring
+   *  the live-streaming `thinking_delta` accumulation. Absent when the
+   *  message had no thinking blocks (preserves response shape for
+   *  non-thinking models). */
+  thinking?: string;
+}
+
+export interface AgentSessionResponse {
+  session_id?: string;
+  agent_id?: string;
+  message_count?: number;
+  context_window_tokens?: number;
+  label?: string;
+  messages?: AgentSessionMessage[];
+  /** LLM-generated summary from the last compaction, null when none exists. */
+  compacted_summary?: string | null;
+}
+
+export interface AgentMessageResponse {
+  response?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  iterations?: number;
+  cost_usd?: number;
+  silent?: boolean;
+  memories_saved?: string[];
+  memories_used?: string[];
+  thinking?: string;
+  /**
+   * Issue #5199 — session id the server actually used for this turn.
+   * Populated only when the request omitted `session_id`, so the
+   * dashboard's HTTP fallback path can auto-pin `?sessionId=` in the
+   * URL exactly like the WS `response` path does. Mirrors the WS
+   * handler's `explicit_session.is_none()` branch in `ws.rs`. Absent
+   * when the caller pinned an explicit session in the request.
+   */
+  session_id?: string;
+}
+
+export interface SendAgentMessageOptions {
+  /** Force deep-thinking on/off for this call. Omitted = manifest default. */
+  thinking?: boolean;
+  /** Whether to receive the model's reasoning trace. Defaults to true. */
+  show_thinking?: boolean;
+  /**
+   * Optional explicit session id (issue #2959). When provided, this send
+   * targets the given session regardless of the agent's canonical session.
+   * Used by the chat UI when a specific session is selected in the URL so
+   * two browser tabs on the same agent don't race each other.
+   */
+  session_id?: string | null;
+  /** File attachments uploaded via `/api/agents/{id}/upload`. */
+  attachments?: AttachmentRef[];
+}
+
+export interface ApiActionResponse {
+  status?: string;
+  message?: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
+export interface WorkflowStep {
+  name: string;
+  agent_id?: string;
+  agent_name?: string;
+  prompt_template: string;
+  timeout_secs?: number;
+  inherit_context?: boolean;
+  depends_on?: string[];
+}
+
+export interface WorkflowLastRunSummary {
+  /** Run state: "pending" | "running" | "paused" | "completed" | "failed". */
+  state: string;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface WorkflowItem {
+  id: string;
+  name: string;
+  description?: string;
+  steps?: number | WorkflowStep[];
+  created_at?: string;
+  layout?: unknown;
+  /** Most recent run summary, null when the workflow has never been run. */
+  last_run?: WorkflowLastRunSummary | null;
+  /** Completed / (completed + failed) over terminal runs only.
+   * `null` until at least one run reaches a terminal state. */
+  success_rate?: number | null;
+}
+
+export interface WorkflowRunItem {
+  id?: string;
+  workflow_name?: string;
+  state?: unknown;
+  steps_completed?: number;
+  started_at?: string;
+  completed_at?: string | null;
+}
+
+/**
+ * Multi-destination cron output fan-out target.
+ *
+ * Mirrors the Rust enum `librefang_types::scheduler::CronDeliveryTarget`,
+ * which is `#[serde(tag = "type", rename_all = "snake_case")]`. Each variant
+ * is an object with a `type` discriminator plus variant-specific fields.
+ *
+ * Empty/optional fields (`auth_header`, `subject_template`) MUST be omitted
+ * from the payload rather than sent as empty strings — the Rust side uses
+ * `Option<String>` and treating `""` as `Some("")` would leak through.
+ */
+export type CronDeliveryTarget =
+  | {
+      type: "channel";
+      /** Adapter name, e.g. "telegram", "slack", "discord". */
+      channel_type: string;
+      /** Platform-specific recipient (chat ID, user ID, channel ID). */
+      recipient: string;
+      /**
+       * Optional thread/topic id (Slack `thread_ts`, Telegram forum-topic
+       * id). Omit unless the adapter supports threading. Empty strings are
+       * stripped at submit time so the wire shape matches the Rust
+       * `Option<String>` exactly.
+       */
+      thread_id?: string;
+      /**
+       * Optional adapter-key suffix used to disambiguate multiple
+       * configured accounts of the same channel (e.g. two Slack workspaces
+       * keyed `slack:workspace-a` vs `slack:workspace-b`). Omit when only
+       * one account of `channel_type` is configured.
+       */
+      account_id?: string;
+    }
+  | {
+      type: "webhook";
+      /** Destination URL. Must start with http:// or https://. */
+      url: string;
+      /** Optional Authorization header value (sent verbatim). */
+      auth_header?: string;
+    }
+  | {
+      type: "local_file";
+      /** Absolute or relative path on the daemon host. */
+      path: string;
+      /** If true, append to the file; if false, overwrite. */
+      append?: boolean;
+    }
+  | {
+      type: "email";
+      /** Recipient email address. */
+      to: string;
+      /** Optional subject template. `{job}` is replaced with the job name. */
+      subject_template?: string;
+    };
+
+/** Discriminator string for `CronDeliveryTarget` — useful for switch arms. */
+export type CronDeliveryTargetType = CronDeliveryTarget["type"];
+
+export interface ScheduleItem {
+  id: string;
+  name?: string;
+  cron?: string;
+  tz?: string | null;
+  description?: string;
+  message?: string;
+  enabled?: boolean;
+  created_at?: string;
+  last_run?: string | null;
+  next_run?: string | null;
+  agent_id?: string;
+  workflow_id?: string;
+  /**
+   * Optional fan-out destinations. Empty/missing means single-target
+   * delivery via the legacy `delivery` field. Backend sends an array
+   * (possibly empty) on round-trip.
+   */
+  delivery_targets?: CronDeliveryTarget[];
+}
+
+export interface TriggerItem {
+  id: string;
+  agent_id?: string;
+  pattern?: unknown;
+  prompt_template?: string;
+  enabled?: boolean;
+  fire_count?: number;
+  max_fires?: number;
+  created_at?: string;
+  target_agent_id?: string | null;
+  cooldown_secs?: number | null;
+  session_mode?: string | null;
+}
+
+export interface TriggerPatch {
+  pattern?: unknown;
+  prompt_template?: string;
+  enabled?: boolean;
+  max_fires?: number;
+  cooldown_secs?: number | null;
+  session_mode?: string | null;
+  target_agent_id?: string | null;
+}
+
+export interface CreateTriggerPayload {
+  agent_id: string;
+  pattern: unknown;
+  prompt_template: string;
+  max_fires?: number;
+  target_agent_id?: string;
+  cooldown_secs?: number;
+  session_mode?: string;
+}
+
+export interface CronJobItem {
+  id?: string;
+  enabled?: boolean;
+  name?: string;
+  /**
+   * Cron schedule descriptor. The backend serializes
+   * `librefang_types::scheduler::CronSchedule` as a tagged object
+   * (`{ kind: "cron" | "every" | "at", … }`), so consumers must narrow
+   * before reading fields. Older code paths sometimes received a
+   * pre-rendered string; keep the union for back-compat (see
+   * `HandsPage.tsx::resolveCronSchedule` for an example consumer).
+   */
+  schedule?: string | CronScheduleSpec;
+  [key: string]: unknown;
+}
+
+export interface QueueLaneStatus {
+  lane?: string;
+  active?: number;
+  capacity?: number;
+}
+
+export interface QueueConcurrencyConfig {
+  main_lane?: number;
+  cron_lane?: number;
+  subagent_lane?: number;
+  trigger_lane?: number;
+  default_per_agent?: number;
+}
+
+export interface QueueStatusResponse {
+  lanes?: QueueLaneStatus[];
+  config?: {
+    max_depth_per_agent?: number;
+    max_depth_global?: number;
+    task_ttl_secs?: number;
+    concurrency?: QueueConcurrencyConfig;
+  };
+}
+
+export interface AuditEntry {
+  seq?: number;
+  timestamp?: string;
+  agent_id?: string;
+  action?: string;
+  detail?: string;
+  outcome?: string;
+  hash?: string;
+}
+
+export interface AuditRecentResponse {
+  items?: AuditEntry[];
+  /** @deprecated #3842 — use `items`. Populated by older daemons only. */
+  entries?: AuditEntry[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  tip_hash?: string;
+}
+
+export interface AuditVerifyResponse {
+  valid?: boolean;
+  entries?: number;
+  tip_hash?: string;
+  warning?: string;
+  error?: string;
+  // External tip-anchor (#3339): "ok" — anchor matches DB tip;
+  // "diverged" — anchor disagrees with DB tip (forgery suspected);
+  // "none" — no anchor configured (chain is self-consistent only).
+  anchor_status?: "ok" | "diverged" | "none";
+  anchor_enabled?: boolean;
+  anchor_path?: string | null;
+}
+
+export interface ApprovalItem {
+  id: string;
+  agent_id?: string;
+  agent_name?: string;
+  tool_name?: string;
+  description?: string;
+  action_summary?: string;
+  action?: string;
+  risk_level?: string;
+  requested_at?: string;
+  created_at?: string;
+  timeout_secs?: number;
+  status?: string;
+}
+
+export interface SessionListItem {
+  session_id: string;
+  agent_id?: string;
+  message_count?: number;
+  context_window_tokens?: number;
+  total_tokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+  duration_ms?: number;
+  created_at?: string;
+  label?: string | null;
+  active?: boolean;
+}
+
+export interface SessionDetailResponse {
+  session_id?: string;
+  agent_id?: string;
+  message_count?: number;
+  context_window_tokens?: number;
+  label?: string | null;
+  messages?: AgentSessionMessage[];
+  created_at?: string;
+}
+
+export interface MemoryItem {
+  id: string;
+  content?: string;
+  level?: string;
+  category?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  source?: string;
+  confidence?: number;
+  accessed_at?: string;
+  access_count?: number;
+  agent_id?: string;
+}
+
+export interface MemoryListResponse {
+  memories?: MemoryItem[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  // Server signals whether proactive memory is enabled in config so the
+  // dashboard can render an explanatory note + fall back to per-agent KV.
+  proactive_enabled?: boolean;
+}
+
+export interface MemoryStatsResponse {
+  total?: number;
+  user_count?: number;
+  session_count?: number;
+  agent_count?: number;
+  categories?: Record<string, number>;
+  enabled?: boolean;
+  auto_memorize_enabled?: boolean;
+  auto_retrieve_enabled?: boolean;
+  llm_extraction?: boolean;
+  // Mirrors MemoryListResponse — see field doc above.
+  proactive_enabled?: boolean;
+}
+
+// Per-agent KV pair returned by `GET /api/memory/agents/:id/kv`.
+//
+// `created_at` and `source` are best-effort: the underlying substrate may not
+// populate them today, so the dashboard treats them as optional.
+export interface AgentKvPair {
+  key: string;
+  value: unknown;
+  source?: string;
+  created_at?: string;
+}
+
+export interface AgentKvResponse {
+  kv_pairs?: AgentKvPair[];
+}
+
+export interface UsageSummaryResponse {
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  total_cost_usd?: number;
+  call_count?: number;
+  total_tool_calls?: number;
+}
+
+export interface UsageByModelItem {
+  model?: string;
+  total_cost_usd?: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  call_count?: number;
+}
+
+export interface ModelPerformanceItem {
+  model?: string;
+  total_cost_usd?: number;
+  total_input_tokens?: number;
+  total_output_tokens?: number;
+  call_count?: number;
+  avg_latency_ms?: number;
+  min_latency_ms?: number;
+  max_latency_ms?: number;
+  cost_per_call?: number;
+  avg_latency_per_call?: number;
+}
+
+export interface UsageByAgentItem {
+  agent_id?: string;
+  name?: string;
+  total_tokens?: number;
+  tool_calls?: number;
+  cost?: number;
+}
+
+export interface UsageDailyItem {
+  date?: string;
+  cost_usd?: number;
+  tokens?: number;
+  calls?: number;
+}
+
+export interface UsageDailyResponse {
+  days?: UsageDailyItem[];
+  today_cost_usd?: number;
+  first_event_date?: string | null;
+}
+
+export interface CommsNode {
+  id: string;
+  name?: string;
+  state?: string;
+  model?: string;
+}
+
+export interface CommsEdge {
+  from?: string;
+  to?: string;
+  kind?: string;
+}
+
+export interface CommsTopology {
+  nodes?: CommsNode[];
+  edges?: CommsEdge[];
+}
+
+export interface CommsEventItem {
+  id?: string;
+  timestamp?: string;
+  kind?: string;
+  source_id?: string;
+  source_name?: string;
+  target_id?: string;
+  target_name?: string;
+  detail?: string;
+}
+
+export interface HandRequirementItem {
+  key?: string;
+  label?: string;
+  satisfied?: boolean;
+  optional?: boolean;
+  type?: string;
+  description?: string;
+  current_value?: string;
+}
+
+export interface HandDefinitionItem {
+  id: string;
+  name?: string;
+  description?: string;
+  category?: string;
+  icon?: string;
+  tools?: string[];
+  requirements_met?: boolean;
+  active?: boolean;
+  degraded?: boolean;
+  requirements?: HandRequirementItem[];
+  dashboard_metrics?: number;
+  has_settings?: boolean;
+  settings_count?: number;
+  /** True when the hand was installed by the user (lives under
+   *  `home/workspaces/{id}`). Built-in hands shipped by librefang-registry
+   *  report false and cannot be uninstalled. */
+  is_custom?: boolean;
+}
+
+export interface HandInstanceItem {
+  instance_id: string;
+  hand_id?: string;
+  hand_name?: string;
+  hand_icon?: string;
+  status?: string;
+  agent_id?: string;
+  agent_name?: string;
+  agent_ids?: Record<string, string>;
+  coordinator_role?: string;
+  activated_at?: string;
+  updated_at?: string;
+}
+
+export interface HandStatsResponse {
+  instance_id?: string;
+  hand_id?: string;
+  status?: string;
+  agent_id?: string;
+  metrics?: Record<string, { value?: unknown; format?: string }>;
+}
+
+export interface GoalItem {
+  id: string;
+  title?: string;
+  description?: string;
+  parent_id?: string;
+  agent_id?: string;
+  status?: string;
+  progress?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_POST_TIMEOUT_MS = 60_000;
+const LONG_RUNNING_TIMEOUT_MS = 300_000;
+
+// Global 401 handler — set by App.tsx to trigger login screen
+let _onUnauthorized: (() => void) | null = null;
+let _unauthorizedFired = false;
+export function setOnUnauthorized(fn: (() => void) | null) {
+  _onUnauthorized = fn;
+  _unauthorizedFired = false;
+}
+
+export function getStoredApiKey(): string {
+  // #3620: Prefer sessionStorage (tab-scoped, not persisted to disk) over
+  // localStorage to reduce the XSS exfil window. Fall back to localStorage so
+  // tokens stored by older versions of the dashboard keep working.
+  return (
+    sessionStorage.getItem("librefang-api-key") ||
+    localStorage.getItem("librefang-api-key") ||
+    ""
+  );
+}
+
+export function authHeader(): HeadersInit {
+  const lang = localStorage.getItem("i18nextLng") || navigator.language || "en";
+  const token = getStoredApiKey();
+  const headers: HeadersInit = { "Accept-Language": lang };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+function buildHeaders(headers?: HeadersInit): Headers {
+  const merged = new Headers(headers);
+  const auth = new Headers(authHeader());
+  auth.forEach((value, key) => {
+    merged.set(key, value);
+  });
+  return merged;
+}
+
+/**
+ * Build an authenticated WebSocket connection (#3620, #3963).
+ *
+ * The token is passed via the `Sec-WebSocket-Protocol` header using a
+ * `bearer.<token>` sub-protocol instead of a `?token=` query parameter, so the
+ * token never appears in URLs, server access logs, browser history, or
+ * Referer headers.  The server reads the token from the first sub-protocol
+ * entry that starts with `bearer.` and echoes it back in the upgrade
+ * response (browsers reject the handshake otherwise).
+ *
+ * Returns `{ url, protocols }` — pass both to `new WebSocket(url, protocols)`.
+ */
+export function buildAuthenticatedWebSocket(path: string): {
+  url: string;
+  protocols: string[];
+} {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const url = `${proto}//${window.location.host}${path}`;
+  const token = getStoredApiKey();
+  const protocols = token ? [`bearer.${token}`] : [];
+  return { url, protocols };
+}
+
+async function parseError(response: Response): Promise<ApiError> {
+  if (response.status === 401 && _onUnauthorized && !_unauthorizedFired) {
+    _unauthorizedFired = true;
+    clearApiKey();
+    _onUnauthorized();
+  }
+  return ApiError.fromResponse(response);
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal });
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) {
+      throw new Error(
+        `Request timeout after ${Math.round(timeoutMs / 1000)}s - operation may still be running`,
+      );
+    }
+    throw error;
+  }
+}
+
+async function get<T>(path: string): Promise<T> {
+  const response = await fetchWithTimeout(path, { headers: buildHeaders() });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as T;
+}
+
+async function post<T>(
+  path: string,
+  body: unknown,
+  timeout = DEFAULT_POST_TIMEOUT_MS,
+  externalSignal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  // Forward external aborts (e.g. component unmount) into our controller so
+  // the fetch is actually cancelled, not just the awaited promise.
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+
+  try {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: buildHeaders({
+        "Content-Type": "application/json",
+      }),
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      throw await parseError(response);
+    }
+    return (await response.json()) as T;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (externalSignal?.aborted) {
+      // Re-throw as DOMException so callers can identify caller-initiated aborts.
+      throw new DOMException("Aborted", "AbortError");
+    }
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Request timeout after ${Math.round(timeout / 1000)}s - operation may still be running`);
+    }
+    throw error;
+  } finally {
+    if (externalSignal) {
+      externalSignal.removeEventListener("abort", onExternalAbort);
+    }
+  }
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetchWithTimeout(path, {
+    method: "PUT",
+    headers: buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as T;
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetchWithTimeout(path, {
+    method: "PATCH",
+    headers: buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as T;
+}
+
+async function del<T>(path: string): Promise<T> {
+  const response = await fetchWithTimeout(path, {
+    method: "DELETE",
+    headers: buildHeaders({ "Content-Type": "application/json" }),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  if (response.status === 204 || response.headers.get("content-length") === "0") {
+    // 204 No Content — no JSON body. Return an empty object so callers
+    // that access optional fields (e.g. r.status on ApiActionResponse)
+    // get `undefined` per-field instead of NPE on the root value.
+    return {} as T;
+  }
+  return (await response.json()) as T;
+}
+
+async function getText(path: string): Promise<string> {
+  const response = await fetchWithTimeout(path, { headers: buildHeaders() });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return response.text();
+}
+
+export async function postQuickInit(): Promise<{ status: string; provider?: string; model?: string; message?: string }> {
+  return post("/api/init", {});
+}
+
+export async function loadDashboardSnapshot(): Promise<DashboardSnapshot> {
+  const snap = await get<{
+    health: HealthResponse;
+    status: StatusResponse;
+    agents: AgentItem[];
+    providers: ProviderItem[];
+    channels: ChannelItem[];
+    skillCount: number;
+    workflowCount: number;
+    webSearchAvailable: boolean;
+  }>("/api/dashboard/snapshot");
+
+  return {
+    health: snap.health,
+    status: snap.status,
+    agents: snap.agents ?? [],
+    providers: snap.providers ?? [],
+    channels: snap.channels ?? [],
+    skillCount: snap.skillCount ?? 0,
+    workflowCount: snap.workflowCount ?? 0,
+    webSearchAvailable: snap.webSearchAvailable ?? false,
+  };
+}
+
+
+export interface AgentModelDetail {
+  provider?: string;
+  model?: string;
+  max_tokens?: number;
+  temperature?: number;
+}
+
+export interface AgentDetail {
+  id: string;
+  name: string;
+  model?: AgentModelDetail;
+  system_prompt?: string;
+  capabilities?: { tools?: boolean; network?: boolean };
+  skills?: string[];
+  /** Skill assignment mode derived by the backend:
+   *  - 'all' — manifest doesn't pin an allowlist (the default).
+   *  - 'allowlist' — manifest pinned the list in `skills`.
+   *  - 'none' — skills_disabled = true. */
+  skills_mode?: "all" | "allowlist" | "none";
+  /** Human-readable schedule summary derived from manifest.schedule:
+   *  'manual' for reactive, the cron expression, 'proactive', or
+   *  'continuous · Ns'. Matches what `enrich_agent_json` puts on the
+   *  list endpoint. */
+  schedule?: string;
+  tags?: string[];
+  mode?: string;
+  thinking?: { budget_tokens?: number; stream_thinking?: boolean };
+  is_hand?: boolean;
+  web_search_augmentation?: "off" | "auto" | "always";
+  auto_evolve?: boolean;
+}
+
+export async function getAgentDetail(agentId: string): Promise<AgentDetail> {
+  return get<AgentDetail>(`/api/agents/${encodeURIComponent(agentId)}`);
+}
+
+/** 24-hour KPI rollup for one agent — backs the AgentsPage detail-panel
+ *  KPI tiles. See `GET /api/agents/{id}/stats`. */
+export interface AgentStats24h {
+  sessions_24h: number;
+  cost_24h: number;
+  p95_latency_ms: number;
+  active_now: number;
+  samples: number;
+  /** Same window-scoped fields, aggregated over the prior 24h (24-48h
+   *  ago). Optional so older backends that don't ship the field don't
+   *  break the type at runtime — the dashboard already gates on
+   *  `live?.prev` and falls back to non-delta subtext. */
+  prev?: {
+    sessions_24h: number;
+    cost_24h: number;
+    p95_latency_ms: number;
+  };
+}
+
+export async function getAgentStats(agentId: string): Promise<AgentStats24h> {
+  return get<AgentStats24h>(`/api/agents/${encodeURIComponent(agentId)}/stats`);
+}
+
+/** Per-agent turn-level events row from `usage_events`, surfaced via
+ *  `GET /api/agents/{id}/events`. Powers the agent-detail Logs tab. */
+export interface AgentEventRow {
+  timestamp: string;
+  model: string;
+  provider: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  tool_calls: number;
+  latency_ms: number;
+}
+
+export async function listAgentEvents(
+  agentId: string,
+  limit = 30,
+): Promise<AgentEventRow[]> {
+  const data = await get<{ events?: AgentEventRow[] }>(
+    `/api/agents/${encodeURIComponent(agentId)}/events?limit=${limit}`,
+  );
+  return data.events ?? [];
+}
+
+export async function patchAgentConfig(
+  agentId: string,
+  config: {
+    max_tokens?: number;
+    model?: string;
+    provider?: string;
+    temperature?: number;
+    web_search_augmentation?: "off" | "auto" | "always";
+  },
+): Promise<ApiActionResponse> {
+  return patch<ApiActionResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/config`,
+    config,
+  );
+}
+
+function trimOptionalHandRuntimeString(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value.trim();
+}
+
+/**
+ * Hand runtime PATCH is the only agent-config write path with tri-state string
+ * semantics: absent leaves the override untouched, empty string clears it.
+ * Keep this serializer scoped to `/hand-runtime-config` so other PATCH payloads
+ * do not silently inherit those semantics.
+ */
+function serializeHandAgentRuntimeConfigPatch(config: {
+  max_tokens?: number;
+  model?: string;
+  provider?: string;
+  temperature?: number;
+  api_key_env?: string;
+  base_url?: string;
+  web_search_augmentation?: "off" | "auto" | "always";
+}): {
+  max_tokens?: number;
+  model?: string;
+  provider?: string;
+  temperature?: number;
+  api_key_env?: string;
+  base_url?: string;
+  web_search_augmentation?: "off" | "auto" | "always";
+} {
+  return {
+    ...config,
+    api_key_env: trimOptionalHandRuntimeString(config.api_key_env),
+    base_url: trimOptionalHandRuntimeString(config.base_url),
+  };
+}
+
+/** PATCH /api/agents/{id}/hand-runtime-config — partial update of per-agent
+ * hand runtime overrides. Empty string for `api_key_env` / `base_url` clears
+ * that specific field (tri-state: absent = leave as-is, empty = clear,
+ * value = set). Distinct from `/agents/{id}/config` which targets the
+ * standalone agent config path. */
+export async function patchHandAgentRuntimeConfig(
+  agentId: string,
+  config: {
+    max_tokens?: number;
+    model?: string;
+    provider?: string;
+    temperature?: number;
+    api_key_env?: string;
+    base_url?: string;
+    web_search_augmentation?: "off" | "auto" | "always";
+  },
+): Promise<ApiActionResponse> {
+  return patch<ApiActionResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/hand-runtime-config`,
+    serializeHandAgentRuntimeConfigPatch(config),
+  );
+}
+
+/** DELETE /api/agents/{id}/hand-runtime-config — drop all per-agent runtime
+ * overrides for the hand role, restoring the live manifest to the HAND.toml
+ * defaults. The server returns 204 No Content on success, so we bypass the
+ * shared `del<T>` helper (which assumes a JSON body) and handle the empty
+ * response explicitly. */
+export async function clearHandAgentRuntimeConfig(agentId: string): Promise<void> {
+  const response = await fetchWithTimeout(
+    `/api/agents/${encodeURIComponent(agentId)}/hand-runtime-config`,
+    {
+      method: "DELETE",
+      headers: buildHeaders({ "Content-Type": "application/json" }),
+    },
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+}
+
+/**
+ * Schedule-mode payload accepted by `PATCH /api/agents/{id}`.
+ *
+ * Mirrors the Rust `librefang_types::agent::ScheduleMode` enum which is
+ * `#[serde(rename_all = "snake_case")]` (externally tagged). The unit
+ * variant (`reactive`) is the bare string `"reactive"`; the
+ * fielded variants are wrapped objects (`{ continuous: { … } }`).
+ */
+export type AgentSchedulePatch =
+  | "reactive"
+  | { periodic: { cron: string } }
+  | { proactive: { conditions: string[] } }
+  | { continuous: { check_interval_secs: number } };
+
+/** PATCH /api/agents/{id} — manifest-level partial updates (name, description,
+ * system_prompt, mcp_servers, model, schedule). Distinct from `/agents/{id}/config`
+ * which only accepts the model-tuning subset. */
+export async function patchAgent(agentId: string, body: { name?: string; description?: string; system_prompt?: string; model?: string; provider?: string; mcp_servers?: string[]; schedule?: AgentSchedulePatch }): Promise<ApiActionResponse> {
+  return patch<ApiActionResponse>(`/api/agents/${encodeURIComponent(agentId)}`, body);
+}
+
+export interface AgentToolsResponse {
+  capabilities_tools?: string[] | null;
+  tool_allowlist?: string[] | null;
+  tool_blocklist?: string[] | null;
+  disabled?: boolean;
+}
+
+export interface ToolDefinition {
+  name: string;
+  description?: string;
+  source?: "builtin" | "mcp" | string;
+  mcp_server?: string;
+}
+
+export async function getAgentTools(agentId: string): Promise<AgentToolsResponse> {
+  return get<AgentToolsResponse>(`/api/agents/${encodeURIComponent(agentId)}/tools`);
+}
+
+export async function updateAgentTools(agentId: string, payload: { capabilities_tools?: string[]; tool_allowlist?: string[]; tool_blocklist?: string[] }): Promise<AgentToolsResponse> {
+  return put<AgentToolsResponse>(`/api/agents/${encodeURIComponent(agentId)}/tools`, payload);
+}
+
+/**
+ * Per-agent skill assignment, returned by `GET /api/agents/{id}/skills`.
+ *
+ * - `assigned`: the manifest allowlist (empty when `mode === "all"`).
+ * - `available`: every skill name in the daemon's registry — the pool the
+ *   inline assignment UI lets the operator add from.
+ * - `mode`: `"all"` (no allowlist; every registry skill is usable),
+ *   `"allowlist"` (manifest pins a specific set), or `"none"`
+ *   (`skills_disabled = true`; dispatch is off entirely).
+ * - `disabled`: mirrors the `none` mode as a boolean for convenience.
+ */
+export interface AgentSkillsResponse {
+  assigned: string[];
+  available: string[];
+  mode: "all" | "allowlist" | "none";
+  disabled: boolean;
+}
+
+export async function getAgentSkills(agentId: string): Promise<AgentSkillsResponse> {
+  return get<AgentSkillsResponse>(`/api/agents/${encodeURIComponent(agentId)}/skills`);
+}
+
+/**
+ * PUT /api/agents/{id}/skills — replace the agent's skill allowlist.
+ *
+ * An empty array clears the allowlist, switching the agent back to "all"
+ * mode (every registry skill available). A non-empty list is validated
+ * against the registry server-side; unknown names are rejected with a 4xx.
+ */
+export async function setAgentSkills(
+  agentId: string,
+  skills: string[],
+): Promise<{ status: string; skills: string[] }> {
+  return put<{ status: string; skills: string[] }>(
+    `/api/agents/${encodeURIComponent(agentId)}/skills`,
+    { skills },
+  );
+}
+
+export async function listAgents(
+  opts: { includeHands?: boolean } = {},
+): Promise<AgentItem[]> {
+  const params = new URLSearchParams({
+    limit: "500",
+    sort: "last_active",
+    order: "desc",
+  });
+  if (opts.includeHands) {
+    params.set("include_hands", "true");
+  }
+  const data = await get<PaginatedResponse<AgentItem>>(
+    `/api/agents?${params.toString()}`,
+  );
+  return data.items ?? [];
+}
+
+export interface AgentTemplate {
+  name: string;
+  description: string;
+}
+
+export async function listAgentTemplates(): Promise<AgentTemplate[]> {
+  const data = await get<{ templates: AgentTemplate[] }>("/api/templates");
+  return data.templates ?? [];
+}
+
+export async function getAgentTemplateToml(name: string): Promise<string> {
+  return getText(`/api/templates/${encodeURIComponent(name)}/toml`);
+}
+
+export async function deleteAgent(agentId: string): Promise<ApiActionResponse> {
+  // Refs #4614 — DELETE requires explicit confirmation. The dashboard
+  // already wraps this call in a confirmation modal, so we send the
+  // confirm flag here. Without it the API returns 409 with the
+  // canonical-UUID data-loss warning.
+  return del<ApiActionResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}?confirm=true`,
+  );
+}
+
+export async function cloneAgent(agentId: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/agents/${encodeURIComponent(agentId)}/clone`, {});
+}
+
+export async function stopAgent(agentId: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/agents/${encodeURIComponent(agentId)}/stop`, {});
+}
+
+export async function clearAgentHistory(agentId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/agents/${encodeURIComponent(agentId)}/history`);
+}
+
+export async function resetAgentSession(agentId: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/agents/${encodeURIComponent(agentId)}/session/reset`, {});
+}
+
+export async function loadAgentSession(
+  agentId: string,
+  sessionId?: string | null,
+): Promise<AgentSessionResponse> {
+  const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  return get<AgentSessionResponse>(`/api/agents/${encodeURIComponent(agentId)}/session${qs}`);
+}
+
+/**
+ * Context-window usage snapshot for a session.
+ *
+ * `pct` is `used_tokens / max_context_tokens` clamped to 0..=100 with one
+ * decimal; it is an approximate (chars/4 heuristic) estimate, not the
+ * provider's exact tokenizer count. `max_context_tokens` is 0 when the model
+ * window could not be resolved.
+ */
+export interface SessionContextResponse {
+  used_tokens: number;
+  max_context_tokens: number;
+  pct: number;
+  model: string;
+  pressure: string;
+}
+
+export async function getAgentSessionContext(
+  agentId: string,
+  sessionId?: string | null,
+): Promise<SessionContextResponse> {
+  const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  return get<SessionContextResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/session/context${qs}`,
+  );
+}
+
+export async function sendAgentMessage(
+  agentId: string,
+  message: string,
+  options?: SendAgentMessageOptions,
+): Promise<AgentMessageResponse> {
+  const body: Record<string, unknown> = { message };
+  if (options?.thinking !== undefined) body.thinking = options.thinking;
+  if (options?.show_thinking !== undefined) body.show_thinking = options.show_thinking;
+  if (options?.session_id) body.session_id = options.session_id;
+  if (options?.attachments && options.attachments.length > 0) body.attachments = options.attachments;
+  return post<AgentMessageResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/message`,
+    body,
+    LONG_RUNNING_TIMEOUT_MS,
+  );
+}
+
+export async function listProviders(): Promise<ProviderItem[]> {
+  const data = await get<ProvidersResponse>("/api/providers");
+  return data.providers ?? [];
+}
+
+// ── Credential pools (#4965) ────────────────────────────────────────────────
+
+/// Per-credential redacted snapshot returned by `GET /api/credential-pools`.
+/// `cooldown_remaining_secs` is either a number (seconds until cooldown
+/// expires) or the literal string `"permanent"` for keys marked invalid by
+/// a 401/403 response.
+export interface CredentialPoolKeySnapshot {
+  label: string;
+  key_hint: string;
+  priority: number;
+  request_count: number;
+  is_exhausted: boolean;
+  cooldown_remaining_secs: number | "permanent" | null;
+}
+
+export interface CredentialPoolStatus {
+  provider: string;
+  strategy: "fill_first" | "round_robin" | "random" | "least_used";
+  available_count: number;
+  total_count: number;
+  credentials: CredentialPoolKeySnapshot[];
+}
+
+export async function listCredentialPools(): Promise<CredentialPoolStatus[]> {
+  return get<CredentialPoolStatus[]>("/api/credential-pools");
+}
+
+export async function testProvider(providerId: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/providers/${encodeURIComponent(providerId)}/test`, {});
+}
+
+export interface ModelItem {
+  id: string;
+  display_name?: string;
+  provider: string;
+  tier?: string;
+  context_window?: number;
+  max_output_tokens?: number;
+  input_cost_per_m?: number;
+  output_cost_per_m?: number;
+  // Effective (catalog ∘ override) — use for "what the model actually does". Refs #4745.
+  supports_tools?: boolean;
+  supports_vision?: boolean;
+  supports_streaming?: boolean;
+  supports_thinking?: boolean;
+  // Raw catalog defaults — use for "Auto = revert target" in override editors.
+  capabilities_catalog?: {
+    supports_tools?: boolean;
+    supports_vision?: boolean;
+    supports_streaming?: boolean;
+    supports_thinking?: boolean;
+  };
+  aliases?: string[];
+  available?: boolean;
+}
+
+export async function listModels(params?: { provider?: string; tier?: string; available?: boolean }): Promise<{ models: ModelItem[]; total: number; available: number }> {
+  const query = new URLSearchParams();
+  if (params?.provider) query.set("provider", params.provider);
+  if (params?.tier) query.set("tier", params.tier);
+  if (params?.available !== undefined) query.set("available", String(params.available));
+  const qs = query.toString();
+  return get<{ models: ModelItem[]; total: number; available: number }>(`/api/models${qs ? `?${qs}` : ""}`);
+}
+
+export async function addCustomModel(model: {
+  id: string;
+  provider: string;
+  display_name?: string;
+  context_window?: number;
+  max_output_tokens?: number;
+  input_cost_per_m?: number;
+  output_cost_per_m?: number;
+  supports_tools?: boolean;
+  supports_vision?: boolean;
+  supports_streaming?: boolean;
+}): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/models/custom", model);
+}
+
+export async function removeCustomModel(modelId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/models/custom/${encodeURIComponent(modelId)}`);
+}
+
+// ── Per-model overrides ─────────────────────────────────────────
+
+export interface ModelOverrides {
+  model_type?: "chat" | "speech" | "embedding";
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  reasoning_effort?: string;
+  use_max_completion_tokens?: boolean;
+  no_system_role?: boolean;
+  force_max_tokens?: boolean;
+  // Refs #4745: capability overrides — undefined = use catalog default,
+  // true/false = force the capability on/off regardless of catalog metadata.
+  supports_tools?: boolean;
+  supports_vision?: boolean;
+  supports_streaming?: boolean;
+  supports_thinking?: boolean;
+}
+
+export async function getModelOverrides(modelKey: string): Promise<ModelOverrides> {
+  return get<ModelOverrides>(`/api/models/overrides/${encodeURIComponent(modelKey)}`);
+}
+
+export async function updateModelOverrides(modelKey: string, overrides: ModelOverrides): Promise<ModelOverrides> {
+  return put<ModelOverrides>(`/api/models/overrides/${encodeURIComponent(modelKey)}`, overrides);
+}
+
+export async function deleteModelOverrides(modelKey: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/models/overrides/${encodeURIComponent(modelKey)}`);
+}
+
+export async function setProviderKey(providerId: string, key: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/providers/${encodeURIComponent(providerId)}/key`, { key });
+}
+
+export async function deleteProviderKey(providerId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/providers/${encodeURIComponent(providerId)}/key`);
+}
+
+export async function enableProvider(providerId: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/providers/${encodeURIComponent(providerId)}/enable`, {});
+}
+
+export async function setProviderUrl(providerId: string, baseUrl: string, proxyUrl?: string): Promise<ApiActionResponse> {
+  const body: Record<string, string> = { base_url: baseUrl };
+  if (proxyUrl !== undefined) body.proxy_url = proxyUrl;
+  return put<ApiActionResponse>(`/api/providers/${encodeURIComponent(providerId)}/url`, body);
+}
+
+export async function setDefaultProvider(providerId: string, model?: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/providers/${encodeURIComponent(providerId)}/default`, model ? { model } : {});
+}
+
+// ── Media generation API ──────────────────────────────────────────────
+
+export async function listMediaProviders(): Promise<MediaProvider[]> {
+  const data = await get<{ providers: MediaProvider[] }>("/api/media/providers");
+  return data.providers ?? [];
+}
+
+export async function generateImage(req: { prompt: string; provider?: string; model?: string; count?: number; aspect_ratio?: string }): Promise<MediaImageResult> {
+  return post<MediaImageResult>("/api/media/image", req);
+}
+
+export interface SpeechResult {
+  url: string;
+  format: string;
+  provider: string;
+  model: string;
+  duration_ms?: number;
+  sample_rate?: number;
+}
+
+export async function synthesizeSpeech(req: { text: string; provider?: string; model?: string; voice?: string; format?: string; language?: string; speed?: number }): Promise<SpeechResult> {
+  return post<SpeechResult>("/api/media/speech", req);
+}
+
+export async function transcribeAudio(audioBlob: Blob): Promise<{ text: string; provider: string; model: string }> {
+  const response = await fetchWithTimeout("/api/media/transcribe", {
+    method: "POST",
+    headers: buildHeaders({ "Content-Type": audioBlob.type || "audio/webm" }),
+    body: audioBlob,
+  }, LONG_RUNNING_TIMEOUT_MS);
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as { text: string; provider: string; model: string };
+}
+
+// HTTP header values must be visible-ASCII (RFC 7230). Browsers reject
+// non-ASCII bytes in fetch headers, so we replace anything outside
+// 0x20–0x7e (and the header-breaking quote/CR/LF) with `_` before sending
+// the original filename. This loses fidelity for unicode names but never
+// throws, and keeps the server-side label render-safe — no decode pass
+// needed at display time.
+function sanitizeFilenameForHeader(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  return name.replace(/[^\x20-\x7e]|["\r\n]/g, "_");
+}
+
+// Upload a chat attachment for an agent. Body is the raw file bytes; backend
+// expects `Content-Type` to match the file MIME and `X-Filename` for the
+// original name. Server-side limits: 10MB and an exact MIME allowlist
+// (image/audio/text/pdf) — callers should still pre-validate to fail fast.
+export async function uploadAgentFile(agentId: string, file: File): Promise<AgentFileUploadResult> {
+  const response = await fetchWithTimeout(
+    `/api/agents/${encodeURIComponent(agentId)}/upload`,
+    {
+      method: "POST",
+      headers: buildHeaders({
+        "Content-Type": file.type || "application/octet-stream",
+        "X-Filename": sanitizeFilenameForHeader(file.name),
+      }),
+      body: file,
+    },
+    LONG_RUNNING_TIMEOUT_MS,
+  );
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as AgentFileUploadResult;
+}
+
+export async function submitVideo(req: { prompt: string; provider?: string; model?: string }): Promise<MediaVideoSubmitResult> {
+  return post<MediaVideoSubmitResult>("/api/media/video", req);
+}
+
+export async function pollVideo(taskId: string, provider: string): Promise<MediaVideoStatus> {
+  return get<MediaVideoStatus>(`/api/media/video/${encodeURIComponent(taskId)}?provider=${encodeURIComponent(provider)}`);
+}
+
+export async function generateMusic(req: { prompt?: string; lyrics?: string; provider?: string; model?: string; instrumental?: boolean }): Promise<MediaMusicResult> {
+  return post<MediaMusicResult>("/api/media/music", req);
+}
+
+export async function listChannels(): Promise<ChannelItem[]> {
+  const data = await get<ChannelsResponse>("/api/channels");
+  return data.items ?? [];
+}
+
+export interface SidecarSaveResult {
+  status: "saved";
+  restart_required: boolean;
+  hot_actions_applied: string[];
+  // Secret-typed field keys whose value is already present in the
+  // daemon's process environment (e.g. exported by the launching shell).
+  // The dotenv loader's priority puts process env above secrets.env, so
+  // those shell-exported values will out-rank the freshly-written
+  // secrets.env entry until the operator unsets them and restarts the
+  // daemon. Always emitted; empty when no shadow detected.
+  shadowed_secrets: string[];
+}
+
+// Sidecar channel save (Phase 5, sidecar-channel-configure). Splits values
+// across `secrets.env` (secret-typed fields) and `config.toml` (everything
+// else + the `[[sidecar_channels]]` boilerplate) on the server. Triggers
+// hot-reload of the channels registry; whether the sidecar child needs an
+// out-of-band restart is reported via `restart_required`.
+export async function saveSidecarConfig(
+  name: string,
+  values: Record<string, string>,
+): Promise<SidecarSaveResult> {
+  return post<SidecarSaveResult>(
+    `/api/channels/sidecar/${encodeURIComponent(name)}/configure`,
+    { values },
+  );
+}
+
+export interface SidecarRemoveResult {
+  status: "removed";
+  restart_required: boolean;
+  hot_actions_applied: string[];
+}
+
+// Remove a configured sidecar channel: rewrites config.toml and stops the child.
+export async function removeSidecarConfig(
+  name: string,
+): Promise<SidecarRemoveResult> {
+  return del<SidecarRemoveResult>(
+    `/api/channels/sidecar/${encodeURIComponent(name)}`,
+  );
+}
+
+export async function reloadChannels(): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/channels/reload", {});
+}
+
+/** One QR-login lifecycle state, mirrors `QrStatusKind` in the
+ * `librefang-channels` crate. Wire form is snake_case per the
+ * `#[serde(rename_all = "snake_case")]` on the Rust enum. */
+export type QrStatusKind =
+  | "pending"
+  | "scanning"
+  | "confirmed"
+  | "expired"
+  | "failed";
+
+/** Projection of `ChannelStatus.qr` returned by
+ * `GET /api/channels/{name}/qr`. Lifecycle:
+ * - `pending` — sidecar fetched a QR; render and wait.
+ * - `scanning` — user scanned, platform is finalising.
+ * - `confirmed` — login succeeded; the sidecar's in-memory session
+ *    continues with the captured credential. The operator follows
+ *    the `message` ("set WECHAT_BOT_TOKEN in secrets.env to skip QR
+ *    next time") to persist; auto-persist was dropped because the
+ *    only available endpoint is a full-form upsert that would wipe
+ *    other schema-managed env keys on a partial save.
+ * - `expired` / `failed` — terminal failure; show `message`.
+ *
+ * `updated_at` advances on every state transition so consumers can
+ * use it as a cheap diff signal between polls. */
+export interface QrState {
+  status: QrStatusKind;
+  qr_code: string;
+  qr_url?: string;
+  message?: string;
+  expires_at?: string;
+  updated_at: string;
+}
+
+/** Fetch the current QR-login state for a channel.
+ *
+ * Returns `null` when the sidecar is running but has not published a
+ * QR session yet (HTTP 204 — e.g. WeChat sidecar still authenticating
+ * from a cached `WECHAT_BOT_TOKEN`). 404 is surfaced as a thrown
+ * `ApiError` like every other route — the caller distinguishes
+ * "unknown channel" (impossible if the dashboard listed it) from
+ * "sidecar not running" via the message.
+ *
+ * The pre-migration `wechatQrStart` / `wechatQrStatus` /
+ * `whatsappQrStart` / `whatsappQrStatus` quadruple was removed when
+ * those adapters migrated to sidecars — the sidecar now drives the
+ * QR lifecycle itself and emits `qr_ready` / `qr_status` events, the
+ * daemon caches `ChannelStatus.qr`, and this single endpoint reads it. */
+export async function getChannelQr(channelName: string): Promise<QrState | null> {
+  // The route returns 204 No Content when the sidecar is running but
+  // has not published a QR session — e.g. WeChat already authenticated
+  // from a cached `WECHAT_BOT_TOKEN`, no scan needed. The shared
+  // `get<T>` helper doesn't model that branch (it always parses JSON),
+  // so this endpoint uses `fetch` directly.
+  const response = await fetch(
+    `/api/channels/${encodeURIComponent(channelName)}/qr`,
+    { headers: buildHeaders() },
+  );
+  if (response.status === 204) {
+    return null;
+  }
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  return (await response.json()) as QrState;
+}
+
+
+export async function listSkills(): Promise<SkillItem[]> {
+  const data = await get<SkillsResponse>("/api/skills");
+  return data.items ?? [];
+}
+
+export async function listTools(): Promise<ToolDefinition[]> {
+  const data = await get<{ tools?: ToolDefinition[] } | ToolDefinition[]>("/api/tools");
+  if (Array.isArray(data)) return data;
+  return data.tools ?? [];
+}
+
+export async function installSkill(name: string, hand?: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/skills/install", { name, hand }, LONG_RUNNING_TIMEOUT_MS);
+}
+
+export async function uninstallSkill(name: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/skills/uninstall", { name });
+}
+
+// Skill evolution APIs
+export async function getSkillDetail(name: string): Promise<SkillDetail> {
+  return get<SkillDetail>(`/api/skills/${encodeURIComponent(name)}`);
+}
+
+export async function createSkill(
+  params: {
+    name: string;
+    description: string;
+    prompt_context: string;
+    tags?: string[];
+  },
+  signal?: AbortSignal,
+): Promise<EvolutionResult> {
+  return post<EvolutionResult>("/api/skills/create", params, undefined, signal);
+}
+
+export async function reloadSkills(): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/skills/reload", {});
+}
+
+// Skill evolution mutation APIs (dashboard Update/Patch/Rollback/Files flow)
+export async function evolveUpdateSkill(name: string, params: {
+  prompt_context: string;
+  changelog: string;
+}): Promise<EvolutionResult> {
+  return post<EvolutionResult>(`/api/skills/${encodeURIComponent(name)}/evolve/update`, params);
+}
+
+export async function evolvePatchSkill(name: string, params: {
+  old_string: string;
+  new_string: string;
+  changelog: string;
+  replace_all?: boolean;
+}): Promise<EvolutionResult> {
+  return post<EvolutionResult>(`/api/skills/${encodeURIComponent(name)}/evolve/patch`, params);
+}
+
+export async function evolveRollbackSkill(name: string): Promise<EvolutionResult> {
+  return post<EvolutionResult>(`/api/skills/${encodeURIComponent(name)}/evolve/rollback`, {});
+}
+
+export async function evolveDeleteSkill(name: string): Promise<EvolutionResult> {
+  return post<EvolutionResult>(`/api/skills/${encodeURIComponent(name)}/evolve/delete`, {});
+}
+
+export async function evolveWriteFile(name: string, params: {
+  path: string;
+  content: string;
+}): Promise<EvolutionResult> {
+  return post<EvolutionResult>(`/api/skills/${encodeURIComponent(name)}/evolve/file`, params);
+}
+
+export async function evolveRemoveFile(name: string, path: string): Promise<EvolutionResult> {
+  return del<EvolutionResult>(`/api/skills/${encodeURIComponent(name)}/evolve/file?path=${encodeURIComponent(path)}`);
+}
+
+/** Result of proposing an evolved skill to the public registry as a PR. */
+export interface ProposeSkillResult {
+  /** HTML URL of the opened pull request. */
+  pr_url: string;
+  /** Upstream registry repo the PR targets (`owner/name`). */
+  repo: string;
+  /** Head branch created on the fork. */
+  branch: string;
+}
+
+/**
+ * Open a PR contributing this skill to the configured registry repo.
+ * Requires a GitHub token (env or vault) on the daemon side; a 401 is
+ * returned when none is configured.
+ */
+export async function proposeSkillToRegistry(name: string): Promise<ProposeSkillResult> {
+  return post<ProposeSkillResult>(`/api/skills/${encodeURIComponent(name)}/propose`, {});
+}
+
+export interface SupportingFileContents {
+  name: string;
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
+export async function getSupportingFile(name: string, path: string): Promise<SupportingFileContents> {
+  return get<SupportingFileContents>(`/api/skills/${encodeURIComponent(name)}/file?path=${encodeURIComponent(path)}`);
+}
+
+// Skill workshop pending review (#3328)
+
+export type PendingCaptureSource =
+  | { kind: "explicit_instruction"; trigger: string }
+  | { kind: "user_correction"; trigger: string }
+  | { kind: "repeated_tool_pattern"; tools: string; repeat_count: number };
+
+export interface PendingProvenance {
+  user_message_excerpt: string;
+  assistant_response_excerpt?: string | null;
+  turn_index: number;
+}
+
+/**
+ * Whether a pending candidate creates a brand-new skill or proposes an
+ * update/patch to an existing one (#5844 / #5819). Defaults to `"create"`
+ * for drafts written before this field existed.
+ */
+export type PendingCandidateKind = "create" | "update";
+
+export interface PendingCandidate {
+  id: string;
+  agent_id: string;
+  session_id?: string | null;
+  /** RFC3339 timestamp set by the workshop when the candidate was captured. */
+  captured_at: string;
+  source: PendingCaptureSource;
+  name: string;
+  description: string;
+  prompt_context: string;
+  provenance: PendingProvenance;
+  /** Create vs update/patch. Absent on legacy drafts → treat as `"create"`. */
+  kind?: PendingCandidateKind;
+  /** For an update: the existing skill this draft proposes to replace. */
+  target_skill_id?: string | null;
+  /** For an update: the current on-disk version of `target_skill_id`. */
+  current_version?: string | null;
+  /** For an update: the version the reviewer proposes bumping to on approval. */
+  proposed_version?: string | null;
+}
+
+// Discriminated on `status`:
+//   * `approved` — fresh promotion; `version` carries the new skill's
+//     initial version string.
+//   * `already_promoted` — the active skill already existed (a previous
+//     approve promoted it but the pending-file cleanup failed). The
+//     server idempotently dropped the phantom pending row and returned
+//     200; no `version` field, since this call did not perform a write.
+//     UI should treat both as a successful resolution of the candidate.
+export type PendingApprovalResult =
+  | {
+      status: "approved";
+      candidate_id: string;
+      skill_name: string;
+      version?: string;
+      message: string;
+    }
+  | {
+      status: "already_promoted";
+      candidate_id: string;
+      skill_name: string;
+      message: string;
+    };
+
+export async function listPendingCandidates(agent?: string): Promise<PendingCandidate[]> {
+  const query = agent ? `?agent=${encodeURIComponent(agent)}` : "";
+  const data = await get<{ candidates?: PendingCandidate[] }>(`/api/skills/pending${query}`);
+  return data.candidates ?? [];
+}
+
+export async function getPendingCandidate(id: string): Promise<PendingCandidate> {
+  const data = await get<{ candidate: PendingCandidate }>(
+    `/api/skills/pending/${encodeURIComponent(id)}`,
+  );
+  return data.candidate;
+}
+
+export async function approvePendingCandidate(id: string): Promise<PendingApprovalResult> {
+  return post<PendingApprovalResult>(`/api/skills/pending/${encodeURIComponent(id)}/approve`, {});
+}
+
+export async function rejectPendingCandidate(id: string): Promise<{ status: "rejected"; candidate_id: string }> {
+  return post<{ status: "rejected"; candidate_id: string }>(
+    `/api/skills/pending/${encodeURIComponent(id)}/reject`,
+    {},
+  );
+}
+
+/**
+ * Open a PR contributing a *pending* candidate to the configured registry
+ * repo, without first approving it into the active registry (#5819). Shares
+ * the `ProposeSkillResult` shape with {@link proposeSkillToRegistry}. Requires
+ * a GitHub token (env or vault) on the daemon side; a 401 is returned when
+ * none is configured.
+ */
+export async function proposePendingToRegistry(id: string): Promise<ProposeSkillResult> {
+  return post<ProposeSkillResult>(
+    `/api/skills/pending/${encodeURIComponent(id)}/propose-to-registry`,
+    {},
+  );
+}
+
+// ClawHub types
+export interface ClawHubBrowseItem {
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  author?: string;
+  stars?: number;
+  downloads?: number;
+  tags?: string[];
+  icon_url?: string;
+  updated_at?: number;
+  score?: number;
+}
+
+export interface ClawHubBrowseResponse {
+  items: ClawHubBrowseItem[];
+  next_cursor?: string;
+}
+
+export interface ClawHubSkillDetail {
+  slug: string;
+  name: string;
+  description: string;
+  version: string;
+  author: string;
+  stars: number;
+  downloads: number;
+  tags: string[];
+  readme: string;
+  icon_url?: string;
+  is_installed?: boolean;
+  installed?: boolean;
+}
+
+// ClawHub API
+export async function clawhubBrowse(sort?: string, limit?: number, cursor?: string): Promise<ClawHubBrowseResponse> {
+  const params = new URLSearchParams();
+  if (sort) params.set("sort", sort);
+  if (limit) params.set("limit", String(limit));
+  if (cursor) params.set("cursor", cursor);
+  return get<ClawHubBrowseResponse>(`/api/clawhub/browse?${params}`);
+}
+
+export async function clawhubSearch(query: string): Promise<ClawHubBrowseResponse> {
+  return get<ClawHubBrowseResponse>(`/api/clawhub/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function clawhubGetSkill(slug: string): Promise<ClawHubSkillDetail> {
+  return get<ClawHubSkillDetail>(`/api/clawhub/skill/${encodeURIComponent(slug)}`);
+}
+
+export async function clawhubInstall(slug: string, version?: string, hand?: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(
+    "/api/clawhub/install",
+    { slug, version: version || "latest", hand },
+    LONG_RUNNING_TIMEOUT_MS
+  );
+}
+
+// ── ClawHub China mirror API (mirror-cn.clawhub.com) ──
+
+export async function clawhubCnBrowse(sort?: string, limit?: number, cursor?: string): Promise<ClawHubBrowseResponse> {
+  const params = new URLSearchParams();
+  if (sort) params.set("sort", sort);
+  if (limit) params.set("limit", String(limit));
+  if (cursor) params.set("cursor", cursor);
+  return get<ClawHubBrowseResponse>(`/api/clawhub-cn/browse?${params}`);
+}
+
+export async function clawhubCnSearch(query: string): Promise<ClawHubBrowseResponse> {
+  return get<ClawHubBrowseResponse>(`/api/clawhub-cn/search?q=${encodeURIComponent(query)}`);
+}
+
+export async function clawhubCnGetSkill(slug: string): Promise<ClawHubSkillDetail> {
+  return get<ClawHubSkillDetail>(`/api/clawhub-cn/skill/${encodeURIComponent(slug)}`);
+}
+
+export async function clawhubCnInstall(slug: string, version?: string, hand?: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(
+    "/api/clawhub-cn/install",
+    { slug, version: version || "latest", hand },
+    LONG_RUNNING_TIMEOUT_MS
+  );
+}
+
+// ── Skillhub API ─────────────────────────────────────
+
+export async function skillhubSearch(query: string): Promise<ClawHubBrowseResponse> {
+  return get<ClawHubBrowseResponse>(`/api/skillhub/search?q=${encodeURIComponent(query)}&limit=20`);
+}
+
+export async function skillhubBrowse(sort?: string): Promise<ClawHubBrowseResponse> {
+  const params = new URLSearchParams();
+  if (sort) params.set("sort", sort);
+  params.set("limit", "50");
+  return get<ClawHubBrowseResponse>(`/api/skillhub/browse?${params}`);
+}
+
+export async function skillhubInstall(slug: string, hand?: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/skillhub/install", { slug, hand }, LONG_RUNNING_TIMEOUT_MS);
+}
+
+export async function skillhubGetSkill(slug: string): Promise<ClawHubSkillDetail> {
+  return get<ClawHubSkillDetail>(`/api/skillhub/skill/${encodeURIComponent(slug)}`);
+}
+
+// ── FangHub (official LibreFang registry skills) ──────
+
+export interface FangHubSkill {
+  name: string;
+  description: string;
+  version: string;
+  author?: string;
+  tags?: string[];
+  is_installed: boolean;
+}
+
+export interface FangHubListResponse {
+  skills: FangHubSkill[];
+  total: number;
+}
+
+export async function fanghubListSkills(): Promise<FangHubListResponse> {
+  return get<FangHubListResponse>("/api/skills/registry");
+}
+
+// ── Workflow Templates ────────────────────────────────
+
+export interface TemplateParameter {
+  name: string;
+  description?: string;
+  param_type?: string;
+  default?: unknown;
+  required?: boolean;
+}
+
+export interface TemplateI18n {
+  name?: string;
+  description?: string;
+}
+
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  parameters?: TemplateParameter[];
+  steps?: WorkflowStep[];
+  i18n?: Record<string, TemplateI18n>;
+}
+
+export async function listWorkflowTemplates(q?: string, category?: string): Promise<WorkflowTemplate[]> {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (category) params.set("category", category);
+  const qs = params.toString();
+  const data = await get<{ templates?: WorkflowTemplate[] }>(`/api/workflow-templates${qs ? `?${qs}` : ""}`);
+  return data.templates ?? [];
+}
+
+export async function getWorkflowTemplate(id: string): Promise<WorkflowTemplate> {
+  return get<WorkflowTemplate>(`/api/workflow-templates/${encodeURIComponent(id)}`);
+}
+
+export async function instantiateTemplate(id: string, params: Record<string, unknown>): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/workflow-templates/${encodeURIComponent(id)}/instantiate`, params);
+}
+
+export async function listWorkflows(): Promise<WorkflowItem[]> {
+  const data = await get<PaginatedResponse<WorkflowItem>>("/api/workflows");
+  return data.items ?? [];
+}
+
+export async function createWorkflow(payload: {
+  name: string;
+  description?: string;
+  steps: Array<{
+    name: string;
+    agent_name?: string;
+    agent_id?: string;
+    prompt: string;
+    timeout_secs?: number;
+  }>;
+  layout?: unknown;
+}): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/workflows", payload).then((r) => ({
+    ...r,
+    id: r.id ?? (r as { workflow_id?: string }).workflow_id,
+  }));
+}
+
+export async function getWorkflow(workflowId: string): Promise<WorkflowItem> {
+  return get<WorkflowItem>(`/api/workflows/${encodeURIComponent(workflowId)}`);
+}
+
+// `input` may be a plain string (free-text `{{input}}`) or an object whose
+// keys bind to `{{key}}` placeholders in step prompts — the backend
+// serialises an object body so the engine's per-key seeding resolves
+// declared parameters (e.g. `{{challenge}}`) at run time.
+export type WorkflowRunInput = string | Record<string, unknown>;
+
+export async function runWorkflow(
+  workflowId: string,
+  input: WorkflowRunInput,
+): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/workflows/${encodeURIComponent(workflowId)}/run`, {
+    input
+  }, LONG_RUNNING_TIMEOUT_MS); // 5 min timeout — workflows run multiple LLM steps
+}
+
+export async function deleteWorkflow(workflowId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/workflows/${encodeURIComponent(workflowId)}`);
+}
+
+export async function updateWorkflow(workflowId: string, payload: {
+  name?: string;
+  description?: string;
+  steps?: Array<{
+    name: string;
+    agent_name?: string;
+    agent_id?: string;
+    prompt: string;
+    timeout_secs?: number;
+  }>;
+  layout?: unknown;
+}): Promise<WorkflowItem> {
+  return put<WorkflowItem>(`/api/workflows/${encodeURIComponent(workflowId)}`, payload);
+}
+
+export async function listWorkflowRuns(workflowId: string): Promise<WorkflowRunItem[]> {
+  return get<WorkflowRunItem[]>(`/api/workflows/${encodeURIComponent(workflowId)}/runs`);
+}
+
+/** Per-step execution result returned by run/detail endpoints. */
+export interface WorkflowStepResult {
+  step_name: string;
+  agent_id?: string;
+  agent_name: string;
+  /** The actual prompt sent to the agent after variable expansion. */
+  prompt: string;
+  output: string;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+}
+
+/** Full detail for a single workflow run. */
+export interface WorkflowRunDetail {
+  id: string;
+  workflow_id: string;
+  workflow_name: string;
+  input: string;
+  state: string;
+  output?: string;
+  error?: string;
+  started_at: string;
+  completed_at?: string | null;
+  step_results: WorkflowStepResult[];
+}
+
+/** Per-step preview returned by dry-run. */
+export interface DryRunStepPreview {
+  step_name: string;
+  agent_name?: string;
+  agent_found: boolean;
+  resolved_prompt: string;
+  skipped: boolean;
+  skip_reason?: string;
+}
+
+/** Response from the dry-run endpoint. */
+export interface DryRunResult {
+  valid: boolean;
+  steps: DryRunStepPreview[];
+}
+
+/**
+ * Validate a workflow without making any LLM calls.
+ * Returns per-step previews with resolved prompts and agent resolution status.
+ */
+export async function dryRunWorkflow(
+  workflowId: string,
+  input: WorkflowRunInput,
+): Promise<DryRunResult> {
+  return post<DryRunResult>(
+    `/api/workflows/${encodeURIComponent(workflowId)}/dry-run`,
+    { input },
+    30000
+  );
+}
+
+/** Fetch full detail for a single workflow run (includes step-level I/O). */
+export async function getWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
+  return get<WorkflowRunDetail>(`/api/workflows/runs/${encodeURIComponent(runId)}`);
+}
+
+// ---------------------------------------------------------------------------
+// HITL operator-step pause inspection + resolution (#4977).
+//
+// Wire shape mirrors `OperatorAction` on the Rust side. Verbs are
+// snake_case (`approve` / `reject` / `edit` / `freeform_input` /
+// `provide_input`); `provide_input` carries the additional `field`
+// name. `edit` / `freeform_input` / `provide_input` require a non-empty
+// `payload`; the rest ignore it.
+// ---------------------------------------------------------------------------
+
+/** Discriminator for the action verbs the operator may invoke at a paused
+ *  operator step. Matches `OperatorAction` serde shape exactly. */
+export type OperatorActionVerb =
+  | "approve"
+  | "reject"
+  | "edit"
+  | "freeform_input"
+  | "provide_input";
+
+/** One element of the `actions` array returned by the inspect endpoint. */
+export type OperatorActionDescriptor =
+  | "approve"
+  | "reject"
+  | "edit"
+  | "freeform_input"
+  | { provide_input: { field: string } };
+
+/** Snapshot of a single paused operator-step pause — what the dashboard
+ *  renders to drive the action-button UI. */
+export interface OperatorPause {
+  /** Workflow run id (string-encoded `WorkflowRunId`). */
+  run_id: string;
+  /** Workflow definition id. */
+  workflow_id: string;
+  /** Workflow name (denormalised for the worklist row). */
+  workflow_name: string;
+  /** Name of the operator step holding the run paused. */
+  step_name: string;
+  /** Index of the operator step inside the workflow's step list. */
+  operator_step_index: number;
+  /** Output of the step that ran immediately before the operator step —
+   *  the thing the operator must review. */
+  artifact: string;
+  /** Actions the workflow author authorised at this step. */
+  actions: OperatorActionDescriptor[];
+  /** ISO-8601 run start time. */
+  started_at: string;
+  /** ISO-8601 pause time. Null only in the race window between pause and
+   *  state-write — treat as "just now" if missing. */
+  paused_at: string | null;
+}
+
+/** Fetch the operator pause for a single run. 404 if the run doesn't
+ *  exist, 409 (`{error: "not_operator_pause"}`) if the run is not paused
+ *  at an operator step — the HTTP layer's `request()` helper surfaces
+ *  both as thrown errors the caller can branch on. */
+export async function inspectOperatorPause(runId: string): Promise<OperatorPause> {
+  return get<OperatorPause>(`/api/workflows/runs/${encodeURIComponent(runId)}/operator`);
+}
+
+/** List every run currently paused at an operator step (oldest first). */
+export async function listPendingOperatorRuns(): Promise<OperatorPause[]> {
+  return get<OperatorPause[]>(`/api/workflows/operator/pending`);
+}
+
+/** Resolve a paused operator step with an action + optional payload.
+ *  Returns 200 immediately; the workflow continues asynchronously. */
+export async function resolveOperatorStep(
+  runId: string,
+  body: { action: OperatorActionVerb; payload?: string; field?: string },
+): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(
+    `/api/workflows/runs/${encodeURIComponent(runId)}/operator`,
+    body,
+  );
+}
+
+export async function saveWorkflowAsTemplate(workflowId: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/workflows/${encodeURIComponent(workflowId)}/save-as-template`, {});
+}
+
+export async function listSchedules(): Promise<ScheduleItem[]> {
+  const data = await get<PaginatedResponse<ScheduleItem>>("/api/schedules");
+  return data.items ?? [];
+}
+
+export async function createSchedule(payload: {
+  name: string;
+  cron: string;
+  tz?: string;
+  agent_id?: string;
+  workflow_id?: string;
+  message?: string;
+  enabled?: boolean;
+  /** Fan-out destinations. Empty array clears any existing list on update. */
+  delivery_targets?: CronDeliveryTarget[];
+}): Promise<ScheduleItem> {
+  return post<ScheduleItem>("/api/schedules", payload);
+}
+
+export async function updateSchedule(
+  scheduleId: string,
+  payload: {
+    enabled?: boolean;
+    name?: string;
+    cron?: string;
+    tz?: string;
+    agent_id?: string;
+    message?: string;
+    /**
+     * Replace fan-out delivery targets. The backend treats this as a full
+     * replace (an empty array clears the list). Omit the field to leave it
+     * unchanged.
+     */
+    delivery_targets?: CronDeliveryTarget[];
+  }
+): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>(`/api/schedules/${encodeURIComponent(scheduleId)}`, payload);
+}
+
+export async function deleteSchedule(scheduleId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/schedules/${encodeURIComponent(scheduleId)}`);
+}
+
+export async function runSchedule(scheduleId: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/schedules/${encodeURIComponent(scheduleId)}/run`, {});
+}
+
+export async function listTriggers(agentId?: string): Promise<TriggerItem[]> {
+  const url = agentId
+    ? `/api/triggers?agent_id=${encodeURIComponent(agentId)}`
+    : "/api/triggers";
+  const data = await get<{ triggers?: TriggerItem[] }>(url);
+  return data.triggers ?? [];
+}
+
+export async function getTrigger(triggerId: string): Promise<TriggerItem> {
+  return get<TriggerItem>(`/api/triggers/${encodeURIComponent(triggerId)}`);
+}
+
+export async function createTrigger(
+  payload: CreateTriggerPayload
+): Promise<ApiActionResponse & { trigger_id?: string }> {
+  return post<ApiActionResponse & { trigger_id?: string }>("/api/triggers", payload);
+}
+
+export async function updateTrigger(
+  triggerId: string,
+  updates: TriggerPatch
+): Promise<ApiActionResponse> {
+  return patch<ApiActionResponse>(`/api/triggers/${encodeURIComponent(triggerId)}`, updates);
+}
+
+export async function deleteTrigger(triggerId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/triggers/${encodeURIComponent(triggerId)}`);
+}
+
+export async function listCronJobs(agentId?: string): Promise<CronJobItem[]> {
+  const url = agentId ? `/api/cron/jobs?agent_id=${encodeURIComponent(agentId)}` : "/api/cron/jobs";
+  const data = await get<{ jobs?: CronJobItem[]; total?: number }>(url);
+  return data.jobs ?? [];
+}
+
+/**
+ * Cron schedule discriminated union — mirrors the Rust
+ * `librefang_types::scheduler::CronSchedule` enum which is
+ * `#[serde(tag = "kind", rename_all = "snake_case")]`.
+ */
+export type CronScheduleSpec =
+  | { kind: "at"; at: string }
+  | { kind: "every"; every_secs: number }
+  | { kind: "cron"; expr: string; tz?: string | null };
+
+/**
+ * Cron action discriminated union — mirrors the Rust
+ * `librefang_types::scheduler::CronAction` enum.
+ *
+ * The dashboard exposes only `agent_turn` for the agent-detail Schedule
+ * tab (the most common case). `system_event` / `workflow` exist on the
+ * backend; consumers needing those should extend this type.
+ */
+export type CronActionSpec =
+  | { kind: "agent_turn"; message: string; model_override?: string | null; timeout_secs?: number | null }
+  | { kind: "system_event"; text: string }
+  | { kind: "workflow"; workflow_id: string; input?: string | null; timeout_secs?: number | null };
+
+/**
+ * Cron delivery (single legacy destination) — mirrors the Rust
+ * `librefang_types::scheduler::CronDelivery` enum.
+ */
+export type CronDeliverySpec =
+  | { kind: "none" }
+  | { kind: "last_channel" }
+  | { kind: "channel"; channel: string; to: string }
+  | { kind: "webhook"; url: string };
+
+export interface CreateCronJobPayload {
+  agent_id: string;
+  name: string;
+  schedule: CronScheduleSpec;
+  action: CronActionSpec;
+  delivery?: CronDeliverySpec;
+  /** Multi-destination fan-out. Optional; omit for single-target delivery. */
+  delivery_targets?: CronDeliveryTarget[];
+  /** Per-job session-mode override. `undefined` → use agent default. */
+  session_mode?: "persistent" | "new";
+  /** Optional peer/user ID used as SenderContext.user_id when the job fires. */
+  peer_id?: string;
+  /** Auto-delete after first fire; defaults to true for `at` schedules. */
+  one_shot?: boolean;
+}
+
+export interface UpdateCronJobPayload {
+  name?: string;
+  enabled?: boolean;
+  schedule?: CronScheduleSpec;
+  action?: CronActionSpec;
+  delivery?: CronDeliverySpec;
+  delivery_targets?: CronDeliveryTarget[];
+  session_mode?: "persistent" | "new" | null;
+  peer_id?: string | null;
+}
+
+export async function createCronJob(
+  payload: CreateCronJobPayload,
+): Promise<{ job_id?: string; status?: string }> {
+  return post<{ job_id?: string; status?: string }>("/api/cron/jobs", payload);
+}
+
+export async function updateCronJob(
+  jobId: string,
+  payload: UpdateCronJobPayload,
+): Promise<CronJobItem> {
+  return put<CronJobItem>(`/api/cron/jobs/${encodeURIComponent(jobId)}`, payload);
+}
+
+export async function deleteCronJob(jobId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/cron/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function toggleCronJob(jobId: string, enabled: boolean): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>(
+    `/api/cron/jobs/${encodeURIComponent(jobId)}/enable`,
+    { enabled },
+  );
+}
+
+export async function getVersionInfo(): Promise<VersionResponse> {
+  return get<VersionResponse>("/api/version");
+}
+
+export async function getStatus(): Promise<StatusResponse> {
+  return get<StatusResponse>("/api/status");
+}
+
+export async function getQueueStatus(): Promise<QueueStatusResponse> {
+  return get<QueueStatusResponse>("/api/queue/status");
+}
+
+export async function shutdownServer(): Promise<{ status: string }> {
+  return post<{ status: string }>("/api/shutdown", {});
+}
+
+export async function reloadConfig(): Promise<{ status: string; restart_required?: boolean; restart_reasons?: string[] }> {
+  return post<{ status: string; restart_required?: boolean; restart_reasons?: string[] }>("/api/config/reload", {});
+}
+
+export interface HealthDetailResponse {
+  status?: string;
+  version?: string;
+  uptime_seconds?: number;
+  panic_count?: number;
+  restart_count?: number;
+  agent_count?: number;
+  database?: string;
+  memory?: {
+    embedding_available?: boolean;
+    embedding_provider?: string;
+    embedding_model?: string;
+    proactive_memory_enabled?: boolean;
+    extraction_model?: string;
+  };
+  config_warnings?: string[];
+}
+
+export interface SecurityStatusResponse {
+  core_protections?: Record<string, boolean>;
+  configurable?: {
+    rate_limiter?: { enabled?: boolean; tokens_per_minute?: number; algorithm?: string };
+    websocket_limits?: { max_per_ip?: number; idle_timeout_secs?: number; max_message_size?: number; max_messages_per_minute?: number };
+    wasm_sandbox?: { fuel_metering?: boolean; epoch_interruption?: boolean; default_timeout_secs?: number; default_fuel_limit?: number };
+    auth?: { mode?: string; api_key_set?: boolean };
+  };
+  monitoring?: {
+    audit_trail?: { enabled?: boolean; algorithm?: string; entry_count?: number };
+    taint_tracking?: { enabled?: boolean; tracked_labels?: string[] };
+    manifest_signing?: { algorithm?: string; available?: boolean };
+  };
+  secret_zeroization?: boolean;
+  total_features?: number;
+}
+
+export interface BackupItem {
+  filename?: string;
+  path?: string;
+  size_bytes?: number;
+  modified_at?: string;
+  components?: string[];
+  librefang_version?: string;
+  created_at?: string;
+}
+
+export interface TaskQueueStatusResponse {
+  total?: number;
+  pending?: number;
+  in_progress?: number;
+  completed?: number;
+  failed?: number;
+}
+
+export interface TaskQueueItem {
+  id?: string;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+  // Extended fields returned by GET /api/tasks and GET /api/tasks/list
+  title?: string;
+  description?: string;
+  assigned_to?: string;
+  created_by?: string;
+  completed_at?: string;
+  result?: string;
+  claimed_at?: string;
+  priority?: number;
+  [key: string]: unknown;
+}
+
+export interface CreateTaskPayload {
+  title: string;
+  description: string;
+  assigned_to?: string;
+  created_by?: string;
+}
+
+export interface CreateTaskResult {
+  id: string;
+  status: string;
+}
+
+export async function getHealthDetail(): Promise<HealthDetailResponse> {
+  return get<HealthDetailResponse>("/api/health/detail");
+}
+
+/**
+ * Minimal liveness probe for the `<OfflineBanner />`. `/api/health` is
+ * always-public (load-balancer / probe contract) while `/api/health/detail`
+ * requires auth because its payload leaks operational telemetry. The
+ * banner only needs "is the daemon reachable" — anchor on the minimal
+ * probe so it never trips the auth gate pre-login and never receives
+ * sensitive data (#4868 review fix; #4893 attempted the inverse and
+ * silently broke the auth contract on the detail endpoint).
+ */
+export async function getHealth(): Promise<{ status?: string }> {
+  return get<{ status?: string }>("/api/health");
+}
+
+export interface MemoryConfigResponse {
+  embedding_provider?: string;
+  embedding_model?: string;
+  embedding_api_key_env?: string;
+  decay_rate?: number;
+  proactive_memory?: {
+    enabled?: boolean;
+    auto_memorize?: boolean;
+    auto_retrieve?: boolean;
+    extraction_model?: string;
+    max_retrieve?: number;
+  };
+  /**
+   * Set on the response of `PATCH /api/memory/config` to flag that the
+   * persisted values won't take effect until the daemon restarts. Absent on
+   * GET responses (where the live `KernelConfig` is authoritative).
+   * See issue #3832.
+   */
+  restart_required?: boolean;
+}
+
+export async function getMemoryConfig(): Promise<MemoryConfigResponse> {
+  return get<MemoryConfigResponse>("/api/memory/config");
+}
+
+export async function updateMemoryConfig(payload: {
+  embedding_provider?: string;
+  embedding_model?: string;
+  embedding_api_key_env?: string;
+  decay_rate?: number;
+  proactive_memory?: {
+    enabled?: boolean;
+    auto_memorize?: boolean;
+    auto_retrieve?: boolean;
+    extraction_model?: string;
+    max_retrieve?: number;
+  };
+}): Promise<MemoryConfigResponse> {
+  // Returns the canonical post-mutation entity (issue #3832) so the mutation
+  // hook can `setQueryData` instead of forcing a refetch round-trip.
+  return patch<MemoryConfigResponse>("/api/memory/config", payload);
+}
+
+export async function getSecurityStatus(): Promise<SecurityStatusResponse> {
+  return get<SecurityStatusResponse>("/api/security");
+}
+
+export async function getFullConfig(): Promise<Record<string, unknown>> {
+  return get<Record<string, unknown>>("/api/config");
+}
+
+/* ------------------------------------------------------------------ */
+/*  Config schema (draft-07)                                           */
+/* ------------------------------------------------------------------ */
+/* The backend now emits a draft-07 JSON Schema generated from the   */
+/* `KernelConfig` Rust type via `schemars`, plus two extensions:     */
+/*   - `x-sections`: ordered UI section groupings                    */
+/*   - `x-ui-options`: per-field UI hints (min/max/step/select opts) */
+/* keyed by JSON pointer (e.g. `/memory/decay_rate`).                */
+
+/** A draft-07 JSON Schema node (partial — only the fields the UI reads). */
+export interface JsonSchema {
+  type?: string | string[];
+  title?: string;
+  description?: string;
+  default?: unknown;
+  enum?: unknown[];
+  oneOf?: JsonSchema[];
+  allOf?: JsonSchema[];
+  anyOf?: JsonSchema[];
+  properties?: Record<string, JsonSchema>;
+  additionalProperties?: boolean | JsonSchema;
+  items?: JsonSchema;
+  required?: string[];
+  minimum?: number;
+  maximum?: number;
+  multipleOf?: number;
+  format?: string;
+  $ref?: string;
+  definitions?: Record<string, JsonSchema>;
+}
+
+/** UI-only option overrides the struct cannot carry. */
+export interface UiFieldOptions {
+  /** Curated select options — strings or `{value,label}` objects. */
+  select?: (string | { value: string; label: string })[];
+  /** `{id,name,provider}`-shaped options (the model picker). */
+  select_objects?: { id: string; name: string; provider: string }[];
+  /** Select whose values are numeric-strings (e.g. `["0","1","6"]`). */
+  number_select?: string[];
+  /** UI numeric constraints. `min`/`max` may differ from the struct's
+      `#[schemars(range)]` bounds when the UI wants tighter suggestion
+      limits than runtime validation. */
+  min?: number;
+  max?: number;
+  step?: number;
+  placeholder?: string;
+}
+
+export interface ConfigSectionDescriptor {
+  key: string;
+  title?: string;
+  /** `true` → fields read from the root of `KernelConfig`. `false`/omitted →
+      fields are inside `properties[struct_field]`. */
+  root_level?: boolean;
+  /** Name of the `KernelConfig` field holding this section's sub-struct. */
+  struct_field?: string;
+  /** When true, changes to this section are hot-reloaded without restart. */
+  hot_reloadable?: boolean;
+  /** For `root_level` sections: explicit field ordering. */
+  fields?: string[];
+}
+
+export interface ConfigSchemaRoot extends JsonSchema {
+  "x-sections"?: ConfigSectionDescriptor[];
+  "x-ui-options"?: Record<string, UiFieldOptions>;
+}
+
+export async function getConfigSchema(): Promise<ConfigSchemaRoot> {
+  return get<ConfigSchemaRoot>("/api/config/schema");
+}
+
+/** Resolve a `$ref` (e.g. `#/definitions/MemoryConfig`) in the root schema. */
+export function resolveRef(
+  root: ConfigSchemaRoot,
+  ref: string,
+): JsonSchema | undefined {
+  if (!ref.startsWith("#/")) return undefined;
+  const path = ref.slice(2).split("/");
+  let node: unknown = root;
+  for (const seg of path) {
+    if (typeof node !== "object" || node === null) return undefined;
+    node = (node as Record<string, unknown>)[seg];
+  }
+  return (node as JsonSchema) ?? undefined;
+}
+
+/** Get a property's schema with `$ref`s resolved one level. */
+export function deref(
+  root: ConfigSchemaRoot,
+  node: JsonSchema | undefined,
+): JsonSchema | undefined {
+  if (!node) return undefined;
+  if (node.$ref) return resolveRef(root, node.$ref);
+  return node;
+}
+
+export async function setConfigValue(
+  path: string,
+  value: unknown,
+): Promise<{ status: string; restart_required?: boolean; reload_error?: string }> {
+  return post<{ status: string; restart_required?: boolean; reload_error?: string }>(
+    "/api/config/set",
+    { path, value },
+  );
+}
+
+export async function listBackups(): Promise<{ backups?: BackupItem[]; total?: number }> {
+  return get<{ backups?: BackupItem[]; total?: number }>("/api/backups");
+}
+
+export async function createBackup(): Promise<{ filename?: string; path?: string; size_bytes?: number; components?: string[]; created_at?: string }> {
+  return post<{ filename?: string; path?: string; size_bytes?: number; components?: string[]; created_at?: string }>("/api/backup", {});
+}
+
+export async function restoreBackup(filename: string): Promise<{ restored_files?: number; errors?: string[]; message?: string }> {
+  return post<{ restored_files?: number; errors?: string[]; message?: string }>("/api/restore", { filename });
+}
+
+export async function deleteBackup(filename: string): Promise<{ deleted?: string }> {
+  return del<{ deleted?: string }>(`/api/backups/${encodeURIComponent(filename)}`);
+}
+
+export async function getTaskQueueStatus(): Promise<TaskQueueStatusResponse> {
+  return get<TaskQueueStatusResponse>("/api/tasks/status");
+}
+
+export async function listTaskQueue(status?: string): Promise<{ tasks?: TaskQueueItem[]; total?: number }> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return get<{ tasks?: TaskQueueItem[]; total?: number }>(`/api/tasks/list${qs}`);
+}
+
+export async function createTask(payload: CreateTaskPayload): Promise<CreateTaskResult> {
+  return post<CreateTaskResult>("/api/tasks", payload);
+}
+
+export async function updateTaskStatus(id: string, status: "pending" | "cancelled"): Promise<{ status?: string; id?: string }> {
+  return patch<{ status?: string; id?: string }>(`/api/tasks/${encodeURIComponent(id)}`, { status });
+}
+
+export async function deleteTaskFromQueue(id: string): Promise<{ status?: string; id?: string }> {
+  return del<{ status?: string; id?: string }>(`/api/tasks/${encodeURIComponent(id)}`);
+}
+
+export async function retryTask(id: string): Promise<{ status?: string; id?: string }> {
+  return post<{ status?: string; id?: string }>(`/api/tasks/${encodeURIComponent(id)}/retry`, {});
+}
+
+export async function cleanupSessions(): Promise<{ sessions_deleted?: number }> {
+  return post<{ sessions_deleted?: number }>("/api/sessions/cleanup", {});
+}
+
+export async function listAuditRecent(limit = 200): Promise<AuditRecentResponse> {
+  const n = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.floor(limit))) : 200;
+  return get<AuditRecentResponse>(`/api/audit/recent?n=${encodeURIComponent(String(n))}`);
+}
+
+export async function verifyAuditChain(): Promise<AuditVerifyResponse> {
+  return get<AuditVerifyResponse>("/api/audit/verify");
+}
+
+export async function listApprovals(): Promise<ApprovalItem[]> {
+  const data = await get<{ approvals?: ApprovalItem[]; total?: number }>("/api/approvals");
+  return data.approvals ?? [];
+}
+
+export async function approveApproval(id: string, totpCode?: string): Promise<ApiActionResponse> {
+  const body = totpCode ? { totp_code: totpCode } : {};
+  return post<ApiActionResponse>(`/api/approvals/${encodeURIComponent(id)}/approve`, body);
+}
+
+// ── TOTP second-factor management ──
+
+export interface TotpSetupResponse {
+  otpauth_uri: string;
+  secret: string;
+  qr_code: string | null;
+  recovery_codes: string[];
+  message: string;
+}
+
+export interface TotpStatusResponse {
+  enrolled: boolean;
+  confirmed: boolean;
+  enforced: boolean;
+  remaining_recovery_codes: number;
+}
+
+export async function totpSetup(currentCode?: string): Promise<TotpSetupResponse> {
+  const body = currentCode ? { current_code: currentCode } : {};
+  return post<TotpSetupResponse>("/api/approvals/totp/setup", body);
+}
+
+export async function totpConfirm(code: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/approvals/totp/confirm", { code });
+}
+
+export async function totpStatus(): Promise<TotpStatusResponse> {
+  return get<TotpStatusResponse>("/api/approvals/totp/status");
+}
+
+export async function totpRevoke(code: string): Promise<ApiActionResponse> {
+  const response = await fetchWithTimeout("/api/approvals/totp/revoke", {
+    method: "POST",
+    headers: buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ code }),
+  });
+  if (!response.ok) throw await parseError(response);
+  return response.json();
+}
+
+// --- Passkey (WebAuthn/FIDO2) login + credential management (#5981) ---
+
+export interface PasskeyCredentialSummary {
+  credential_id: string;
+  label: string | null;
+  created_at: number;
+  last_used_at: number | null;
+}
+
+/** True when this browser exposes the WebAuthn platform API. */
+export function isPasskeySupported(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.PublicKeyCredential !== "undefined"
+  );
+}
+
+/** webauthn-rs wraps its options in a top-level `publicKey` object. */
+interface CreationChallenge {
+  ceremony_id: string;
+  options: { publicKey: PublicKeyCredentialCreationOptionsJSON };
+}
+interface RequestChallenge {
+  ceremony_id: string;
+  options: { publicKey: PublicKeyCredentialRequestOptionsJSON };
+}
+
+export async function listPasskeys(): Promise<PasskeyCredentialSummary[]> {
+  const data = await get<{ credentials: PasskeyCredentialSummary[] }>(
+    "/api/auth/passkey/credentials",
+  );
+  return data.credentials;
+}
+
+/**
+ * Run the registration ceremony: fetch creation options, prompt the
+ * platform authenticator via `navigator.credentials.create()`, and persist
+ * the resulting credential. Requires an authenticated session.
+ */
+export async function registerPasskey(
+  label?: string,
+): Promise<{ ok: boolean; credential_id: string }> {
+  const challenge = await post<CreationChallenge>(
+    "/api/auth/passkey/registration-options",
+    {},
+  );
+  const credential = await startRegistration({
+    optionsJSON: challenge.options.publicKey,
+  });
+  return post<{ ok: boolean; credential_id: string }>(
+    "/api/auth/passkey/registration-verify",
+    { ceremony_id: challenge.ceremony_id, credential, label },
+  );
+}
+
+/**
+ * Run the authentication ceremony: fetch request options, prompt the
+ * authenticator via `navigator.credentials.get()`, verify the assertion, and
+ * store the returned session token. Public — no session required.
+ */
+export async function loginWithPasskey(): Promise<{
+  ok: boolean;
+  token?: string;
+}> {
+  const challenge = await post<RequestChallenge>(
+    "/api/auth/passkey/authentication-options",
+    {},
+  );
+  const credential = await startAuthentication({
+    optionsJSON: challenge.options.publicKey,
+  });
+  const result = await post<{ ok: boolean; token?: string }>(
+    "/api/auth/passkey/authentication-verify",
+    { ceremony_id: challenge.ceremony_id, credential },
+  );
+  if (result.ok && result.token) {
+    setApiKey(result.token);
+  }
+  return result;
+}
+
+export async function revokePasskey(
+  credentialId: string,
+): Promise<ApiActionResponse> {
+  const response = await fetchWithTimeout(
+    `/api/auth/passkey/credentials/${encodeURIComponent(credentialId)}`,
+    { method: "DELETE", headers: buildHeaders() },
+  );
+  if (!response.ok) throw await parseError(response);
+  return response.json();
+}
+
+export async function rejectApproval(id: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/approvals/${encodeURIComponent(id)}/reject`, {});
+}
+
+/**
+ * List only pending approval requests, optionally filtered by agent ID.
+ */
+export async function listPendingApprovals(agentId?: string): Promise<ApprovalItem[]> {
+  const all = await listApprovals();
+  return all.filter(
+    (a) => a.status === "pending" && (!agentId || a.agent_id === agentId),
+  );
+}
+
+/**
+ * Resolve a pending approval request (approve or deny).
+ */
+export async function resolveApproval(id: string, approved: boolean): Promise<void> {
+  if (approved) {
+    await approveApproval(id);
+  } else {
+    await rejectApproval(id);
+  }
+}
+
+export async function fetchApprovalCount(): Promise<number> {
+  const data = await get<{ pending: number }>("/api/approvals/count");
+  return data.pending ?? 0;
+}
+
+export async function batchResolveApprovals(
+  ids: string[],
+  decision: "approve" | "reject"
+): Promise<{ results: Array<{ id: string; status: string; message?: string }> }> {
+  return post("/api/approvals/batch", { ids, decision });
+}
+
+export async function modifyAndRetryApproval(
+  id: string,
+  feedback: string
+): Promise<{ id: string; status: string; decided_at: string }> {
+  return post(`/api/approvals/${encodeURIComponent(id)}/modify`, { feedback });
+}
+
+export interface ApprovalAuditEntry {
+  id: string;
+  request_id: string;
+  agent_id: string;
+  tool_name: string;
+  description: string;
+  action_summary: string;
+  risk_level: string;
+  decision: string;
+  decided_by?: string;
+  decided_at: string;
+  requested_at: string;
+  feedback?: string;
+}
+
+export async function queryApprovalAudit(params: {
+  limit?: number;
+  offset?: number;
+  agent_id?: string;
+  tool_name?: string;
+}): Promise<{
+  items?: ApprovalAuditEntry[];
+  /** @deprecated #3842 — older daemons populated this; prefer `items`. */
+  entries?: ApprovalAuditEntry[];
+  total: number;
+  offset?: number;
+  limit?: number;
+}> {
+  const query = new URLSearchParams();
+  if (params.limit != null) query.set("limit", String(params.limit));
+  if (params.offset != null) query.set("offset", String(params.offset));
+  if (params.agent_id) query.set("agent_id", params.agent_id);
+  if (params.tool_name) query.set("tool_name", params.tool_name);
+  return get(`/api/approvals/audit?${query.toString()}`);
+}
+
+export async function switchAgentSession(
+  agentId: string,
+  sessionId: string
+): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(
+    `/api/agents/${encodeURIComponent(agentId)}/sessions/${encodeURIComponent(sessionId)}/switch`,
+    {}
+  );
+}
+
+export async function listAgentSessions(agentId: string): Promise<SessionListItem[]> {
+  const data = await get<{ sessions?: SessionListItem[] }>(
+    `/api/agents/${encodeURIComponent(agentId)}/sessions`
+  );
+  return data.sessions ?? [];
+}
+
+export async function createAgentSession(
+  agentId: string,
+  label?: string
+): Promise<{ session_id: string; agent_id: string; label?: string }> {
+  return post(`/api/agents/${encodeURIComponent(agentId)}/sessions`, label ? { label } : {});
+}
+
+export type ListSessionsResult = { items: SessionListItem[]; truncated: boolean };
+
+export async function listSessions(): Promise<ListSessionsResult> {
+  const data = await get<PaginatedResponse<SessionListItem>>("/api/sessions?limit=500");
+  const items = data.items ?? [];
+  const total = data.total ?? 0;
+  return { items, truncated: total > items.length };
+}
+
+export async function getSessionDetails(sessionId: string): Promise<SessionDetailResponse> {
+  return get<SessionDetailResponse>(`/api/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export async function deleteSession(sessionId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}`);
+}
+
+export async function setSessionLabel(
+  sessionId: string,
+  label: string | null
+): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/label`, {
+    label
+  });
+}
+
+export async function setSessionModelOverride(
+  sessionId: string,
+  modelOverride: string | null
+): Promise<ApiActionResponse> {
+  return patch<ApiActionResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/model`, {
+    model_override: modelOverride
+  });
+}
+
+export async function listMemories(params?: {
+  agentId?: string;
+  offset?: number;
+  limit?: number;
+  category?: string;
+}): Promise<MemoryListResponse> {
+  const offset = Number.isFinite(params?.offset) ? Math.max(0, Math.floor(params?.offset ?? 0)) : 0;
+  const limit = Number.isFinite(params?.limit) ? Math.max(1, Math.floor(params?.limit ?? 20)) : 20;
+  const query = new URLSearchParams();
+  query.set("offset", String(offset));
+  query.set("limit", String(limit));
+  if (params?.category) query.set("category", params.category);
+
+  const path = params?.agentId
+    ? `/api/memory/agents/${encodeURIComponent(params.agentId)}?${query.toString()}`
+    : `/api/memory?${query.toString()}`;
+  return get<MemoryListResponse>(path);
+}
+
+export async function searchMemories(params: {
+  query: string;
+  agentId?: string;
+  limit?: number;
+}): Promise<MemoryItem[]> {
+  const limit = Number.isFinite(params.limit) ? Math.max(1, Math.floor(params.limit ?? 20)) : 20;
+  const query = new URLSearchParams();
+  query.set("q", params.query);
+  query.set("limit", String(limit));
+
+  const path = params.agentId
+    ? `/api/memory/agents/${encodeURIComponent(params.agentId)}/search?${query.toString()}`
+    : `/api/memory/search?${query.toString()}`;
+  const data = await get<{ memories?: MemoryItem[] }>(path);
+  return data.memories ?? [];
+}
+
+export async function getMemoryStats(agentId?: string): Promise<MemoryStatsResponse> {
+  if (agentId) {
+    return get<MemoryStatsResponse>(`/api/memory/agents/${encodeURIComponent(agentId)}/stats`);
+  }
+  return get<MemoryStatsResponse>("/api/memory/stats");
+}
+
+// List the per-agent KV memory store (always available — independent of
+// `[proactive_memory] enabled`). Used as the fallback view when proactive
+// memory is disabled, and as a complementary view when it is enabled.
+export async function getAgentKvMemory(agentId: string): Promise<AgentKvResponse> {
+  return get<AgentKvResponse>(`/api/memory/agents/${encodeURIComponent(agentId)}/kv`);
+}
+
+export async function addMemoryFromText(
+  content: string,
+  options: { level?: string; agentId?: string } = {}
+): Promise<ApiActionResponse> {
+  const { level, agentId } = options;
+  return post<ApiActionResponse>("/api/memory", {
+    messages: [{ role: "user", content }],
+    ...(level ? { level } : {}),
+    ...(agentId ? { agent_id: agentId } : {})
+  });
+}
+
+export async function updateMemory(memoryId: string, content: string): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>(`/api/memory/items/${encodeURIComponent(memoryId)}`, {
+    content
+  });
+}
+
+export async function deleteMemory(memoryId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/memory/items/${encodeURIComponent(memoryId)}`);
+}
+
+export async function cleanupMemories(): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/memory/cleanup", {});
+}
+
+export async function decayMemories(): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/memory/decay", {});
+}
+
+export async function listUsageByAgent(): Promise<UsageByAgentItem[]> {
+  const data = await get<PaginatedResponse<UsageByAgentItem>>("/api/usage");
+  return data.items ?? [];
+}
+
+export async function getUsageSummary(): Promise<UsageSummaryResponse> {
+  return get<UsageSummaryResponse>("/api/usage/summary");
+}
+
+export async function listUsageByModel(): Promise<UsageByModelItem[]> {
+  const data = await get<{ models?: UsageByModelItem[] }>("/api/usage/by-model");
+  return data.models ?? [];
+}
+
+export async function getUsageByModelPerformance(): Promise<ModelPerformanceItem[]> {
+  const data = await get<{ models?: ModelPerformanceItem[] }>("/api/usage/by-model/performance");
+  return data.models ?? [];
+}
+
+export async function getUsageDaily(): Promise<UsageDailyResponse> {
+  return get<UsageDailyResponse>("/api/usage/daily");
+}
+
+// Mirrors the kernel-side `BudgetStatus` (crates/librefang-kernel-metering)
+// which the API layer returns directly from `GET /api/budget`. The field
+// names are deliberately *not* the `BudgetConfig` names — they include the
+// current `*_spend` and `*_pct` rollups computed against the live
+// `usage_events` table. Issue #4797 (the dashboard read these as
+// `max_hourly_usd` etc.) was a typed-shape regression that always
+// rendered "-" for the operator's configured caps.
+export interface BudgetStatus {
+  hourly_spend?: number;
+  hourly_limit?: number;
+  hourly_pct?: number;
+  daily_spend?: number;
+  daily_limit?: number;
+  daily_pct?: number;
+  monthly_spend?: number;
+  monthly_limit?: number;
+  monthly_pct?: number;
+  alert_threshold?: number;
+  default_max_llm_tokens_per_hour?: number;
+  [key: string]: unknown;
+}
+
+export async function getBudgetStatus(): Promise<BudgetStatus> {
+  return get<BudgetStatus>("/api/budget");
+}
+
+export async function updateBudget(payload: Partial<BudgetStatus>): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>("/api/budget", payload);
+}
+
+// Per-provider budget snapshot (#5650). Mirrors the JSON envelope returned
+// by `GET /api/budget/providers` — see `crates/librefang-api/src/routes/
+// budget.rs::provider_budget_list`. Rows arrive pre-sorted ascending by
+// `provider`, so the dashboard table can render them as-is.
+export interface ProviderBudgetRow {
+  provider: string;
+  // `true` when the provider is observed in `usage_events` but has NO
+  // `[budget.providers.<id>]` entry. The dashboard surfaces a "Set a cap"
+  // CTA for these.
+  unconfigured: boolean;
+  // Configured caps — 0 / 0.0 means "unlimited", matching the on-disk
+  // `ProviderBudget` contract. Naming-wise these are deliberately
+  // distinct from the spend fields below so the wire is self-describing.
+  cap_hourly_usd: number;
+  cap_daily_usd: number;
+  cap_monthly_usd: number;
+  cap_tokens_per_hour: number;
+  // Current rollups from `usage_events`, aggregated server-side. UTC
+  // window boundaries (matches every other rollup in the budget surface).
+  spend_hourly_usd: number;
+  spend_daily_usd: number;
+  spend_monthly_usd: number;
+  tokens_this_hour: number;
+  // Live state from `ProviderExhaustionStore`. `is_exhausted=true` means
+  // the LLM fallback chain is currently skipping this provider; the
+  // reason and remaining auto-clear ms come straight from the store row.
+  is_exhausted: boolean;
+  exhaustion_reason: string | null;
+  exhaustion_remaining_ms: number | null;
+}
+
+export interface ProviderBudgetSnapshot {
+  providers: ProviderBudgetRow[];
+  // Echoed from the global `[budget]` table so the dashboard renders the
+  // green/yellow/red coloring against the same threshold the metering
+  // gate uses, without a second `/api/budget` roundtrip.
+  alert_threshold: number;
+}
+
+export async function getProviderBudgets(): Promise<ProviderBudgetSnapshot> {
+  return get<ProviderBudgetSnapshot>("/api/budget/providers");
+}
+
+/// Body shape for PUT /api/budget/providers/{provider_id}. All fields are
+/// optional — the handler does a partial update, so an unset field keeps
+/// its prior on-disk value. Set a field to 0 / 0.0 to explicitly clear a
+/// cap (the gate treats 0 as unlimited).
+export interface ProviderBudgetPayload {
+  max_cost_per_hour_usd?: number;
+  max_cost_per_day_usd?: number;
+  max_cost_per_month_usd?: number;
+  max_tokens_per_hour?: number;
+}
+
+export async function updateProviderBudget(
+  providerId: string,
+  payload: ProviderBudgetPayload,
+): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>(
+    `/api/budget/providers/${encodeURIComponent(providerId)}`,
+    payload,
+  );
+}
+
+export async function suspendAgent(agentId: string): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>(`/api/agents/${encodeURIComponent(agentId)}/suspend`, {});
+}
+
+export async function resumeAgent(agentId: string): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>(`/api/agents/${encodeURIComponent(agentId)}/resume`, {});
+}
+
+export async function spawnAgent(req: {
+  manifest_toml?: string;
+  template?: string;
+  name?: string;
+}): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/agents", req);
+}
+
+export async function getCommsTopology(): Promise<CommsTopology> {
+  return get<CommsTopology>("/api/comms/topology");
+}
+
+export async function listCommsEvents(limit = 200): Promise<CommsEventItem[]> {
+  const n = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.floor(limit))) : 200;
+  const data = await get<PaginatedResponse<CommsEventItem>>(
+    `/api/comms/events?limit=${encodeURIComponent(String(n))}`,
+  );
+  return data.items ?? [];
+}
+
+export async function sendCommsMessage(payload: {
+  from_agent_id: string;
+  to_agent_id: string;
+  message: string;
+}): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/comms/send", payload);
+}
+
+export async function postCommsTask(payload: {
+  title: string;
+  description?: string;
+  assigned_to?: string;
+}): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/comms/task", payload);
+}
+
+export async function listHands(): Promise<HandDefinitionItem[]> {
+  const data = await get<PaginatedResponse<HandDefinitionItem>>("/api/hands");
+  return data.items ?? [];
+}
+
+export async function getHandManifestToml(handId: string): Promise<string> {
+  return getText(`/api/hands/${encodeURIComponent(handId)}/manifest`);
+}
+
+export async function getRawConfigToml(): Promise<string> {
+  return getText("/api/config/export");
+}
+
+export async function listActiveHands(): Promise<HandInstanceItem[]> {
+  const data = await get<PaginatedResponse<HandInstanceItem>>("/api/hands/active");
+  return data.items ?? [];
+}
+
+export async function activateHand(
+  handId: string,
+  config?: Record<string, unknown>
+): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/hands/${encodeURIComponent(handId)}/activate`, {
+    config: config ?? {}
+  });
+}
+
+/** Result of installing a hand from the remote HandsHub marketplace. */
+export interface HandsHubInstallResult {
+  hand_id: string;
+  version: string;
+  checksum_verified: boolean;
+  definition: HandDefinitionItem | null;
+}
+
+/** Install a hand from the remote HandsHub marketplace. The server downloads
+ *  the bundle, verifies its SHA-256 against the registry digest, runs the
+ *  shared supply-chain audit, then installs it. `registryUrl` overrides the
+ *  default registry (self-hosted forks). */
+export async function installHandFromMarketplace(
+  handId: string,
+  registryUrl?: string
+): Promise<HandsHubInstallResult> {
+  return post<HandsHubInstallResult>("/api/hands/marketplace/install", {
+    hand_id: handId,
+    ...(registryUrl ? { registry_url: registryUrl } : {})
+  });
+}
+
+// #3832: pause/resume return the post-mutation HandInstanceItem so the
+// dashboard can setQueryData on the live instance without a follow-up GET.
+export async function pauseHand(instanceId: string): Promise<HandInstanceItem> {
+  return post<HandInstanceItem>(`/api/hands/instances/${encodeURIComponent(instanceId)}/pause`, {});
+}
+
+export async function resumeHand(instanceId: string): Promise<HandInstanceItem> {
+  return post<HandInstanceItem>(`/api/hands/instances/${encodeURIComponent(instanceId)}/resume`, {});
+}
+
+export async function deactivateHand(instanceId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/hands/instances/${encodeURIComponent(instanceId)}`);
+}
+
+/** Uninstall a user-installed hand. Fails with 404 for built-ins and
+ *  409 if there is still a live instance. Callers should deactivate
+ *  first, then call this. */
+export async function uninstallHand(handId: string): Promise<{ status: string; hand_id: string }> {
+  return del(`/api/hands/${encodeURIComponent(handId)}`);
+}
+
+export async function getHandStats(instanceId: string): Promise<HandStatsResponse> {
+  return get<HandStatsResponse>(`/api/hands/instances/${encodeURIComponent(instanceId)}/stats`);
+}
+
+export interface HandSettingOptionStatus {
+  value?: string;
+  label?: string;
+  provider_env?: string | null;
+  binary?: string | null;
+  available?: boolean;
+}
+
+export interface HandSettingStatus {
+  key?: string;
+  label?: string;
+  description?: string;
+  setting_type?: string;
+  default?: string;
+  options?: HandSettingOptionStatus[];
+}
+
+export interface HandSettingsResponse {
+  hand_id?: string;
+  settings?: HandSettingStatus[];
+  current_values?: Record<string, unknown>;
+}
+
+export async function getHandDetail(handId: string): Promise<HandDefinitionItem> {
+  return get<HandDefinitionItem>(`/api/hands/${encodeURIComponent(handId)}`);
+}
+
+export async function getHandSettings(handId: string): Promise<HandSettingsResponse> {
+  return get<HandSettingsResponse>(`/api/hands/${encodeURIComponent(handId)}/settings`);
+}
+
+export async function setHandSecret(handId: string, key: string, value: string): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>(`/api/hands/${encodeURIComponent(handId)}/secret`, { key, value });
+}
+
+/** Update mutable settings on an active hand instance. The backend returns
+ *  404 if no instance exists for the hand — callers should guard accordingly. */
+export async function updateHandSettings(
+  handId: string,
+  config: Record<string, unknown>,
+): Promise<{ status: string; hand_id: string; instance_id: string; config: Record<string, unknown> }> {
+  return put(`/api/hands/${encodeURIComponent(handId)}/settings`, config);
+}
+
+export interface HandMessageResponse {
+  response: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  iterations?: number;
+  cost_usd?: number;
+}
+
+export type SessionBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: unknown }
+  | { type: "tool_result"; tool_use_id: string; name: string; content: string; is_error: boolean };
+
+export interface HandSessionMessage {
+  role: string;
+  content: string;
+  timestamp?: string;
+  blocks?: SessionBlock[];
+}
+
+export async function sendHandMessage(instanceId: string, message: string): Promise<HandMessageResponse> {
+  return post<HandMessageResponse>(
+    `/api/hands/instances/${encodeURIComponent(instanceId)}/message`,
+    { message },
+    LONG_RUNNING_TIMEOUT_MS
+  );
+}
+
+export async function getHandSession(instanceId: string): Promise<{ messages: HandSessionMessage[] }> {
+  return get<{ messages: HandSessionMessage[] }>(`/api/hands/instances/${encodeURIComponent(instanceId)}/session`);
+}
+
+export interface HandInstanceStatus {
+  instance_id: string;
+  hand_id: string;
+  hand_name?: string;
+  hand_icon?: string;
+  status: string;
+  activated_at: string;
+  config: Record<string, unknown>;
+  agent?: {
+    id: string;
+    name: string;
+    state: string;
+    model: { provider: string; model: string };
+    iterations_total?: number;
+    session_id: string;
+  };
+}
+
+export async function getHandInstanceStatus(instanceId: string): Promise<HandInstanceStatus> {
+  return get<HandInstanceStatus>(`/api/hands/instances/${encodeURIComponent(instanceId)}/status`);
+}
+
+export async function listGoals(): Promise<GoalItem[]> {
+  const data = await get<PaginatedResponse<GoalItem>>("/api/goals");
+  return data.items ?? [];
+}
+
+export interface GoalTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  goals: { title: string; description: string; status: string }[];
+}
+
+export async function listGoalTemplates(): Promise<GoalTemplate[]> {
+  const data = await get<{ templates?: GoalTemplate[] }>("/api/goals/templates");
+  return data.templates ?? [];
+}
+
+export async function createGoal(payload: {
+  title: string;
+  description?: string;
+  parent_id?: string;
+  agent_id?: string;
+  status?: string;
+  progress?: number;
+}): Promise<GoalItem> {
+  return post<GoalItem>("/api/goals", payload);
+}
+
+export async function updateGoal(
+  goalId: string,
+  payload: {
+    title?: string;
+    description?: string;
+    status?: string;
+    progress?: number;
+    parent_id?: string | null;
+    agent_id?: string | null;
+  }
+): Promise<GoalItem> {
+  // Issue #3832: handler now returns the mutated GoalItem instead of an ack
+  // envelope, so callers can `setQueryData` directly without a follow-up GET.
+  return put<GoalItem>(`/api/goals/${encodeURIComponent(goalId)}`, payload);
+}
+
+export async function deleteGoal(goalId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/goals/${encodeURIComponent(goalId)}`);
+}
+
+// ── Goal runner — long-horizon autonomous execution (#5744) ──────────
+
+export interface GoalRunState {
+  goal_id: string;
+  agent_id: string;
+  phase: "running" | "finished" | "max_iterations_reached" | "rate_limited" | "stopped";
+  iteration: number;
+  max_iterations: number;
+  last_progress: number;
+  last_error?: string;
+  started_at: string;
+  updated_at: string;
+}
+
+/** Begin an autonomous run that drives the goal's assigned agent. */
+export async function startGoalRun(
+  goalId: string,
+  payload?: { max_iterations?: number }
+): Promise<{ ok: boolean; run: GoalRunState | null }> {
+  return post<{ ok: boolean; run: GoalRunState | null }>(
+    `/api/goals/${encodeURIComponent(goalId)}/start`,
+    payload ?? {}
+  );
+}
+
+/** Stop an active autonomous run for a goal. */
+export async function stopGoalRun(
+  goalId: string
+): Promise<{ ok: boolean; stopped: boolean }> {
+  return post<{ ok: boolean; stopped: boolean }>(
+    `/api/goals/${encodeURIComponent(goalId)}/stop`,
+    {}
+  );
+}
+
+/** Observe the autonomous run state for a goal. */
+export async function getGoalRun(
+  goalId: string
+): Promise<{ running: boolean; run?: GoalRunState }> {
+  return get<{ running: boolean; run?: GoalRunState }>(
+    `/api/goals/${encodeURIComponent(goalId)}/run`
+  );
+}
+
+// ── Network / Peers ──────────────────────────────────
+
+export interface NetworkStatusResponse {
+  // `online` is strictly "the OFP PeerNode actually bound a listener"
+  // (peer_node_ref().is_some() on the daemon). `enabled` is the looser
+  // config-mirror (`network_enabled && !shared_secret.is_empty()`) — so
+  // `enabled === true && online === false` is the genuine "configured
+  // but listener bind failed" state, surfaced separately from
+  // "disabled". Both fields ship for SDK back-compat; the dashboard
+  // reads `online`.
+  online?: boolean;
+  enabled?: boolean;
+  node_id?: string;
+  protocol_version?: string;
+  // Daemon emits both `listen_addr` (dashboard-aligned) and
+  // `listen_address` (legacy SDK consumers). They carry the same value;
+  // both may be `""` when OFP is disabled.
+  listen_addr?: string;
+  listen_address?: string;
+  // `peer_count` equals `connected_peers`. Both ship for SDK
+  // back-compat; the dashboard reads `peer_count` when present.
+  peer_count?: number;
+  connected_peers?: number;
+  total_peers?: number;
+  // SECURITY (#3873): null when this node has no Ed25519 identity
+  // (HMAC-only legacy mode); operators should treat that as "new defense
+  // is dormant" and investigate. Distinct from "OFP disabled" — when
+  // `online === false` the identity simply has not been initialized
+  // because OFP never started.
+  identity_fingerprint?: string | null;
+  pinned_peers?: number;
+  [key: string]: unknown;
+}
+
+export interface TrustedPeerItem {
+  node_id: string;
+  public_key: string;
+  fingerprint: string;
+}
+
+export interface PeerItem {
+  id: string;
+  addr?: string;
+  name?: string;
+  status?: string;
+  connected_at?: string;
+  last_seen?: string;
+  version?: string;
+  [key: string]: unknown;
+}
+
+export async function getNetworkStatus(): Promise<NetworkStatusResponse> {
+  return get<NetworkStatusResponse>("/api/network/status");
+}
+
+export async function listPeers(): Promise<PeerItem[]> {
+  const data = await get<PaginatedResponse<PeerItem>>("/api/peers");
+  return data.items ?? [];
+}
+
+export async function listTrustedPeers(): Promise<TrustedPeerItem[]> {
+  const data = await get<PaginatedResponse<TrustedPeerItem>>(
+    "/api/network/trusted-peers",
+  );
+  return data.items ?? [];
+}
+
+export async function getPeerDetail(peerId: string): Promise<PeerItem> {
+  return get<PeerItem>(`/api/peers/${encodeURIComponent(peerId)}`);
+}
+
+// ── A2A (Agent-to-Agent) ─────────────────────────────
+
+export interface A2AAgentItem {
+  url?: string;
+  name?: string;
+  description?: string;
+  version?: string;
+  skills?: string[];
+  status?: string;
+  discovered_at?: string;
+  [key: string]: unknown;
+}
+
+export interface A2ATaskStatus {
+  id?: string;
+  status?: string;
+  result?: string;
+  error?: string;
+  created_at?: string;
+  completed_at?: string;
+  [key: string]: unknown;
+}
+
+export async function listA2AAgents(): Promise<A2AAgentItem[]> {
+  // #3842: backend now returns the canonical PaginatedResponse envelope
+  // (`items`/`total`/`offset`/`limit`). The legacy `agents` fallback below
+  // exists only so a freshly-shipped dashboard can talk to a daemon still
+  // running a pre-#3842 build during rolling upgrade. Remove the fallback
+  // (and the `agents?: ...` field in the response type) one daemon release
+  // after #3842 ships — by then no in-support daemon emits the old shape.
+  const data = await get<{
+    items?: A2AAgentItem[];
+    agents?: A2AAgentItem[];
+  }>("/api/a2a/agents");
+  return data.items ?? data.agents ?? [];
+}
+
+export async function discoverA2AAgent(url: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/a2a/discover", { url });
+}
+
+export async function sendA2ATask(payload: {
+  agent_url: string;
+  message: string;
+}): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/a2a/send", payload);
+}
+
+export async function getA2ATaskStatus(taskId: string): Promise<A2ATaskStatus> {
+  return get<A2ATaskStatus>(`/api/a2a/tasks/${encodeURIComponent(taskId)}/status`);
+}
+
+export function setApiKey(key: string) {
+  // #3620: Store in sessionStorage (tab-scoped, reduced XSS exposure) and
+  // remove any stale localStorage copy so the two stores don't diverge.
+  sessionStorage.setItem("librefang-api-key", key);
+  localStorage.removeItem("librefang-api-key");
+  // Reset the 401-fired guard so future unauthorized responses
+  // (e.g. after token expiry) can re-trigger the login dialog.
+  _unauthorizedFired = false;
+}
+
+export function clearApiKey() {
+  sessionStorage.removeItem("librefang-api-key");
+  localStorage.removeItem("librefang-api-key");
+}
+
+/** Invalidate the server-side session + cookie, then clear the local token.
+ *  Safe to call even when the token is already gone. */
+export async function dashboardLogout(): Promise<void> {
+  try {
+    await fetchWithTimeout("/api/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: authHeader(),
+    }, 10_000);
+  } catch {
+    // Network failure shouldn't block local cleanup — fall through.
+  }
+  clearApiKey();
+}
+
+export function hasApiKey(): boolean {
+  const key = getStoredApiKey();
+  return !!key && key.length > 0;
+}
+
+export type AuthMode = "credentials" | "api_key" | "hybrid" | "none";
+
+export async function checkDashboardAuthMode(): Promise<AuthMode> {
+  try {
+    const resp = await fetchWithTimeout("/api/auth/dashboard-check", {}, 5_000);
+    if (!resp.ok) return "none";
+    const data = await resp.json();
+    return (data.mode as AuthMode) || "none";
+  } catch {
+    return "none";
+  }
+}
+
+export async function getDashboardUsername(): Promise<string> {
+  try {
+    const resp = await fetchWithTimeout("/api/auth/dashboard-check", {}, 5_000);
+    if (!resp.ok) return "";
+    const data = await resp.json();
+    return (data.username as string) || "";
+  } catch {
+    return "";
+  }
+}
+
+export async function dashboardLogin(username: string, password: string, totpCode?: string): Promise<{ ok: boolean; token?: string; error?: string; requires_totp?: boolean }> {
+  try {
+    const body: Record<string, string> = { username, password };
+    if (totpCode) body.totp_code = totpCode;
+    const resp = await fetchWithTimeout("/api/auth/dashboard-login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.ok && data.token) {
+      setApiKey(data.token);
+    }
+    return data;
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : "Network error" };
+  }
+}
+
+export async function verifyStoredAuth(): Promise<boolean> {
+  if (!hasApiKey()) {
+    return false;
+  }
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetchWithTimeout("/api/security", {
+        headers: buildHeaders(),
+      });
+      if (response.status === 401) {
+        clearApiKey();
+        return false;
+      }
+      return response.ok;
+    } catch {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+
+  return false;
+}
+
+export async function getMetricsText(): Promise<string> {
+  return getText("/api/metrics");
+}
+
+// ── Plugins ──────────────────────────────────────────
+
+export interface PluginItem {
+  // Canonical identifier — used as the path segment for
+  // /plugins/{name}/{enable,disable,reload,install-deps,uninstall}.
+  // Must NOT be the localized label.
+  name: string;
+  // Localized display label resolved from `[i18n.<lang>]` on the
+  // plugin manifest. Falls back to `name` when no override is set.
+  display_name?: string;
+  version: string;
+  description?: string;
+  author?: string;
+  hooks_valid: boolean;
+  size_bytes: number;
+  path?: string;
+  hooks?: { ingest?: boolean; after_turn?: boolean };
+}
+
+export interface RegistryPluginListing {
+  // Canonical identifier sent back to POST /api/plugins/install — must
+  // match the directory name on the GitHub registry. Localized labels
+  // go on `display_name`.
+  name: string;
+  display_name?: string;
+  installed: boolean;
+  version?: string | null;
+  description?: string | null;
+  author?: string | null;
+  hooks?: string[];
+}
+
+export interface RegistryEntry {
+  name: string;
+  github_repo: string;
+  error?: string | null;
+  plugins: RegistryPluginListing[];
+}
+
+export async function listPlugins(): Promise<PluginItem[]> {
+  const data = await get<PaginatedResponse<PluginItem>>("/api/plugins");
+  return data.items ?? [];
+}
+
+export async function getPlugin(name: string): Promise<PluginItem> {
+  return get<PluginItem>(`/api/plugins/${encodeURIComponent(name)}`);
+}
+
+export async function installPlugin(source: { source: string; name?: string; path?: string; url?: string; branch?: string; github_repo?: string }): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/plugins/install", source, LONG_RUNNING_TIMEOUT_MS);
+}
+
+export async function uninstallPlugin(name: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/plugins/uninstall", { name });
+}
+
+export async function scaffoldPlugin(
+  name: string,
+  description: string,
+  runtime?: string,
+): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/plugins/scaffold", { name, description, runtime });
+}
+
+export async function installPluginDeps(name: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(
+    `/api/plugins/${encodeURIComponent(name)}/install-deps`,
+    {},
+    LONG_RUNNING_TIMEOUT_MS
+  );
+}
+
+export async function listPluginRegistries(): Promise<{ registries: RegistryEntry[] }> {
+  return get<{ registries: RegistryEntry[] }>("/api/plugins/registries");
+}
+
+export interface PromptVersion {
+  id: string;
+  agent_id: string;
+  version: number;
+  content_hash: string;
+  system_prompt: string;
+  tools: string[];
+  variables: string[];
+  created_at: string;
+  created_by: string;
+  is_active: boolean;
+  description?: string;
+}
+
+export interface PromptExperiment {
+  id: string;
+  name: string;
+  agent_id: string;
+  status: "draft" | "running" | "paused" | "completed";
+  traffic_split: number[];
+  success_criteria: {
+    require_user_helpful: boolean;
+    require_no_tool_errors: boolean;
+    require_non_empty: boolean;
+    custom_min_score?: number;
+  };
+  started_at?: string;
+  ended_at?: string;
+  created_at: string;
+  variants: ExperimentVariant[];
+}
+
+export interface ExperimentVariant {
+  id?: string;
+  name: string;
+  prompt_version_id: string;
+  description?: string;
+}
+
+export interface ExperimentVariantMetrics {
+  variant_id: string;
+  variant_name: string;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  success_rate: number;
+  avg_latency_ms: number;
+  avg_cost_usd: number;
+  total_cost_usd: number;
+}
+
+/**
+ * One row of the cross-agent prompt repository overview
+ * (`GET /api/prompts/overview`). Aggregates each non-hand agent's
+ * prompt-version store into a single fleet-wide summary so the prompt
+ * repository page can render every agent without N per-agent round trips.
+ *
+ * `active_version` mirrors the version flagged `is_active` in the store;
+ * `live_system_prompt` is the prompt actually used in LLM calls
+ * (`manifest.model.system_prompt`). The two diverge until a version is
+ * bound back onto the agent manifest.
+ */
+export interface PromptOverviewItem {
+  agent_id: string;
+  agent_name: string;
+  version_count: number;
+  active_version?: number | null;
+  active_version_id?: string | null;
+  live_system_prompt: string;
+  latest_version_at?: string | null;
+}
+
+export async function listPromptsOverview(): Promise<PromptOverviewItem[]> {
+  const data = await get<PaginatedResponse<PromptOverviewItem>>(
+    "/api/prompts/overview",
+  );
+  return data.items ?? [];
+}
+
+export async function listPromptVersions(agentId: string): Promise<PromptVersion[]> {
+  const data = await get<PaginatedResponse<PromptVersion>>(
+    `/api/agents/${encodeURIComponent(agentId)}/prompts/versions`,
+  );
+  return data.items ?? [];
+}
+
+export async function createPromptVersion(agentId: string, version: Omit<PromptVersion, "id" | "agent_id" | "created_at" | "is_active">): Promise<PromptVersion> {
+  return post<PromptVersion>(`/api/agents/${encodeURIComponent(agentId)}/prompts/versions`, version);
+}
+
+export async function deletePromptVersion(versionId: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/prompts/versions/${encodeURIComponent(versionId)}`);
+}
+
+export async function activatePromptVersion(versionId: string, agentId: string): Promise<PromptVersion> {
+  return post<PromptVersion>(`/api/prompts/versions/${encodeURIComponent(versionId)}/activate`, { agent_id: agentId });
+}
+
+export async function listExperiments(agentId: string): Promise<PromptExperiment[]> {
+  const data = await get<PaginatedResponse<PromptExperiment>>(
+    `/api/agents/${encodeURIComponent(agentId)}/prompts/experiments`,
+  );
+  return data.items ?? [];
+}
+
+export async function createExperiment(agentId: string, experiment: Omit<PromptExperiment, "id" | "agent_id" | "created_at">): Promise<PromptExperiment> {
+  return post<PromptExperiment>(`/api/agents/${encodeURIComponent(agentId)}/prompts/experiments`, experiment);
+}
+
+// Status-transition endpoints now return the post-mutation `PromptExperiment`
+// so callers can `setQueryData` directly without a follow-up GET. See #3832.
+export async function startExperiment(experimentId: string): Promise<PromptExperiment> {
+  return post<PromptExperiment>(`/api/prompts/experiments/${encodeURIComponent(experimentId)}/start`, {});
+}
+
+export async function pauseExperiment(experimentId: string): Promise<PromptExperiment> {
+  return post<PromptExperiment>(`/api/prompts/experiments/${encodeURIComponent(experimentId)}/pause`, {});
+}
+
+export async function completeExperiment(experimentId: string): Promise<PromptExperiment> {
+  return post<PromptExperiment>(`/api/prompts/experiments/${encodeURIComponent(experimentId)}/complete`, {});
+}
+
+export async function getExperimentMetrics(experimentId: string): Promise<ExperimentVariantMetrics[]> {
+  return get<ExperimentVariantMetrics[]>(`/api/prompts/experiments/${encodeURIComponent(experimentId)}/metrics`);
+}
+
+// ---------------------------------------------------------------------------
+// Registry Schema
+// ---------------------------------------------------------------------------
+
+export interface RegistrySchemaField {
+  type: string;
+  required?: boolean;
+  description?: string;
+  example?: unknown;
+  default?: unknown;
+  options?: string[];
+  item_type?: string;
+}
+
+export interface RegistrySchemaSection {
+  description?: string;
+  repeatable?: boolean;
+  fields?: Record<string, RegistrySchemaField>;
+  sections?: Record<string, RegistrySchemaSection>;
+}
+
+export interface RegistrySchema {
+  description?: string;
+  file_pattern?: string;
+  fields?: Record<string, RegistrySchemaField>;
+  sections?: Record<string, RegistrySchemaSection>;
+}
+
+export async function fetchAllRegistrySchemas(): Promise<Record<string, RegistrySchema>> {
+  return get<Record<string, RegistrySchema>>("/api/registry/schema");
+}
+
+export async function fetchRegistrySchema(contentType: string): Promise<RegistrySchema> {
+  return get<RegistrySchema>(`/api/registry/schema/${encodeURIComponent(contentType)}`);
+}
+
+export interface CreateRegistryContentResponse {
+  ok: boolean;
+  content_type: string;
+  identifier: string;
+  path: string;
+}
+
+export async function createRegistryContent(
+  contentType: string,
+  values: Record<string, unknown>,
+): Promise<CreateRegistryContentResponse> {
+  return post<CreateRegistryContentResponse>(
+    `/api/registry/content/${encodeURIComponent(contentType)}`,
+    values,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Auth — change password
+// ---------------------------------------------------------------------------
+
+// ── MCP Servers API ─────────────────────────────────────────────────────
+//
+// The MCP API is unified under `/api/mcp/*` — both raw-configured servers
+// (from `config.toml`) and catalog-installed servers live in the same
+// `/api/mcp/servers` collection. `template_id` tracks provenance when a
+// server was installed from a catalog entry.
+
+export interface McpTransport {
+  type: "stdio" | "sse" | "http";
+  command?: string;
+  args?: string[];
+  url?: string;
+}
+
+/** TaintRuleId — must match the snake-cased serde tag of the Rust enum. */
+export type TaintRuleId =
+  | "authorization_literal"
+  | "key_value_secret"
+  | "well_known_prefix"
+  | "opaque_token"
+  | "pii_email"
+  | "pii_phone"
+  | "pii_credit_card"
+  | "pii_ssn"
+  | "sensitive_key_name";
+
+/** Tool-level baseline action when no path entry matches. */
+export type McpTaintToolAction = "scan" | "skip";
+
+/** Severity action for a named rule set. */
+export type McpTaintRuleSetAction = "block" | "warn" | "log";
+
+export interface McpTaintPathPolicy {
+  skip_rules: TaintRuleId[];
+}
+
+export interface McpTaintToolPolicy {
+  default?: McpTaintToolAction;
+  paths?: Record<string, McpTaintPathPolicy>;
+  rule_sets?: string[];
+}
+
+export interface McpTaintPolicy {
+  tools?: Record<string, McpTaintToolPolicy>;
+}
+
+export interface NamedTaintRuleSet {
+  name: string;
+  action?: McpTaintRuleSetAction;
+  rules?: TaintRuleId[];
+}
+
+export interface McpServerConfigured {
+  /** Stable identifier; falls back to `name` when the backend omits it. */
+  id?: string;
+  name: string;
+  transport: McpTransport;
+  timeout_secs?: number;
+  env?: string[];
+  headers?: string[];
+  /** Catalog template this server was installed from, when applicable. */
+  template_id?: string;
+  auth_state?: { state: string; auth_url?: string; message?: string };
+  /** Issue #3050: per-server taint scanning toggle. */
+  taint_scanning?: boolean;
+  /** Issue #3050: granular per-tool / per-path / per-rule taint policy. */
+  taint_policy?: McpTaintPolicy;
+}
+
+export interface McpServerConnected {
+  name: string;
+  tools_count: number;
+  tools: { name: string; description?: string }[];
+  connected: boolean;
+}
+
+export interface McpServersResponse {
+  configured: McpServerConfigured[];
+  connected: McpServerConnected[];
+  total_configured: number;
+  total_connected: number;
+}
+
+export async function listMcpServers(): Promise<McpServersResponse> {
+  return get<McpServersResponse>("/api/mcp/servers");
+}
+
+export async function getMcpServer(id: string): Promise<McpServerConfigured> {
+  return get<McpServerConfigured>(`/api/mcp/servers/${encodeURIComponent(id)}`);
+}
+
+// ── MCP Catalog (read-only browse of registry templates) ────────
+
+export interface McpCatalogRequiredEnv {
+  name: string;
+  label: string;
+  help?: string;
+  is_secret?: boolean;
+  get_url?: string;
+}
+
+export interface McpCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  icon?: string;
+  category?: string;
+  installed: boolean;
+  tags?: string[];
+  transport?: McpTransport;
+  required_env?: McpCatalogRequiredEnv[];
+  has_oauth?: boolean;
+  setup_instructions?: string;
+}
+
+export interface McpCatalogResponse {
+  entries: McpCatalogEntry[];
+  count: number;
+}
+
+export async function listMcpCatalog(): Promise<McpCatalogResponse> {
+  return get<McpCatalogResponse>("/api/mcp/catalog");
+}
+
+export async function getMcpCatalogEntry(id: string): Promise<McpCatalogEntry> {
+  return get<McpCatalogEntry>(`/api/mcp/catalog/${encodeURIComponent(id)}`);
+}
+
+// ── MCP Server mutations ────────────────────────────────────────────────
+
+/** Install a server from a catalog template with the supplied credentials. */
+export type AddMcpServerFromTemplate = {
+  template_id: string;
+  credentials?: Record<string, string>;
+};
+
+/** Create a server from a raw spec (same shape as a configured entry). */
+export type AddMcpServerSpec = Omit<McpServerConfigured, "id"> & { name: string };
+
+/**
+ * Body is either `{ template_id, credentials }` to install a catalog entry,
+ * or a raw `McpServerConfigured` spec. The backend disambiguates by the
+ * presence of `template_id`.
+ */
+export async function addMcpServer(
+  body: AddMcpServerFromTemplate | AddMcpServerSpec,
+): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/mcp/servers", body);
+}
+
+export async function updateMcpServer(
+  id: string,
+  server: Partial<McpServerConfigured>,
+): Promise<ApiActionResponse> {
+  return put<ApiActionResponse>(`/api/mcp/servers/${encodeURIComponent(id)}`, server);
+}
+
+export interface PatchMcpTaintRequest {
+  taint_scanning?: boolean;
+  taint_policy?: McpTaintPolicy;
+}
+
+export async function patchMcpServerTaint(
+  id: string,
+  body: PatchMcpTaintRequest,
+): Promise<ApiActionResponse> {
+  return patch<ApiActionResponse>(
+    `/api/mcp/servers/${encodeURIComponent(id)}/taint`,
+    body,
+  );
+}
+
+export async function deleteMcpServer(id: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/mcp/servers/${encodeURIComponent(id)}`);
+}
+
+export async function reconnectMcpServer(id: string): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>(`/api/mcp/servers/${encodeURIComponent(id)}/reconnect`, {});
+}
+
+// ── MCP Health & Reload ────────────────────────────────────────────────
+
+export interface McpHealthEntry {
+  id: string;
+  status: string;
+  tool_count?: number;
+  last_ok?: string | null;
+  last_error?: string | null;
+  consecutive_failures?: number;
+  reconnecting?: boolean;
+  reconnect_attempts?: number;
+  connected_since?: string | null;
+}
+
+export interface McpHealthResponse {
+  health: McpHealthEntry[];
+  count: number;
+}
+
+export async function getMcpHealth(): Promise<McpHealthResponse> {
+  return get<McpHealthResponse>("/api/mcp/health");
+}
+
+export async function reloadMcp(): Promise<ApiActionResponse> {
+  return post<ApiActionResponse>("/api/mcp/reload", {});
+}
+
+// ── MCP `[[taint_rules]]` Registry ──────────────────────────────────────
+
+/** Summary of one named taint rule set defined by `[[taint_rules]]`. */
+export interface McpTaintRuleSummary {
+  /** Identifier referenced by `McpTaintToolPolicy.rule_sets`. */
+  name: string;
+  /** Severity action this set applies when one of its rules fires. */
+  action: "block" | "warn" | "log";
+  /** Number of `TaintRuleId` variants this set covers (display-only). */
+  rule_count: number;
+}
+
+/**
+ * Read-only list of `[[taint_rules]]` for dashboard validation.
+ *
+ * Used by `TaintPolicyEditor` to flag rule_set names that don't match any
+ * registered set — without this, typos sit silent in production until a
+ * scanner WARN line happens to be noticed in logs.
+ */
+export async function listMcpTaintRules(): Promise<McpTaintRuleSummary[]> {
+  return get<McpTaintRuleSummary[]>("/api/mcp/taint-rules");
+}
+
+// ── MCP OAuth Auth ──────────────────────────────────────────────────────
+
+export interface McpAuthStatusResponse {
+  server: string;
+  auth: { state: string; auth_url?: string; message?: string };
+}
+
+export interface McpAuthStartResponse {
+  auth_url: string;
+  server: string;
+}
+
+export async function getMcpAuthStatus(id: string): Promise<McpAuthStatusResponse> {
+  return get<McpAuthStatusResponse>(`/api/mcp/servers/${encodeURIComponent(id)}/auth/status`);
+}
+
+export async function startMcpAuth(id: string): Promise<McpAuthStartResponse> {
+  return post<McpAuthStartResponse>(`/api/mcp/servers/${encodeURIComponent(id)}/auth/start`, {});
+}
+
+export async function revokeMcpAuth(id: string): Promise<{ server: string; state: string }> {
+  return del<{ server: string; state: string }>(`/api/mcp/servers/${encodeURIComponent(id)}/auth/revoke`);
+}
+
+// ---------------------------------------------------------------------------
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string | null,
+  newUsername: string | null,
+): Promise<{ ok: boolean; error?: string; message?: string }> {
+  return post<{ ok: boolean; error?: string; message?: string }>(
+    "/api/auth/change-password",
+    {
+      current_password: currentPassword,
+      ...(newPassword ? { new_password: newPassword } : {}),
+      ...(newUsername ? { new_username: newUsername } : {}),
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Terminal (tmux windows)
+// ---------------------------------------------------------------------------
+
+export interface TerminalWindow {
+  id: string;
+  index: number;
+  name: string;
+  active: boolean;
+}
+
+export interface TerminalHealth {
+  ok: boolean;
+  tmux: boolean;
+  max_windows: number;
+  os: string;
+}
+
+export async function getTerminalHealth(): Promise<TerminalHealth> {
+  return get<TerminalHealth>("/api/terminal/health");
+}
+
+export async function listTerminalWindows(): Promise<TerminalWindow[]> {
+  const response = await fetchWithTimeout("/api/terminal/windows", { headers: buildHeaders() });
+  if (!response.ok) throw await parseError(response);
+  const data = (await response.json()) as { windows?: TerminalWindow[] } | TerminalWindow[];
+  return Array.isArray(data) ? data : (data.windows ?? []);
+}
+
+export async function createTerminalWindow(body: { name?: string } = {}): Promise<void> {
+  const response = await fetchWithTimeout("/api/terminal/windows", {
+    method: "POST",
+    headers: buildHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await parseError(response);
+}
+
+export async function renameTerminalWindow(windowId: string, name: string): Promise<void> {
+  const response = await fetchWithTimeout(
+    `/api/terminal/windows/${encodeURIComponent(windowId)}`,
+    {
+      method: "PATCH",
+      headers: buildHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name }),
+    },
+  );
+  if (!response.ok) throw await parseError(response);
+}
+
+export async function deleteTerminalWindow(windowId: string): Promise<void> {
+  const response = await fetchWithTimeout(
+    `/api/terminal/windows/${encodeURIComponent(windowId)}`,
+    { method: "DELETE", headers: buildHeaders() },
+  );
+  if (!response.ok) throw await parseError(response);
+}
+
+// ── Auto-Dream (background memory consolidation) ──────────────────────
+
+export type AutoDreamStatusName =
+  | "running"
+  | "completed"
+  | "failed"
+  | "aborted";
+
+export interface AutoDreamTurn {
+  text: string;
+  tool_use_count: number;
+}
+
+/** Token accounting snapshot from a completed dream. Populated only on
+ * the `completed` status; absent for running / failed / aborted. The
+ * cache_* fields let the dashboard surface cache-hit rate so operators
+ * can see the forkedAgent cost savings in real terms. */
+export interface AutoDreamUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+  iterations: number;
+  latency_ms: number;
+  cost_usd?: number;
+}
+
+export interface AutoDreamProgress {
+  task_id: string;
+  agent_id: string;
+  started_at_ms: number;
+  ended_at_ms: number | null;
+  status: AutoDreamStatusName;
+  phase: string;
+  tool_use_count: number;
+  memories_touched: string[];
+  turns: AutoDreamTurn[];
+  error: string | null;
+  usage?: AutoDreamUsage;
+}
+
+export interface AutoDreamAgentStatus {
+  agent_id: string;
+  agent_name: string;
+  auto_dream_enabled: boolean;
+  last_consolidated_at_ms: number;
+  /** Unix-ms when the time gate reopens. Omitted when the agent has never been dreamed. */
+  next_eligible_at_ms?: number;
+  /** Hours since last consolidation. Omitted when the agent has never been dreamed. */
+  hours_since_last?: number;
+  sessions_since_last: number;
+  /** Resolved min_hours (manifest override or global default). */
+  effective_min_hours: number;
+  /** Resolved min_sessions (manifest override or global default; 0 = gate disabled). */
+  effective_min_sessions: number;
+  lock_path: string;
+  progress: AutoDreamProgress | null;
+  can_abort: boolean;
+}
+
+export interface AutoDreamStatus {
+  enabled: boolean;
+  min_hours: number;
+  min_sessions: number;
+  check_interval_secs: number;
+  lock_dir: string;
+  agents: AutoDreamAgentStatus[];
+}
+
+export interface AutoDreamTriggerOutcome {
+  fired: boolean;
+  agent_id: string;
+  task_id: string | null;
+  reason: string;
+}
+
+export interface AutoDreamAbortOutcome {
+  aborted: boolean;
+  agent_id: string;
+  reason: string;
+}
+
+export async function getAutoDreamStatus(): Promise<AutoDreamStatus> {
+  return get<AutoDreamStatus>("/api/auto-dream/status");
+}
+
+export async function triggerAutoDream(agentId: string): Promise<AutoDreamTriggerOutcome> {
+  return post<AutoDreamTriggerOutcome>(
+    `/api/auto-dream/agents/${encodeURIComponent(agentId)}/trigger`,
+    {},
+  );
+}
+
+export async function abortAutoDream(agentId: string): Promise<AutoDreamAbortOutcome> {
+  return post<AutoDreamAbortOutcome>(
+    `/api/auto-dream/agents/${encodeURIComponent(agentId)}/abort`,
+    {},
+  );
+}
+
+export async function setAutoDreamEnabled(
+  agentId: string,
+  enabled: boolean,
+): Promise<{ agent_id: string; enabled: boolean }> {
+  return put<{ agent_id: string; enabled: boolean }>(
+    `/api/auto-dream/agents/${encodeURIComponent(agentId)}/enabled`,
+    { enabled },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RBAC users (Phase 4 / M6)
+// ---------------------------------------------------------------------------
+
+export type UserRoleName = "owner" | "admin" | "user" | "viewer";
+
+export interface UserItem {
+  name: string;
+  role: string;
+  channel_bindings: Record<string, string>;
+  has_api_key: boolean;
+  // Summary flags — true when the user overrides the role default for
+  // that slot. Bodies stay on the per-user detail endpoints.
+  has_policy: boolean;
+  has_memory_access: boolean;
+  has_budget: boolean;
+}
+
+export interface UserUpsertPayload {
+  name: string;
+  role: string;
+  channel_bindings?: Record<string, string>;
+  api_key_hash?: string | null;
+}
+
+export interface BulkImportRow {
+  index: number;
+  name: string;
+  status: string;
+  error: string | null;
+}
+
+export interface BulkImportResult {
+  created: number;
+  updated: number;
+  failed: number;
+  dry_run: boolean;
+  rows: BulkImportRow[];
+}
+
+export async function listUsers(): Promise<UserItem[]> {
+  return get<UserItem[]>("/api/users");
+}
+
+export async function getUser(name: string): Promise<UserItem> {
+  return get<UserItem>(`/api/users/${encodeURIComponent(name)}`);
+}
+
+export async function createUser(payload: UserUpsertPayload): Promise<UserItem> {
+  return post<UserItem>("/api/users", payload);
+}
+
+export async function updateUser(
+  originalName: string,
+  payload: UserUpsertPayload,
+): Promise<UserItem> {
+  return put<UserItem>(
+    `/api/users/${encodeURIComponent(originalName)}`,
+    payload,
+  );
+}
+
+export async function deleteUser(name: string): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(`/api/users/${encodeURIComponent(name)}`);
+}
+
+export async function importUsers(
+  rows: UserUpsertPayload[],
+  options: { dryRun?: boolean } = {},
+): Promise<BulkImportResult> {
+  return post<BulkImportResult>("/api/users/import", {
+    rows,
+    dry_run: options.dryRun ?? false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// API-key rotation (RBAC follow-up to #3054 / M3 / M6)
+//
+// Owner-only. Returns the new plaintext key in the response — that is the
+// only time the server exposes it; we never log, persist, or re-derive it.
+// ---------------------------------------------------------------------------
+
+export interface RotateUserKeyResponse {
+  status: string;
+  new_api_key: string;
+  sessions_invalidated: number;
+}
+
+export async function rotateUserKey(name: string): Promise<RotateUserKeyResponse> {
+  return post<RotateUserKeyResponse>(
+    `/api/users/${encodeURIComponent(name)}/rotate-key`,
+    {},
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Audit query (RBAC M5 / #3203). Shape mirrors `routes/audit.rs::audit_query`
+// — keep field names in lockstep, the server returns raw `serde_json::Value`
+// so a drift here is silently wrong wire-format on the page.
+// ---------------------------------------------------------------------------
+
+export interface AuditQueryFilters {
+  user?: string; // UUID or configured name
+  action?: string; // AuditAction variant name, case-insensitive
+  agent?: string;
+  channel?: string;
+  from?: string; // ISO-8601 lower bound (inclusive)
+  to?: string; // ISO-8601 upper bound (inclusive)
+  limit?: number; // default 200, hard cap 5000
+}
+
+export interface AuditQueryEntry {
+  seq: number;
+  timestamp: string;
+  agent_id: string;
+  action: string;
+  detail: string;
+  outcome: string;
+  user_id: string | null;
+  channel: string | null;
+  hash: string;
+}
+
+export interface AuditQueryResponse {
+  entries: AuditQueryEntry[];
+  count: number;
+  limit: number;
+}
+
+export async function queryAudit(
+  filters: AuditQueryFilters = {},
+): Promise<AuditQueryResponse> {
+  const params = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) {
+    if (v === undefined || v === null || v === "") continue;
+    params.set(k, String(v));
+  }
+  const qs = params.toString();
+  return get<AuditQueryResponse>(
+    `/api/audit/query${qs ? `?${qs}` : ""}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Per-user budget (RBAC M5)
+// ---------------------------------------------------------------------------
+
+/// Per-window spend + cap pair returned by GET /api/budget/users/{user_id}.
+export interface UserBudgetWindow {
+  spend: number;
+  limit: number;
+  pct: number;
+}
+
+/// Shape returned by GET /api/budget/users/{user_id} — see
+/// `routes/budget.rs::user_budget_detail`.
+export interface UserBudgetResponse {
+  user_id: string;
+  name: string | null;
+  role: string | null;
+  hourly: UserBudgetWindow;
+  daily: UserBudgetWindow;
+  monthly: UserBudgetWindow;
+  alert_threshold: number;
+  alert_breach: boolean;
+  /// True once the M5 enforcement arm is wired (commit 4a00a646). Kept
+  /// in the payload so the dashboard can surface a "deferred" notice
+  /// against older daemons that may still report `false`.
+  enforced: boolean;
+}
+
+/// Body shape for PUT /api/budget/users/{user_id}. Mirrors
+/// `librefang_types::config::UserBudgetConfig`. Any window left at 0
+/// means "unlimited on that window"; same semantics as the kernel
+/// metering check.
+export interface UserBudgetPayload {
+  max_hourly_usd: number;
+  max_daily_usd: number;
+  max_monthly_usd: number;
+  alert_threshold: number;
+}
+
+export async function getUserBudget(name: string): Promise<UserBudgetResponse> {
+  return get<UserBudgetResponse>(
+    `/api/budget/users/${encodeURIComponent(name)}`,
+  );
+}
+
+export async function updateUserBudget(
+  name: string,
+  payload: UserBudgetPayload,
+): Promise<UserBudgetPayload> {
+  return put(
+    `/api/budget/users/${encodeURIComponent(name)}`,
+    payload,
+  );
+}
+
+export async function deleteUserBudget(
+  name: string,
+): Promise<ApiActionResponse> {
+  return del<ApiActionResponse>(
+    `/api/budget/users/${encodeURIComponent(name)}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Per-user permission policy (RBAC M3 / #3205 — wired to the real daemon)
+// ---------------------------------------------------------------------------
+
+export interface UserToolPolicy {
+  allowed_tools: string[];
+  denied_tools: string[];
+}
+
+export interface UserToolCategories {
+  allowed_groups: string[];
+  denied_groups: string[];
+}
+
+export interface UserMemoryAccess {
+  readable_namespaces: string[];
+  writable_namespaces: string[];
+  pii_access: boolean;
+  export_allowed: boolean;
+  delete_allowed: boolean;
+}
+
+export interface ChannelToolPolicy {
+  allowed_tools: string[];
+  denied_tools: string[];
+}
+
+// Mirrors the `UserPolicyView` returned by `GET /api/users/{name}/policy`.
+// `null` on a top-level slot = "no opinion configured" (kernel falls back
+// to role-default). Empty `channel_tool_rules` map = no per-channel rules.
+export interface PermissionPolicy {
+  tool_policy: UserToolPolicy | null;
+  tool_categories: UserToolCategories | null;
+  memory_access: UserMemoryAccess | null;
+  channel_tool_rules: Record<string, ChannelToolPolicy>;
+}
+
+// PUT body shape: every key independently nullable. `undefined` = preserve
+// existing, `null` = clear. `channel_tool_rules` collapses absent/null to
+// "preserve"; pass `{}` to clear.
+export interface PermissionPolicyUpdate {
+  tool_policy?: UserToolPolicy | null;
+  tool_categories?: UserToolCategories | null;
+  memory_access?: UserMemoryAccess | null;
+  channel_tool_rules?: Record<string, ChannelToolPolicy>;
+}
+
+export async function getUserPolicy(name: string): Promise<PermissionPolicy> {
+  return get<PermissionPolicy>(
+    `/api/users/${encodeURIComponent(name)}/policy`,
+  );
+}
+
+export async function updateUserPolicy(
+  name: string,
+  policy: PermissionPolicyUpdate,
+): Promise<PermissionPolicy> {
+  return put<PermissionPolicy>(
+    `/api/users/${encodeURIComponent(name)}/policy`,
+    policy,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Effective permissions snapshot (RBAC follow-up to M3/M5/M6)
+// ---------------------------------------------------------------------------
+
+// Mirrors the shape of `librefang_kernel::auth::EffectivePermissions`.
+// Per-slice fields are nullable so the simulator can distinguish "no policy
+// declared" (null) from "explicit empty allow-list" (object with empty
+// arrays). Server returns 404 for unknown users — callers handle that via
+// the query hook's error state, not by getting a synthesised default.
+
+export interface EffectiveToolPolicy {
+  allowed_tools: string[];
+  denied_tools: string[];
+}
+
+export interface EffectiveToolCategories {
+  allowed_groups: string[];
+  denied_groups: string[];
+}
+
+export interface EffectiveMemoryAccess {
+  readable_namespaces: string[];
+  writable_namespaces: string[];
+  pii_access: boolean;
+  export_allowed: boolean;
+  delete_allowed: boolean;
+}
+
+export interface EffectiveBudget {
+  max_hourly_usd: number;
+  max_daily_usd: number;
+  max_monthly_usd: number;
+  alert_threshold: number;
+}
+
+export interface EffectiveChannelToolPolicy {
+  allowed_tools: string[];
+  denied_tools: string[];
+}
+
+export interface EffectivePermissions {
+  user_id: string;
+  name: string;
+  role: string;
+  tool_policy: EffectiveToolPolicy | null;
+  tool_categories: EffectiveToolCategories | null;
+  memory_access: EffectiveMemoryAccess | null;
+  budget: EffectiveBudget | null;
+  channel_tool_rules: Record<string, EffectiveChannelToolPolicy>;
+  channel_bindings: Record<string, string>;
+}
+
+export async function getEffectivePermissions(
+  name: string,
+): Promise<EffectivePermissions> {
+  return get<EffectivePermissions>(
+    `/api/authz/effective/${encodeURIComponent(name)}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Device pairing
+// ---------------------------------------------------------------------------
+
+export interface PairingRequestResult {
+  token: string;
+  qr_uri: string;
+  expires_at: string;
+}
+
+export interface PairedDevice {
+  device_id: string;
+  display_name: string;
+  platform: string;
+  paired_at: string;
+}
+
+// Pairing completion is initiated by the mobile client against an arbitrary
+// daemon URL (cross-origin), so it lives in `lib/mutations/connection.ts`
+// rather than this same-origin api module.
+
+export async function createPairingRequest(): Promise<PairingRequestResult> {
+  return post<PairingRequestResult>("/api/pairing/request", {});
+}
+
+export async function listPairedDevices(): Promise<PairedDevice[]> {
+  return get<PairedDevice[]>("/api/pairing/devices");
+}
+
+export async function removePairedDevice(deviceId: string): Promise<void> {
+  return del<void>(`/api/pairing/devices/${encodeURIComponent(deviceId)}`);
+}

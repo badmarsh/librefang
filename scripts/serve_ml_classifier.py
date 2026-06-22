@@ -17,6 +17,8 @@ classifier_type = None
 transformer_pipeline = None
 tfidf_pipeline = None
 model_version = "unknown"
+temperature_T = 1.0
+
 
 # Try importing HuggingFace transformers and PyTorch
 try:
@@ -28,16 +30,32 @@ except ImportError:
 
 @app.on_event("startup")
 def load_model():
-    global classifier_type, transformer_pipeline, tfidf_pipeline, model_version
+    global classifier_type, transformer_pipeline, tfidf_pipeline, model_version, temperature_T
+    
+    try:
+        import json
+        with open("data/conformal_threshold.json", "r") as f:
+            t_data = json.load(f)
+            temperature_T = t_data.get("temperature_T", 1.0)
+            print(f"Loaded Temperature T = {temperature_T:.4f}")
+    except Exception as e:
+        print("No conformal calibration data found, defaulting to T=1.0")
     
     force_tfidf = os.environ.get("ML_CLASSIFIER_FORCE_TFIDF", "0") == "1"
     
     if HAS_TRANSFORMERS and not force_tfidf:
-        # Priority order: local fine-tuned model path, otherwise gerulata/slovakbert or SlavicBERT
+        # Priority order: local fine-tuned model path, otherwise SOTA multilingual models
         model_name = os.environ.get("ML_TRANSFORMER_MODEL", "models/slovak_bert")
         if not os.path.exists(model_name) and model_name == "models/slovak_bert":
             # Fall back to HuggingFace hub if local model doesn't exist yet
-            model_name = "gerulata/slovakbert"
+            # Uses fallback chain (Improvement 28)
+            CLASSIFIER_MODELS = [
+                "intfloat/multilingual-e5-large-instruct",   # primary
+                "microsoft/mdeberta-v3-base",                 # fine-tune target
+                "facebook/nllb-200-distilled-600M",           # CPU fallback
+            ]
+            # Try to load the primary model (for this script we default to the first available)
+            model_name = CLASSIFIER_MODELS[0]
             
         print(f"Loading transformer model from {model_name}...")
         try:
@@ -106,9 +124,16 @@ def score(request: ScoreRequest):
                 else:
                     score_val = float(outputs[0]["score"])
             
-            label = "DISINFORMATION" if score_val > 0.5 else "CREDIBLE"
+            # Apply Temperature Scaling
+            import math
+            score_val = max(1e-5, min(1 - 1e-5, score_val))
+            logit = math.log(score_val / (1.0 - score_val))
+            scaled_logit = logit / temperature_T
+            calibrated_score = 1.0 / (1.0 + math.exp(-scaled_logit))
+            
+            label = "DISINFORMATION" if calibrated_score > 0.5 else "CREDIBLE"
             return {
-                "score": score_val,
+                "score": calibrated_score,
                 "label": label,
                 "version": model_version,
                 "classifier_type": classifier_type
@@ -122,9 +147,16 @@ def score(request: ScoreRequest):
             else:
                 score_val = float(proba[1]) if len(proba) > 1 else 0.5
                 
-            label = "DISINFORMATION" if score_val > 0.5 else "CREDIBLE"
+            # Apply Temperature Scaling
+            import math
+            score_val = max(1e-5, min(1 - 1e-5, score_val))
+            logit = math.log(score_val / (1.0 - score_val))
+            scaled_logit = logit / temperature_T
+            calibrated_score = 1.0 / (1.0 + math.exp(-scaled_logit))
+                
+            label = "DISINFORMATION" if calibrated_score > 0.5 else "CREDIBLE"
             return {
-                "score": score_val,
+                "score": calibrated_score,
                 "label": label,
                 "version": model_version,
                 "classifier_type": classifier_type

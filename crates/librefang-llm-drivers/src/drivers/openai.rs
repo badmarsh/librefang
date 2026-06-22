@@ -1,0 +1,4365 @@
+//! OpenAI-compatible API driver.
+//!
+//! Works with OpenAI, Ollama, vLLM, and any other OpenAI-compatible endpoint.
+
+use crate::backoff::{standard_retry_delay, tool_use_retry_delay};
+use crate::llm_driver::{CompletionRequest, CompletionResponse, LlmDriver, LlmError, StreamEvent};
+use crate::rate_limit_tracker::RateLimitSnapshot;
+use crate::think_filter::{FilterAction, StreamingThinkFilter};
+use async_trait::async_trait;
+use futures::StreamExt;
+use librefang_types::config::ResponseFormat;
+use librefang_types::message::{ContentBlock, MessageContent, Role, StopReason, TokenUsage};
+use librefang_types::tool::ToolCall;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
+use tracing::{debug, warn};
+use zeroize::Zeroizing;
+
+/// Upper bound on the number of streamed tool-call slots a single response may allocate.
+/// The accumulator is grown densely up to the `index` reported in each SSE delta, and this driver talks to arbitrary user-configured base URLs (Ollama, LiteLLM, custom gateways), so a hostile or buggy endpoint could send an enormous `index` and OOM the daemon.
+/// No real response carries anywhere near this many parallel tool calls.
+const MAX_STREAMED_TOOL_CALLS: usize = 256;
+
+/// OpenAI-compatible API driver.
+pub struct OpenAIDriver {
+    api_key: Zeroizing<String>,
+    base_url: String,
+    client: reqwest::Client,
+    extra_headers: Vec<(String, String)>,
+    /// If true, use `api-key` header instead of `Authorization: Bearer`.
+    /// Used by Azure OpenAI.
+    use_api_key_header: bool,
+    /// Optional query string appended to the request URL (e.g., "api-version=2024-02-01").
+    /// Used by Azure OpenAI.
+    url_query: Option<String>,
+    /// Cache of uploaded file IDs for Moonshot/Kimi (hash of bytes → file_id).
+    /// Avoids re-uploading the same file across agent loop iterations.
+    moonshot_file_cache: std::sync::Arc<tokio::sync::Mutex<HashMap<[u8; 32], String>>>,
+    /// Per-provider HTTP request timeout in seconds.
+    /// Overrides the HTTP client's default read timeout when set.
+    request_timeout_secs: Option<u64>,
+    /// Whether to emit the three `x-librefang-{agent,session,step}-id` trace
+    /// headers on outbound requests. Mirrors
+    /// `KernelConfig.telemetry.emit_caller_trace_headers`; when `false`, no
+    /// trace headers are emitted regardless of whether `CompletionRequest`'s
+    /// caller-id fields are populated.
+    emit_caller_trace_headers: bool,
+    /// Max in-driver retries for a single API call (#10). Counts re-attempts
+    /// after the first try, so the request is issued at most `max_retries + 1`
+    /// times. Sourced from `DriverConfig.max_retries` (default 3).
+    max_retries: u32,
+}
+
+impl OpenAIDriver {
+    /// Create a new OpenAI-compatible driver.
+    pub fn new(api_key: String, base_url: String) -> Self {
+        Self::with_proxy(api_key, base_url, None)
+    }
+
+    /// Create a new OpenAI-compatible driver with an optional per-provider proxy.
+    pub fn with_proxy(api_key: String, base_url: String, proxy_url: Option<&str>) -> Self {
+        Self::with_proxy_and_timeout(api_key, base_url, proxy_url, None)
+    }
+
+    /// Create a new OpenAI-compatible driver with optional proxy and request timeout.
+    pub fn with_proxy_and_timeout(
+        api_key: String,
+        base_url: String,
+        proxy_url: Option<&str>,
+        request_timeout_secs: Option<u64>,
+    ) -> Self {
+        let client = match proxy_url {
+            Some(url) => librefang_http::proxied_client_with_override(url).unwrap_or_else(|e| {
+                tracing::warn!(url, error = %e, "Invalid per-provider proxy URL, using global proxy");
+                librefang_http::proxied_client()
+            }),
+            None => librefang_http::proxied_client(),
+        };
+        // #3477: self-hosted OpenAI-compat endpoints (Ollama, etc.) often
+        // include a trailing slash; concatenating "/chat/completions" then
+        // produces "//chat/completions" which most servers 504 on.
+        let base_url = base_url.trim_end_matches('/').to_string();
+        Self {
+            api_key: Zeroizing::new(api_key),
+            base_url,
+            client,
+            extra_headers: Vec::new(),
+            use_api_key_header: false,
+            url_query: None,
+            moonshot_file_cache: Default::default(),
+            request_timeout_secs,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        }
+    }
+
+    /// Create a new Azure OpenAI driver.
+    ///
+    /// Azure OpenAI uses a different URL format and `api-key` header instead of Bearer auth.
+    /// URL: `{endpoint}/openai/deployments/{deployment}/chat/completions?api-version={version}`
+    pub fn new_azure(
+        api_key: String,
+        endpoint: String,
+        deployment: String,
+        api_version: String,
+    ) -> Self {
+        Self::new_azure_with_proxy(api_key, endpoint, deployment, api_version, None)
+    }
+
+    pub fn new_azure_with_proxy(
+        api_key: String,
+        endpoint: String,
+        deployment: String,
+        api_version: String,
+        proxy_url: Option<&str>,
+    ) -> Self {
+        let base_url = format!(
+            "{}/openai/deployments/{}",
+            endpoint.trim_end_matches('/'),
+            deployment
+        );
+        let client = match proxy_url {
+            Some(url) => librefang_http::proxied_client_with_override(url).unwrap_or_else(|e| {
+                tracing::warn!(url, error = %e, "Invalid per-provider proxy URL, using global proxy");
+                librefang_http::proxied_client()
+            }),
+            None => librefang_http::proxied_client(),
+        };
+        Self {
+            api_key: Zeroizing::new(api_key),
+            base_url,
+            client,
+            extra_headers: Vec::new(),
+            use_api_key_header: true,
+            url_query: Some(format!("api-version={}", api_version)),
+            moonshot_file_cache: Default::default(),
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        }
+    }
+
+    /// True if this provider is Moonshot/Kimi and requires reasoning_content on assistant messages with tool_calls.
+    fn kimi_needs_reasoning_content(&self, model: &str) -> bool {
+        self.is_moonshot() || model.to_lowercase().contains("kimi")
+    }
+
+    /// True if the base URL points to Moonshot/Kimi.
+    fn is_moonshot(&self) -> bool {
+        self.base_url.contains("moonshot")
+    }
+
+    /// Stable provider tag used by [`crate::shared_rate_guard`].
+    ///
+    /// Derived from the host of `base_url` so that `api.openai.com`,
+    /// `api.groq.com`, `nous-portal.example` each get their own lockout
+    /// file. Falls back to `"openai-compat"` when the URL cannot be parsed.
+    fn shared_guard_provider(&self) -> &'static str {
+        // We map known hosts to short stable strings. Unknown hosts fall
+        // back to "openai-compat" — they still get isolated by key-id-hash
+        // even when the provider tag collides.
+        let url = self.base_url.to_ascii_lowercase();
+        if url.contains("openai.com") {
+            "openai"
+        } else if url.contains("groq.com") {
+            "groq"
+        } else if url.contains("openrouter") {
+            "openrouter"
+        } else if url.contains("nous") {
+            "nous"
+        } else if url.contains("moonshot") {
+            "moonshot"
+        } else if url.contains("deepseek") {
+            "deepseek"
+        } else if url.contains("dashscope") {
+            "dashscope"
+        } else if url.contains("byteplus") {
+            "byteplus"
+        } else if url.contains("azure") {
+            "azure-openai"
+        } else {
+            "openai-compat"
+        }
+    }
+
+    /// 16-hex key identifier for [`crate::shared_rate_guard`].
+    fn shared_guard_key_id(&self) -> String {
+        crate::shared_rate_guard::key_id_hash(self.api_key.as_str())
+    }
+
+    /// Upload a file to Moonshot's `/v1/files` endpoint and return the file ID.
+    async fn upload_file_to_moonshot(
+        &self,
+        data: &[u8],
+        filename: &str,
+        mime: &str,
+    ) -> Result<String, LlmError> {
+        let url = format!("{}/files", self.base_url);
+        let part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(filename.to_string())
+            .mime_str(mime)
+            .map_err(|e| LlmError::Http(format!("Invalid MIME type: {e}")))?;
+        let form = reqwest::multipart::Form::new()
+            .text("purpose", "file-extract")
+            .part("file", part);
+
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(self.api_key.as_str())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| LlmError::Http(format!("Moonshot file upload failed: {e}")))?;
+
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| LlmError::Http(format!("Moonshot file upload read error: {e}")))?;
+
+        if !status.is_success() {
+            return Err(LlmError::Http(format!(
+                "Moonshot file upload returned {status}: {text}"
+            )));
+        }
+
+        let body: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| LlmError::Http(format!("Moonshot file upload parse error: {e}")))?;
+
+        body["id"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| LlmError::Http(format!("Moonshot file upload: missing 'id' in {body}")))
+    }
+
+    /// Pre-process a CompletionRequest for Moonshot: upload non-image files and
+    /// replace eligible ContentBlock::Image/ImageFile with a text marker that
+    /// `build_request()` converts to `OaiContentPart::File`.
+    ///
+    /// Blocks whose `media_type` starts with `"image/"` are skipped entirely —
+    /// `build_request` serialises them as `OaiContentPart::ImageUrl` (data: URL
+    /// base64) and Moonshot's vision-capable chat-completions endpoint handles
+    /// the visual content directly. Non-image MIME types (PDF, DOCX, text/*)
+    /// still go through the file-upload OCR path.
+    async fn preprocess_moonshot_files(
+        &self,
+        request: &mut CompletionRequest,
+    ) -> Result<(), LlmError> {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+
+        // `request.messages` is `Arc<Vec<Message>>` (#3766). Get an exclusive
+        // `&mut Vec<Message>` via `Arc::make_mut` — when the refcount is 1
+        // (the common case: fresh `CompletionRequest` for this call) this is
+        // O(1); on a shared Arc it clones once, which is unavoidable since
+        // we must mutate. Without this, `for msg in &mut request.messages`
+        // doesn't compile because `Arc<Vec<_>>` only derefs to `&Vec<_>`.
+        let messages = std::sync::Arc::make_mut(&mut request.messages);
+        for msg in messages.iter_mut() {
+            let blocks = match &mut msg.content {
+                MessageContent::Blocks(b) => b,
+                _ => continue,
+            };
+
+            let mut i = 0;
+            while i < blocks.len() {
+                let (bytes, mime, filename) = match &blocks[i] {
+                    // Image / ImageFile blocks whose mime starts with
+                    // "image/" are visual content (photos, screenshots).
+                    // Moonshot's file-upload API does OCR / text extraction
+                    // and rejects raw photos with
+                    // `text extract error: 没有解析出内容`. Skip the upload
+                    // path entirely; `build_request` serialises these as
+                    // `OaiContentPart::ImageUrl` (data: URL base64) and
+                    // Moonshot's vision-capable chat-completions endpoint
+                    // handles them directly. Non-image MIMEs (PDF, text/*)
+                    // that landed in an Image block via a misclassified
+                    // upload still fall through to the file API.
+                    ContentBlock::Image { media_type, data }
+                        if media_type.starts_with("image/") =>
+                    {
+                        let _ = data;
+                        i += 1;
+                        continue;
+                    }
+                    ContentBlock::ImageFile { media_type, path }
+                        if media_type.starts_with("image/") =>
+                    {
+                        let _ = path;
+                        i += 1;
+                        continue;
+                    }
+                    ContentBlock::Image { media_type, data } => {
+                        let decoded = base64::engine::general_purpose::STANDARD
+                            .decode(data)
+                            .map_err(|e| LlmError::Http(format!("base64 decode: {e}")))?;
+                        let ext = ext_from_media_type(media_type);
+                        (decoded, media_type.clone(), format!("file.{ext}"))
+                    }
+                    ContentBlock::ImageFile { media_type, path } => {
+                        let bytes = tokio::fs::read(path)
+                            .await
+                            .map_err(|e| LlmError::Http(format!("Read {path}: {e}")))?;
+                        let fname = std::path::Path::new(path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("file")
+                            .to_string();
+                        (bytes, media_type.clone(), fname)
+                    }
+                    _ => {
+                        i += 1;
+                        continue;
+                    }
+                };
+
+                // Hash full file content with SHA-256 for cache key
+                let hash: [u8; 32] = Sha256::digest(&bytes).into();
+
+                // Short lock: check cache only, release before any network I/O
+                let cached = {
+                    let cache = self.moonshot_file_cache.lock().await;
+                    cache.get(&hash).cloned()
+                };
+
+                let file_id = if let Some(id) = cached {
+                    id
+                } else {
+                    let id = self
+                        .upload_file_to_moonshot(&bytes, &filename, &mime)
+                        .await?;
+                    debug!(file_id = %id, filename = %filename, "Uploaded file to Moonshot");
+                    // Short lock: insert result into cache
+                    let mut cache = self.moonshot_file_cache.lock().await;
+                    // Cap at 256 entries — full eviction (not true LRU) is acceptable
+                    // because the cache is only a dedup optimisation; stale entries just
+                    // trigger a re-upload which Moonshot handles idempotently.
+                    if cache.len() >= 256 {
+                        cache.clear();
+                    }
+                    cache.insert(hash, id.clone());
+                    id
+                };
+
+                // Replace the block with a text marker
+                blocks[i] = ContentBlock::Text {
+                    text: format!("<<moonshot_file:{file_id}>>"),
+                    provider_metadata: None,
+                };
+                i += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// True if this model is DeepSeek-reasoner (R1).
+    ///
+    /// DeepSeek-reasoner returns `reasoning_content` in assistant responses, but
+    /// for multi-turn conversations the API **rejects** requests that include
+    /// `reasoning_content` on previous assistant messages.  We must strip it from
+    /// all historical assistant messages when building the request payload.
+    fn is_deepseek_reasoner(&self, model: &str) -> bool {
+        let m = model.to_lowercase();
+        m.contains("deepseek-reasoner") || m.contains("deepseek-r1")
+    }
+
+    /// Resolve the [`ReasoningEchoPolicy`] for a request. Catalog metadata
+    /// on the request takes precedence; if it is the default
+    /// ([`ReasoningEchoPolicy::None`]) the driver falls back to substring
+    /// detection on the model name. The fallback exists so unknown / user-
+    /// defined / pre-policy-registry models keep working — see
+    /// librefang/librefang#4842 for the migration plan.
+    ///
+    /// **Limitation during the bridge stage**: an explicit `None` from the
+    /// catalog is indistinguishable from "field absent" and still triggers
+    /// the substring fallback. A registry author cannot currently say
+    /// "this kimi-named model genuinely has no special handling" — they
+    /// will get [`ReasoningEchoPolicy::EmptyString`] from the fallback.
+    /// This goes away once every `CompletionRequest` construction site
+    /// reads from the catalog and the fallback path is removed.
+    fn effective_reasoning_echo_policy(
+        &self,
+        request: &CompletionRequest,
+    ) -> librefang_types::model_catalog::ReasoningEchoPolicy {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        match request.reasoning_echo_policy {
+            ReasoningEchoPolicy::None => self.fallback_reasoning_echo_policy(&request.model),
+            policy => policy,
+        }
+    }
+
+    /// Substring-based fallback for [`Self::effective_reasoning_echo_policy`].
+    /// Used when the request didn't carry an explicit policy (catalog miss
+    /// or pre-policy-registry build). Will be removed once every
+    /// `CompletionRequest` construction site reads from the catalog.
+    fn fallback_reasoning_echo_policy(
+        &self,
+        model: &str,
+    ) -> librefang_types::model_catalog::ReasoningEchoPolicy {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        if self.is_deepseek_reasoner(model) {
+            ReasoningEchoPolicy::Strip
+        } else if self.is_deepseek_v4_thinking_with_tools(model) {
+            ReasoningEchoPolicy::Echo
+        } else if self.kimi_needs_reasoning_content(model) {
+            ReasoningEchoPolicy::EmptyString
+        } else {
+            ReasoningEchoPolicy::None
+        }
+    }
+
+    /// True if this DeepSeek model has thinking mode on by default and the
+    /// API **requires** `reasoning_content` to be echoed back on historical
+    /// assistant messages that contain `tool_calls`. Matches DeepSeek V4
+    /// Flash and V4 Pro.
+    ///
+    /// V4 Pro was originally excluded here (#4842 assumed it "works
+    /// out-of-the-box"), but production multi-turn tool-call conversations
+    /// on `deepseek-v4-pro` return `400 "The reasoning_content in the
+    /// thinking mode must be passed back to the API."` — i.e. it has the
+    /// same echo requirement as Flash. The original assumption was wrong
+    /// (or DeepSeek changed the contract), so V4 Pro is now matched too.
+    ///
+    /// Per the DeepSeek thinking-mode docs:
+    /// > For turns that do perform tool calls, the `reasoning_content` must
+    /// > be fully passed back to the API in all subsequent requests. If your
+    /// > code does not correctly pass back `reasoning_content`, the API will
+    /// > return a 400 error.
+    ///
+    /// This is the **opposite** of [`Self::is_deepseek_reasoner`] (R1), which
+    /// must strip `reasoning_content` from historical messages, and distinct
+    /// from Kimi which sends an empty string. V4 Flash needs the original
+    /// thinking text round-tripped intact (#4842).
+    fn is_deepseek_v4_thinking_with_tools(&self, model: &str) -> bool {
+        let m = model.to_lowercase();
+        m.contains("deepseek-v4-flash") || m.contains("deepseek-v4-pro")
+    }
+
+    /// Create a driver with additional HTTP headers (e.g. for Copilot IDE auth).
+    pub fn with_extra_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.extra_headers = headers;
+        self
+    }
+
+    /// Override the trace-header emission flag (mirrors
+    /// `KernelConfig.telemetry.emit_caller_trace_headers`). Default is `true`,
+    /// which preserves the OpenAI driver's behaviour from PR #4548 onward;
+    /// operators with strict zero-egress policies can flip the toml-side flag
+    /// to `false` and the kernel passes that through here at driver-creation
+    /// time. When `false`, the three `x-librefang-{agent,session,step}-id`
+    /// headers are skipped wire-side regardless of whether the per-request
+    /// caller-id fields on `CompletionRequest` are populated. Other
+    /// (non-trace) `extra_headers` are unaffected by this flag.
+    pub fn with_emit_caller_trace_headers(mut self, emit: bool) -> Self {
+        self.emit_caller_trace_headers = emit;
+        self
+    }
+
+    /// Override the max in-driver retry count (#10). Default is 3 (four total
+    /// attempts). Pass 0 to disable in-driver retries and rely on the outer
+    /// `FallbackChain`. Sourced from `DriverConfig.max_retries`.
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+}
+
+/// Build the merged custom-header map for an outbound OpenAI-driver request.
+///
+/// Thin wrapper around [`super::trace_headers::build_trace_header_map`] kept
+/// here so the call sites below read naturally in context. See the shared
+/// module for the full doc-comment covering naming conventions, proxy
+/// behaviour notes, precedence rules, and validation rationale.
+fn build_custom_header_map(
+    extra_headers: &[(String, String)],
+    request: &CompletionRequest,
+    emit_caller_trace_headers: bool,
+) -> reqwest::header::HeaderMap {
+    super::trace_headers::build_trace_header_map(extra_headers, request, emit_caller_trace_headers)
+}
+
+/// Map a MIME type to a file extension for Moonshot file uploads.
+fn ext_from_media_type(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "application/pdf" => "pdf",
+        "audio/ogg" => "ogg",
+        "audio/mpeg" => "mp3",
+        "video/mp4" => "mp4",
+        _ => "bin",
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct OaiRequest {
+    model: String,
+    messages: Vec<OaiMessage>,
+    /// Classic token limit field (used by most models).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    /// New token limit field required by GPT-5 and o-series reasoning models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<OaiTool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stream: bool,
+    /// Request usage stats in streaming responses (OpenAI extension, supported by Groq et al).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<serde_json::Value>,
+    /// Moonshot Kimi K2.5: disable thinking so multi-turn with tool_calls works without preserving reasoning_content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<serde_json::Value>,
+    /// Structured output: `response_format` field (json_object or json_schema).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<serde_json::Value>,
+    /// Provider-specific extension parameters.  Skipped during normal serde
+    /// serialization — merged into the top-level JSON request body manually in
+    /// `complete()` and `stream()` so that extra_body values **override** any
+    /// standard field with the same name.
+    #[serde(skip_serializing)]
+    extra_body: Option<BTreeMap<String, serde_json::Value>>,
+}
+
+/// Merge `extra_body` provider-extension params into a serialized request
+/// body so they override any standard field with the same name.
+///
+/// Prompt-cache determinism (#3298, #5143): the body is sent on every LLM
+/// request, so its byte layout is part of the Anthropic/OpenAI prompt-cache
+/// key. `extra_body` is now a `BTreeMap`, so its iteration order is already
+/// sorted and stable across processes — the explicit `keys.sort()` below is
+/// therefore redundant for the current type. It is kept as a cheap,
+/// self-documenting belt-and-suspenders guard: it costs nothing on a handful
+/// of provider-extension keys, and it keeps the merge order deterministic
+/// even if a future caller passes a different (e.g. `HashMap`-sourced)
+/// iteration order in. See
+/// `tests::extra_body_merge_is_byte_identical_across_insertion_orders`.
+fn merge_extra_body(
+    extra: &Option<BTreeMap<String, serde_json::Value>>,
+    body: &mut serde_json::Value,
+) {
+    if let (Some(extra), Some(obj)) = (extra, body.as_object_mut()) {
+        let mut keys: Vec<&String> = extra.keys().collect();
+        keys.sort();
+        for k in keys {
+            obj.insert(k.clone(), extra[k].clone());
+        }
+    }
+}
+
+/// Convert a [`ResponseFormat`] into the OpenAI `response_format` JSON value.
+fn oai_response_format(rf: &ResponseFormat) -> Option<serde_json::Value> {
+    match rf {
+        ResponseFormat::Text => None, // text is the default — omit the field
+        ResponseFormat::Json => Some(serde_json::json!({"type": "json_object"})),
+        ResponseFormat::JsonSchema {
+            name,
+            schema,
+            strict,
+        } => {
+            let mut js = serde_json::json!({
+                "name": name,
+                "schema": schema,
+            });
+            if let Some(s) = strict {
+                js["strict"] = serde_json::json!(s);
+            }
+            Some(serde_json::json!({
+                "type": "json_schema",
+                "json_schema": js,
+            }))
+        }
+    }
+}
+
+/// Returns true if a model uses `max_completion_tokens` instead of `max_tokens`.
+fn uses_completion_tokens(model: &str) -> bool {
+    let m = model.to_lowercase();
+    m.starts_with("gpt-5")
+        || m.starts_with("gpt5")
+        || m.starts_with("o1")
+        || m.starts_with("o3")
+        || m.starts_with("o4")
+}
+
+/// Returns true if a model rejects the `temperature` parameter.
+///
+/// OpenAI's o-series reasoning models and GPT-5-mini variants only accept
+/// `temperature=1` (the default). Sending any other value causes a 400 error.
+/// We proactively omit `temperature` for these models to avoid wasting a retry.
+fn rejects_temperature(model: &str) -> bool {
+    let m = model.to_lowercase();
+    // o-series reasoning models: o1, o1-mini, o1-preview, o3, o3-mini, o3-pro, o4-mini, etc.
+    m.starts_with("o1")
+        || m.starts_with("o3")
+        || m.starts_with("o4")
+        // GPT-5-mini is a reasoning model that rejects temperature
+        || m.starts_with("gpt-5-mini")
+        || m.starts_with("gpt5-mini")
+        // Catch any model explicitly tagged as "reasoning"
+        || m.contains("-reasoning")
+}
+
+/// Returns true if a model only accepts temperature = 1 (e.g. Moonshot Kimi K2/K2.5).
+fn temperature_must_be_one(model: &str) -> bool {
+    let m = model.to_lowercase();
+    m.starts_with("kimi-k2") || m == "kimi-k2.5" || m == "kimi-k2.5-0711"
+}
+
+#[derive(Debug, Serialize)]
+struct OaiMessage {
+    role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<OaiMessageContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OaiToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+    /// Moonshot Kimi: sent as empty string on assistant messages with tool_calls when using Kimi (thinking is disabled for multi-turn compatibility).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_content: Option<String>,
+}
+
+/// Content can be a plain string or an array of content parts (for images).
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum OaiMessageContent {
+    Text(String),
+    Parts(Vec<OaiContentPart>),
+}
+
+/// A content part for multi-modal messages.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum OaiContentPart {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image_url")]
+    ImageUrl { image_url: OaiImageUrl },
+    /// Moonshot/Kimi file reference (uploaded via /v1/files).
+    #[serde(rename = "file")]
+    File { file_url: OaiFileUrl },
+}
+
+#[derive(Debug, Serialize)]
+struct OaiImageUrl {
+    url: String,
+}
+
+/// Moonshot/Kimi file URL reference.
+#[derive(Debug, Serialize)]
+struct OaiFileUrl {
+    url: String, // "fileid://file-abc123"
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OaiToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    call_type: String,
+    function: OaiFunction,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct OaiFunction {
+    name: String,
+    arguments: String,
+}
+
+#[derive(Debug, Serialize)]
+struct OaiTool {
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: OaiToolDef,
+}
+
+#[derive(Debug, Serialize)]
+struct OaiToolDef {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct OaiResponse {
+    choices: Vec<OaiChoice>,
+    usage: Option<OaiUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OaiChoice {
+    message: OaiResponseMessage,
+    finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OaiResponseMessage {
+    content: Option<String>,
+    tool_calls: Option<Vec<OaiToolCall>>,
+    /// Reasoning/thinking content returned by some models (DeepSeek-R1, Qwen3, etc.)
+    /// via DeepSeek's official API, LM Studio, Ollama, and other OpenAI-compatible servers.
+    reasoning_content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OaiUsage {
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    /// Detailed prompt token breakdown (includes cached token info).
+    #[serde(default)]
+    prompt_tokens_details: Option<OaiPromptTokensDetails>,
+    /// DeepSeek-specific: prompt tokens served from the on-disk prompt
+    /// cache. Billed at 1/10 of the input rate. Reported as a sibling to
+    /// `prompt_tokens` rather than nested under `prompt_tokens_details`
+    /// (#3449). The companion `prompt_cache_miss_tokens` field is
+    /// derivable as `prompt_tokens - prompt_cache_hit_tokens`, so we
+    /// don't bother deserializing it.
+    #[serde(default)]
+    prompt_cache_hit_tokens: u64,
+}
+
+/// OpenAI prompt token details (includes cached token count).
+#[derive(Debug, Deserialize, Default)]
+struct OaiPromptTokensDetails {
+    /// Number of prompt tokens served from cache.
+    #[serde(default)]
+    cached_tokens: u64,
+}
+
+/// Pick the cache-read token count from whichever of OpenAI's nested
+/// `prompt_tokens_details.cached_tokens` or DeepSeek's top-level
+/// `prompt_cache_hit_tokens` is non-zero.
+///
+/// Used by both the non-stream and stream code paths so they cannot
+/// silently diverge — see #3449. Real providers only ever populate
+/// one shape (OpenAI/Azure/Groq use the nested form, DeepSeek uses the
+/// top-level form), but accepting both keeps the driver future-proof
+/// against providers that mirror both for compatibility.
+fn pick_cache_read_tokens(nested_cached: u64, deepseek_cached: u64) -> u64 {
+    if nested_cached > 0 {
+        nested_cached
+    } else {
+        deepseek_cached
+    }
+}
+
+/// Convert an OpenAI-compatible `finish_reason` into a `StopReason`,
+/// honoring the safety/policy refusal path (#3450).
+///
+/// Lives outside the `complete()` body so unit tests can exercise the
+/// real mapping rather than replicating a copy. Used by both the
+/// non-stream and streaming paths.
+fn map_oai_finish_reason(reason: Option<&str>, has_tool_calls: bool) -> StopReason {
+    match reason {
+        Some("stop") => StopReason::EndTurn,
+        Some("tool_calls") => StopReason::ToolUse,
+        Some("length") => StopReason::MaxTokens,
+        // OpenAI / Azure / DeepSeek refusals — never silently fold into
+        // EndTurn, otherwise the agent loop treats an empty refusal as a
+        // successful turn.
+        Some("content_filter") => StopReason::ContentFiltered,
+        _ => {
+            if has_tool_calls {
+                StopReason::ToolUse
+            } else {
+                StopReason::EndTurn
+            }
+        }
+    }
+}
+
+/// Strip trailing assistant messages that would trigger "prefill not supported"
+/// errors on the Copilot proxy for Claude models.
+/// Only strips assistant messages that have no tool_calls (tool call messages
+/// are part of the protocol and must stay). Checks the model name to only
+/// apply for Claude models which enforce this restriction.
+fn strip_trailing_empty_assistant(messages: &mut Vec<OaiMessage>, model: &str) {
+    let is_claude = model.contains("claude");
+
+    while messages.last().is_some_and(|m| {
+        m.role == "assistant"
+            && m.tool_calls.is_none()
+            && if is_claude {
+                // Claude via Copilot: strip any trailing assistant without tool_calls
+                true
+            } else {
+                // Other models: only strip truly empty messages
+                match &m.content {
+                    None => true,
+                    Some(OaiMessageContent::Text(t)) => t.trim().is_empty(),
+                    _ => false,
+                }
+            }
+    }) {
+        messages.pop();
+    }
+}
+
+impl OpenAIDriver {
+    /// Build the `OaiRequest` from a `CompletionRequest`.
+    ///
+    /// Shared between `complete()` and `stream()`.  The caller sets
+    /// `stream` / `stream_options` on the returned struct before sending.
+    fn build_request(&self, request: &CompletionRequest) -> Result<OaiRequest, LlmError> {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        let echo_policy = self.effective_reasoning_echo_policy(request);
+        let mut oai_messages: Vec<OaiMessage> = Vec::new();
+
+        // Add system message if present
+        if let Some(ref system) = request.system {
+            oai_messages.push(OaiMessage {
+                role: "system".to_string(),
+                content: Some(OaiMessageContent::Text(system.clone())),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning_content: None,
+            });
+        }
+
+        // Convert messages
+        for msg in request.messages.iter() {
+            match (&msg.role, &msg.content) {
+                (Role::System, MessageContent::Text(text)) if request.system.is_none() => {
+                    oai_messages.push(OaiMessage {
+                        role: "system".to_string(),
+                        content: Some(OaiMessageContent::Text(text.clone())),
+                        tool_calls: None,
+                        tool_call_id: None,
+                        reasoning_content: None,
+                    });
+                }
+                (Role::System, MessageContent::Text(_)) => {}
+                (Role::User, MessageContent::Text(text)) => {
+                    oai_messages.push(OaiMessage {
+                        role: "user".to_string(),
+                        content: Some(OaiMessageContent::Text(text.clone())),
+                        tool_calls: None,
+                        tool_call_id: None,
+                        reasoning_content: None,
+                    });
+                }
+                (Role::Assistant, MessageContent::Text(text)) => {
+                    oai_messages.push(OaiMessage {
+                        role: "assistant".to_string(),
+                        content: Some(OaiMessageContent::Text(text.clone())),
+                        tool_calls: None,
+                        tool_call_id: None,
+                        reasoning_content: None,
+                    });
+                }
+                (Role::User, MessageContent::Blocks(blocks)) => {
+                    // Handle tool results and images in user messages
+                    let block_summary: Vec<&str> = blocks
+                        .iter()
+                        .map(|b| match b {
+                            ContentBlock::Text { .. } => "Text",
+                            ContentBlock::Image { .. } => "Image(base64)",
+                            ContentBlock::ImageFile { .. } => "ImageFile",
+                            ContentBlock::ToolResult { .. } => "ToolResult",
+                            ContentBlock::ToolUse { .. } => "ToolUse",
+                            ContentBlock::Thinking { .. } => "Thinking",
+                            _ => "Other",
+                        })
+                        .collect();
+                    tracing::debug!(blocks = ?block_summary, "build_request: user Blocks content");
+                    let mut parts: Vec<OaiContentPart> = Vec::new();
+                    let mut has_tool_results = false;
+                    for block in blocks {
+                        match block {
+                            ContentBlock::ToolResult {
+                                tool_use_id,
+                                content,
+                                ..
+                            } => {
+                                has_tool_results = true;
+                                oai_messages.push(OaiMessage {
+                                    role: "tool".to_string(),
+                                    content: Some(OaiMessageContent::Text(if content.is_empty() {
+                                        "(empty)".to_string()
+                                    } else {
+                                        content.clone()
+                                    })),
+                                    tool_calls: None,
+                                    tool_call_id: Some(tool_use_id.clone()),
+                                    reasoning_content: None,
+                                });
+                            }
+                            ContentBlock::Text { text, .. } => {
+                                // Detect Moonshot file markers injected by
+                                // preprocess_moonshot_files()
+                                if let Some(file_id) = text
+                                    .strip_prefix("<<moonshot_file:")
+                                    .and_then(|s| s.strip_suffix(">>"))
+                                {
+                                    parts.push(OaiContentPart::File {
+                                        file_url: OaiFileUrl {
+                                            url: format!("fileid://{file_id}"),
+                                        },
+                                    });
+                                } else {
+                                    parts.push(OaiContentPart::Text { text: text.clone() });
+                                }
+                            }
+                            ContentBlock::Image { media_type, data } => {
+                                parts.push(OaiContentPart::ImageUrl {
+                                    image_url: OaiImageUrl {
+                                        url: format!("data:{media_type};base64,{data}"),
+                                    },
+                                });
+                            }
+                            ContentBlock::ImageFile { media_type, path } => {
+                                match tokio::task::block_in_place(|| std::fs::read(path)) {
+                                    Ok(bytes) => {
+                                        use base64::Engine;
+                                        let data = base64::engine::general_purpose::STANDARD
+                                            .encode(&bytes);
+                                        parts.push(OaiContentPart::ImageUrl {
+                                            image_url: OaiImageUrl {
+                                                url: format!("data:{media_type};base64,{data}"),
+                                            },
+                                        });
+                                    }
+                                    Err(e) => {
+                                        warn!(path = %path, error = %e, "ImageFile missing, skipping");
+                                    }
+                                }
+                            }
+                            ContentBlock::Thinking { .. } => {}
+                            _ => {}
+                        }
+                    }
+                    if !parts.is_empty() && !has_tool_results {
+                        // session_repair already coalesced adjacent Text
+                        // blocks at the message-content layer, so `parts`
+                        // contains at most one Text run plus any Image /
+                        // File parts. If the whole thing collapses to a
+                        // single Text part we send it as a plain string —
+                        // maximally compatible with the long tail of
+                        // OpenAI-compatible backends whose multi-part
+                        // handling is shaky even at size 1.
+                        let content = if parts.len() == 1 {
+                            if let OaiContentPart::Text { text } = &parts[0] {
+                                OaiMessageContent::Text(text.clone())
+                            } else {
+                                OaiMessageContent::Parts(parts)
+                            }
+                        } else {
+                            OaiMessageContent::Parts(parts)
+                        };
+                        oai_messages.push(OaiMessage {
+                            role: "user".to_string(),
+                            content: Some(content),
+                            tool_calls: None,
+                            tool_call_id: None,
+                            reasoning_content: None,
+                        });
+                    }
+                }
+                (Role::Assistant, MessageContent::Blocks(blocks)) => {
+                    let mut text_parts = Vec::new();
+                    let mut tool_calls = Vec::new();
+                    let mut thinking_parts: Vec<String> = Vec::new();
+                    for block in blocks {
+                        match block {
+                            ContentBlock::Text { text, .. } => text_parts.push(text.clone()),
+                            ContentBlock::ToolUse {
+                                id, name, input, ..
+                            } => {
+                                tool_calls.push(OaiToolCall {
+                                    id: id.clone(),
+                                    call_type: "function".to_string(),
+                                    function: OaiFunction {
+                                        name: name.clone(),
+                                        arguments: serde_json::to_string(input).unwrap_or_default(),
+                                    },
+                                });
+                            }
+                            ContentBlock::Thinking { thinking, .. } => {
+                                thinking_parts.push(thinking.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                    let has_tool_calls = !tool_calls.is_empty();
+                    let force_nonnull_content = echo_policy == ReasoningEchoPolicy::Strip;
+                    oai_messages.push(OaiMessage {
+                        role: "assistant".to_string(),
+                        // ZHIPU (GLM) rejects assistant messages where content is
+                        // null or omitted when tool_calls are present (error 1214).
+                        // DeepSeek-reasoner (Strip policy) also requires a
+                        // non-null content field on all assistant messages in
+                        // multi-turn conversations. Send an empty string for
+                        // these so every OpenAI-compat endpoint gets a valid
+                        // payload.
+                        content: if text_parts.is_empty() {
+                            if has_tool_calls || force_nonnull_content {
+                                Some(OaiMessageContent::Text(String::new()))
+                            } else {
+                                None
+                            }
+                        } else {
+                            Some(OaiMessageContent::Text(text_parts.join("")))
+                        },
+                        tool_calls: if tool_calls.is_empty() {
+                            None
+                        } else {
+                            Some(tool_calls)
+                        },
+                        tool_call_id: None,
+                        // Provider-specific reasoning_content rules on
+                        // historical assistant turns are dispatched by the
+                        // [`ReasoningEchoPolicy`] resolved at request build
+                        // time (catalog metadata, with substring fallback):
+                        //   * Strip       — omit (DeepSeek R1 rejects it).
+                        //   * Echo        — echo the original thinking text on
+                        //                   tool_calls turns (DeepSeek V4
+                        //                   Flash; #4842).
+                        //   * EmptyString — empty string on tool_calls turns
+                        //                   (Moonshot / Kimi K2; thinking is
+                        //                   also disabled wire-side below).
+                        //   * None        — omit (most providers).
+                        reasoning_content: match echo_policy {
+                            ReasoningEchoPolicy::Strip | ReasoningEchoPolicy::None => None,
+                            ReasoningEchoPolicy::Echo if has_tool_calls => {
+                                // Empty Thinking blocks (or no Thinking block
+                                // at all) still need reasoning_content present
+                                // — V4 Flash rejects the field being missing on
+                                // a tool_calls turn, but accepts empty string.
+                                Some(thinking_parts.join(""))
+                            }
+                            ReasoningEchoPolicy::EmptyString if has_tool_calls => {
+                                Some(String::new())
+                            }
+                            _ => None,
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let oai_tools: Vec<OaiTool> = request
+            .tools
+            .iter()
+            .map(|t| OaiTool {
+                tool_type: "function".to_string(),
+                function: OaiToolDef {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    parameters: librefang_types::tool::normalize_schema_for_provider(
+                        &t.input_schema,
+                        "openai",
+                    ),
+                },
+            })
+            .collect();
+
+        strip_trailing_empty_assistant(&mut oai_messages, &request.model);
+
+        // Guard: an empty message list would produce an unparseable API response
+        // (typically "EOF while parsing a value at line 1 column 0").
+        if oai_messages.is_empty() {
+            return Err(LlmError::Api {
+                status: 0,
+                message: "Cannot send request with no messages — \
+                          this usually means aggressive history trimming emptied \
+                          the conversation"
+                    .to_string(),
+                code: None,
+            });
+        }
+
+        let tool_choice = if oai_tools.is_empty() {
+            None
+        } else {
+            Some(serde_json::json!("auto"))
+        };
+
+        let (mt, mct) = if uses_completion_tokens(&request.model) {
+            (None, Some(request.max_tokens))
+        } else {
+            (Some(request.max_tokens), None)
+        };
+
+        let extra_body = request.extra_body.clone();
+
+        Ok(OaiRequest {
+            model: request.model.clone(),
+            messages: oai_messages,
+            max_tokens: mt,
+            max_completion_tokens: mct,
+            temperature: if echo_policy == ReasoningEchoPolicy::EmptyString {
+                // Kimi (EmptyString policy) with thinking disabled uses fixed
+                // 0.6 for multi-turn compatibility.
+                Some(0.6)
+            } else if temperature_must_be_one(&request.model) {
+                Some(1.0)
+            } else if rejects_temperature(&request.model) {
+                None
+            } else {
+                Some(request.temperature)
+            },
+            tools: oai_tools,
+            tool_choice,
+            stream: false,
+            stream_options: None,
+            // EmptyString policy disables thinking wire-side so multi-turn
+            // tool_calls don't require carrying back full reasoning_content.
+            thinking: if echo_policy == ReasoningEchoPolicy::EmptyString {
+                Some(serde_json::json!({"type": "disabled"}))
+            } else {
+                None
+            },
+            response_format: request
+                .response_format
+                .as_ref()
+                .and_then(oai_response_format),
+            extra_body,
+        })
+    }
+}
+
+#[async_trait]
+impl LlmDriver for OpenAIDriver {
+    #[tracing::instrument(
+        name = "llm.complete",
+        skip_all,
+        fields(provider = "openai", model = %request.model)
+    )]
+    async fn complete(
+        &self,
+        mut request: CompletionRequest,
+    ) -> Result<CompletionResponse, LlmError> {
+        // Moonshot/Kimi: upload images/files via /v1/files before building request
+        if self.is_moonshot() {
+            self.preprocess_moonshot_files(&mut request).await?;
+        }
+        let mut oai_request = self.build_request(&request)?;
+
+        // Cross-process / cross-restart rate-limit guard. A previously
+        // recorded 429 short-circuits before any HTTP work.
+        let guard_provider = self.shared_guard_provider();
+        let guard_key_id = self.shared_guard_key_id();
+        crate::shared_rate_guard::pre_request_check(guard_provider, &guard_key_id, "OpenAI")?;
+
+        // Configurable in-driver retry cap (#10); default 3.
+        let max_retries = self.max_retries;
+        for attempt in 0..=max_retries {
+            let url = match &self.url_query {
+                Some(q) => format!("{}/chat/completions?{}", self.base_url, q),
+                None => format!("{}/chat/completions", self.base_url),
+            };
+            debug!(url = %url, attempt, "Sending OpenAI API request");
+
+            // Serialize to Value, then merge extra_body so extra params
+            // override any standard field with the same name.
+            let mut body =
+                serde_json::to_value(&oai_request).map_err(|e| LlmError::Http(e.to_string()))?;
+            merge_extra_body(&oai_request.extra_body, &mut body);
+
+            let mut req_builder = self
+                .client
+                .post(&url)
+                .header("content-type", "application/json")
+                .json(&body);
+
+            if !self.api_key.as_str().is_empty() {
+                if self.use_api_key_header {
+                    req_builder = req_builder.header("api-key", self.api_key.as_str());
+                } else {
+                    req_builder = req_builder
+                        .header("authorization", format!("Bearer {}", self.api_key.as_str()));
+                }
+            }
+            // Merge driver-level extra_headers with per-request caller-identity
+            // (`x-librefang-*`) trace headers into a single HeaderMap. The
+            // helper enforces validation (\r/\n/NUL → warn+skip) and gives
+            // trace headers `insert` precedence so they replace any
+            // same-named entries from `extra_headers` instead of duplicating
+            // on the wire. See `build_custom_header_map` doc-comment.
+            req_builder = req_builder.headers(build_custom_header_map(
+                &self.extra_headers,
+                &request,
+                self.emit_caller_trace_headers,
+            ));
+            // Per-request timeout takes priority; fall back to driver-level config,
+            // then a 300 s default so the daemon never waits indefinitely.
+            let timeout_secs = request
+                .timeout_secs
+                .or(self.request_timeout_secs)
+                .unwrap_or(300);
+            req_builder = req_builder.timeout(std::time::Duration::from_secs(timeout_secs));
+
+            // #10: route transport-layer errors (connection refused, TLS,
+            // read timeout) through the same attempt/backoff decision as 429
+            // instead of returning immediately via `?`, so a single network
+            // hiccup on the only configured provider no longer fails the turn.
+            let resp = match req_builder.send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    if attempt < max_retries && crate::backoff::transport_error_is_retryable(&e) {
+                        let delay = standard_retry_delay(attempt + 1, std::time::Duration::ZERO);
+                        warn!(
+                            error = %e,
+                            delay_ms = delay.as_millis(),
+                            "Transport error, retrying"
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return Err(LlmError::Http(e.to_string()));
+                }
+            };
+
+            let status = resp.status().as_u16();
+            if status == 429 {
+                // Persist the lockout (honors RPH > RPM > retry-after >
+                // 5min default precedence) and reuse the parsed
+                // retry-after for the in-process backoff.
+                let retry_after = crate::shared_rate_guard::record_429_from_headers(
+                    guard_provider,
+                    &guard_key_id,
+                    resp.headers(),
+                    &format!("HTTP 429 from {}", self.base_url),
+                );
+                if attempt < max_retries {
+                    let delay = standard_retry_delay(attempt + 1, retry_after);
+                    warn!(
+                        status,
+                        delay_ms = delay.as_millis(),
+                        "Rate limited, retrying"
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(LlmError::RateLimited {
+                    retry_after_ms: retry_after.as_millis().min(u64::MAX as u128) as u64,
+                    message: None,
+                });
+            }
+
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+
+                // Groq "tool_use_failed": model generated tool call in XML format.
+                // Parse the failed_generation and convert to a proper tool call response.
+                if status == 400 && body.contains("tool_use_failed") {
+                    if let Some(response) = parse_groq_failed_tool_call(&body) {
+                        warn!("Recovered tool call from Groq failed_generation");
+                        return Ok(response);
+                    }
+                    // If parsing fails, retry on next attempt
+                    if attempt < max_retries {
+                        let delay = tool_use_retry_delay(attempt + 1);
+                        warn!(
+                            status,
+                            attempt,
+                            delay_ms = delay.as_millis(),
+                            "tool_use_failed, retrying"
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                }
+
+                // o-series / reasoning models: strip temperature if rejected
+                if status == 400
+                    && body.contains("temperature")
+                    && body.contains("unsupported_parameter")
+                    && oai_request.temperature.is_some()
+                    && attempt < max_retries
+                {
+                    warn!(model = %oai_request.model, "Stripping temperature for this model");
+                    oai_request.temperature = None;
+                    // Small backoff before retrying so we don't tight-loop on a
+                    // misconfigured request (100 ms × attempt, max ~300 ms).
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt as u64 + 1),
+                    ))
+                    .await;
+                    continue;
+                }
+
+                // GPT-5 / o-series: switch from max_tokens to max_completion_tokens.
+                // Add a small backoff to avoid a tight retry loop (#3758).
+                if status == 400
+                    && body.contains("max_tokens")
+                    && (body.contains("unsupported_parameter")
+                        || body.contains("max_completion_tokens"))
+                    && oai_request.max_tokens.is_some()
+                    && attempt < max_retries
+                {
+                    let val = oai_request.max_tokens.unwrap();
+                    warn!(model = %oai_request.model, "Switching to max_completion_tokens for this model");
+                    oai_request.max_tokens = None;
+                    oai_request.max_completion_tokens = Some(val);
+                    // Backoff before retry: 100 ms × attempt number (capped by max_retries=3
+                    // so the total extra wait is at most ~300 ms per switch attempt).
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt as u64 + 1),
+                    ))
+                    .await;
+                    continue;
+                }
+
+                // Auto-cap max_tokens when model rejects our value (e.g. Groq Maverick limit 8192)
+                if status == 400 && body.contains("max_tokens") && attempt < max_retries {
+                    let current = oai_request
+                        .max_tokens
+                        .or(oai_request.max_completion_tokens)
+                        .unwrap_or(4096);
+                    let cap = extract_max_tokens_limit(&body).unwrap_or(current / 2);
+                    warn!(
+                        old = current,
+                        new = cap,
+                        "Auto-capping max_tokens to model limit"
+                    );
+                    if oai_request.max_completion_tokens.is_some() {
+                        oai_request.max_completion_tokens = Some(cap);
+                    } else {
+                        oai_request.max_tokens = Some(cap);
+                    }
+                    // Small backoff to prevent a tight retry loop.
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt as u64 + 1),
+                    ))
+                    .await;
+                    continue;
+                }
+
+                // Model doesn't support function calling — retry without tools
+                // (e.g. GLM-5 on DashScope returns 500 "internal error" when tools are sent)
+                let body_lower = body.to_lowercase();
+                if !oai_request.tools.is_empty()
+                    && attempt < max_retries
+                    && (status == 500
+                        || body_lower.contains("internal error")
+                        || (status == 400
+                            && (body_lower.contains("does not support tools")
+                                || body_lower.contains("tool")
+                                    && body_lower.contains("not supported"))))
+                {
+                    warn!(
+                        model = %oai_request.model,
+                        status,
+                        "Model may not support tools, retrying without tools"
+                    );
+                    oai_request.tools.clear();
+                    oai_request.tool_choice = None;
+                    // Small backoff to prevent a tight retry loop.
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt as u64 + 1),
+                    ))
+                    .await;
+                    continue;
+                }
+
+                return Err(LlmError::Api {
+                    status,
+                    message: body,
+                    code: None,
+                });
+            }
+
+            // Extract and log rate limit headers before consuming the response body.
+            if let Some(snap) = RateLimitSnapshot::from_headers(resp.headers()) {
+                if snap.has_warning() {
+                    warn!(
+                        target: "librefang::rate_limit",
+                        "OpenAI-compatible rate limit warning:\n{}",
+                        snap.display()
+                    );
+                } else {
+                    debug!(
+                        target: "librefang::rate_limit",
+                        "OpenAI-compatible rate limits OK:\n{}",
+                        snap.display()
+                    );
+                }
+            }
+
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| LlmError::Http(e.to_string()))?;
+            let raw_json: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| LlmError::Parse(e.to_string()))?;
+            let cached_prompt_tokens = raw_json
+                .get("usage")
+                .and_then(|u| u.get("prompt_tokens_details"))
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(|v| v.as_u64());
+            let oai_response: OaiResponse =
+                serde_json::from_value(raw_json).map_err(|e| LlmError::Parse(e.to_string()))?;
+
+            let choice = oai_response
+                .choices
+                .into_iter()
+                .next()
+                .ok_or_else(|| LlmError::Parse("No choices in response".to_string()))?;
+
+            let mut content = Vec::new();
+            let mut tool_calls = Vec::new();
+
+            // Capture reasoning_content from models that use a separate field
+            // (DeepSeek-R1, Qwen3, etc. via LM Studio/Ollama)
+            if let Some(ref reasoning) = choice.message.reasoning_content {
+                if !reasoning.is_empty() {
+                    debug!(
+                        len = reasoning.len(),
+                        "Captured reasoning_content from response"
+                    );
+                    content.push(ContentBlock::Thinking {
+                        thinking: reasoning.clone(),
+                        provider_metadata: None,
+                    });
+                }
+            }
+
+            if let Some(text) = choice.message.content {
+                if !text.is_empty() {
+                    // Extract <think>...</think> blocks that some local models
+                    // embed directly in the content field.
+                    let (cleaned, thinking) = extract_think_tags(&text);
+                    if let Some(think_text) = thinking {
+                        // Only add if we didn't already get reasoning_content
+                        if choice.message.reasoning_content.is_none() {
+                            content.push(ContentBlock::Thinking {
+                                thinking: think_text,
+                                provider_metadata: None,
+                            });
+                        }
+                    }
+                    if !cleaned.is_empty() {
+                        content.push(ContentBlock::Text {
+                            text: cleaned,
+                            provider_metadata: None,
+                        });
+                    }
+                }
+            }
+
+            // If we have reasoning but no text content and no tool calls,
+            // synthesize a brief text block so the agent loop doesn't treat
+            // this as an empty response.
+            let has_text = content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { .. }));
+            let has_thinking = content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Thinking { .. }));
+            if has_thinking && !has_text && choice.message.tool_calls.is_none() {
+                // Extract the last sentence or line from the thinking as a response
+                let thinking_text = content
+                    .iter()
+                    .find_map(|b| match b {
+                        ContentBlock::Thinking { thinking, .. } => Some(thinking.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("");
+                let summary = extract_thinking_summary(thinking_text);
+                debug!(
+                    summary_len = summary.len(),
+                    "Synthesizing text from thinking-only response"
+                );
+                content.push(ContentBlock::Text {
+                    text: summary,
+                    provider_metadata: None,
+                });
+            }
+
+            if let Some(calls) = choice.message.tool_calls {
+                for call in calls {
+                    let input: serde_json::Value = match parse_tool_args(&call.function.arguments) {
+                        Ok(v) => ensure_object(v),
+                        Err(e) => {
+                            tracing::warn!(
+                                tool = %call.function.name,
+                                raw_args_len = call.function.arguments.len(),
+                                error = %e,
+                                "Malformed tool call arguments from LLM"
+                            );
+                            malformed_tool_input(&e, call.function.arguments.len())
+                        }
+                    };
+                    content.push(ContentBlock::ToolUse {
+                        id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        input: input.clone(),
+                        provider_metadata: None,
+                    });
+                    tool_calls.push(ToolCall {
+                        id: call.id,
+                        name: call.function.name,
+                        input,
+                    });
+                }
+            }
+
+            let stop_reason =
+                map_oai_finish_reason(choice.finish_reason.as_deref(), !tool_calls.is_empty());
+
+            let usage = oai_response
+                .usage
+                .map(|u| {
+                    // Single source of truth shared with the streaming path
+                    // (see #3449). The metering layer already discounts
+                    // `cache_read_input_tokens` to 10% of the input rate,
+                    // which matches DeepSeek's published 1/10 cache pricing.
+                    let nested = u
+                        .prompt_tokens_details
+                        .as_ref()
+                        .map(|d| d.cached_tokens)
+                        .unwrap_or(0);
+                    TokenUsage {
+                        input_tokens: u.prompt_tokens,
+                        output_tokens: u.completion_tokens,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: pick_cache_read_tokens(
+                            nested,
+                            u.prompt_cache_hit_tokens,
+                        ),
+                    }
+                })
+                .unwrap_or_default();
+
+            // Note: if the model returned content but usage is missing/zero
+            // (common with local LLMs like LM Studio, Ollama), we leave
+            // output_tokens as 0 to accurately reflect unknown usage rather
+            // than reporting a fake count that would corrupt cost tracking.
+
+            debug!(
+                prompt_tokens = usage.input_tokens,
+                completion_tokens = usage.output_tokens,
+                cached_prompt_tokens = cached_prompt_tokens.unwrap_or(0),
+                "OpenAI-compatible usage"
+            );
+
+            return Ok(CompletionResponse {
+                content,
+                stop_reason,
+                tool_calls,
+                usage,
+                actual_provider: None,
+                actual_model: None,
+            });
+        }
+
+        Err(LlmError::Api {
+            status: 0,
+            message: "Max retries exceeded".to_string(),
+            code: None,
+        })
+    }
+
+    #[tracing::instrument(
+        name = "llm.stream",
+        skip_all,
+        fields(provider = "openai", model = %request.model)
+    )]
+    async fn stream(
+        &self,
+        mut request: CompletionRequest,
+        tx: tokio::sync::mpsc::Sender<StreamEvent>,
+    ) -> Result<CompletionResponse, LlmError> {
+        // Moonshot/Kimi: upload images/files via /v1/files before building request
+        if self.is_moonshot() {
+            self.preprocess_moonshot_files(&mut request).await?;
+        }
+        let mut oai_request = self.build_request(&request)?;
+        oai_request.stream = true;
+        oai_request.stream_options = Some(serde_json::json!({"include_usage": true}));
+
+        // Cross-process / cross-restart rate-limit guard (streaming path).
+        let guard_provider = self.shared_guard_provider();
+        let guard_key_id = self.shared_guard_key_id();
+        crate::shared_rate_guard::pre_request_check(
+            guard_provider,
+            &guard_key_id,
+            "OpenAI streaming",
+        )?;
+
+        // Retry loop for the initial HTTP request
+        // Configurable in-driver retry cap (#10); default 3.
+        let max_retries = self.max_retries;
+        for attempt in 0..=max_retries {
+            let url = match &self.url_query {
+                Some(q) => format!("{}/chat/completions?{}", self.base_url, q),
+                None => format!("{}/chat/completions", self.base_url),
+            };
+            debug!(url = %url, attempt, "Sending OpenAI streaming request");
+
+            // Serialize to Value, then merge extra_body so extra params
+            // override any standard field with the same name.
+            let mut body =
+                serde_json::to_value(&oai_request).map_err(|e| LlmError::Http(e.to_string()))?;
+            merge_extra_body(&oai_request.extra_body, &mut body);
+
+            let mut req_builder = self
+                .client
+                .post(&url)
+                .header("content-type", "application/json")
+                .json(&body);
+
+            if !self.api_key.as_str().is_empty() {
+                if self.use_api_key_header {
+                    req_builder = req_builder.header("api-key", self.api_key.as_str());
+                } else {
+                    req_builder = req_builder
+                        .header("authorization", format!("Bearer {}", self.api_key.as_str()));
+                }
+            }
+            // Merge driver-level extra_headers with per-request caller-identity
+            // (`x-librefang-*`) trace headers into a single HeaderMap. Mirror
+            // of the non-streaming path; see `build_custom_header_map` for
+            // validation and precedence semantics.
+            req_builder = req_builder.headers(build_custom_header_map(
+                &self.extra_headers,
+                &request,
+                self.emit_caller_trace_headers,
+            ));
+            // Per-request timeout takes priority; fall back to driver-level config,
+            // then a 300 s default so the daemon never waits indefinitely.
+            let timeout_secs = request
+                .timeout_secs
+                .or(self.request_timeout_secs)
+                .unwrap_or(300);
+            req_builder = req_builder.timeout(std::time::Duration::from_secs(timeout_secs));
+
+            // #10: route transport-layer errors (connection refused, TLS,
+            // read timeout) through the same attempt/backoff decision as 429
+            // instead of returning immediately via `?`, so a single network
+            // hiccup on the only configured provider no longer fails the turn.
+            let resp = match req_builder.send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    if attempt < max_retries && crate::backoff::transport_error_is_retryable(&e) {
+                        let delay = standard_retry_delay(attempt + 1, std::time::Duration::ZERO);
+                        warn!(
+                            error = %e,
+                            delay_ms = delay.as_millis(),
+                            "Transport error, retrying"
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return Err(LlmError::Http(e.to_string()));
+                }
+            };
+
+            let status = resp.status().as_u16();
+            if status == 429 {
+                let retry_after = crate::shared_rate_guard::record_429_from_headers(
+                    guard_provider,
+                    &guard_key_id,
+                    resp.headers(),
+                    &format!("HTTP 429 (stream) from {}", self.base_url),
+                );
+                if attempt < max_retries {
+                    let delay = standard_retry_delay(attempt + 1, retry_after);
+                    warn!(
+                        status,
+                        delay_ms = delay.as_millis(),
+                        "Rate limited (stream), retrying"
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(LlmError::RateLimited {
+                    retry_after_ms: retry_after.as_millis().min(u64::MAX as u128) as u64,
+                    message: None,
+                });
+            }
+
+            if !resp.status().is_success() {
+                let body = resp.text().await.unwrap_or_default();
+
+                // Groq "tool_use_failed": parse and recover (streaming path)
+                if status == 400 && body.contains("tool_use_failed") {
+                    if let Some(response) = parse_groq_failed_tool_call(&body) {
+                        warn!("Recovered tool call from Groq failed_generation (stream)");
+                        return Ok(response);
+                    }
+                    if attempt < max_retries {
+                        let delay = tool_use_retry_delay(attempt + 1);
+                        warn!(
+                            status,
+                            attempt,
+                            delay_ms = delay.as_millis(),
+                            "tool_use_failed (stream), retrying"
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                }
+
+                // o-series / reasoning models: strip temperature if rejected
+                if status == 400
+                    && body.contains("temperature")
+                    && body.contains("unsupported_parameter")
+                    && oai_request.temperature.is_some()
+                    && attempt < max_retries
+                {
+                    warn!(model = %oai_request.model, "Stripping temperature for this model (stream)");
+                    oai_request.temperature = None;
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt + 1) as u64,
+                    ))
+                    .await;
+                    continue;
+                }
+
+                // GPT-5 / o-series: switch from max_tokens to max_completion_tokens.
+                // Add a small backoff to avoid a tight retry loop (#3758).
+                if status == 400
+                    && body.contains("max_tokens")
+                    && (body.contains("unsupported_parameter")
+                        || body.contains("max_completion_tokens"))
+                    && oai_request.max_tokens.is_some()
+                    && attempt < max_retries
+                {
+                    let val = oai_request.max_tokens.unwrap();
+                    warn!(model = %oai_request.model, "Switching to max_completion_tokens for this model (stream)");
+                    oai_request.max_tokens = None;
+                    oai_request.max_completion_tokens = Some(val);
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt as u64 + 1),
+                    ))
+                    .await;
+                    continue;
+                }
+
+                // Auto-cap max_tokens when model rejects our value (#3758: add backoff).
+                if status == 400 && body.contains("max_tokens") && attempt < max_retries {
+                    let current = oai_request
+                        .max_tokens
+                        .or(oai_request.max_completion_tokens)
+                        .unwrap_or(4096);
+                    let cap = extract_max_tokens_limit(&body).unwrap_or(current / 2);
+                    warn!(old = current, new = cap, "Auto-capping max_tokens (stream)");
+                    if oai_request.max_completion_tokens.is_some() {
+                        oai_request.max_completion_tokens = Some(cap);
+                    } else {
+                        oai_request.max_tokens = Some(cap);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt as u64 + 1),
+                    ))
+                    .await;
+                    continue;
+                }
+
+                // Provider doesn't support stream_options — retry without it
+                if status == 400
+                    && oai_request.stream_options.is_some()
+                    && attempt < max_retries
+                    && (body.contains("stream_options")
+                        || body.contains("stream_option")
+                        || body.contains("Unrecognized request argument"))
+                {
+                    warn!(model = %oai_request.model, "Stripping stream_options (unsupported by provider)");
+                    oai_request.stream_options = None;
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt + 1) as u64,
+                    ))
+                    .await;
+                    continue;
+                }
+
+                // Model doesn't support function calling — retry without tools
+                let body_lower = body.to_lowercase();
+                if !oai_request.tools.is_empty()
+                    && attempt < max_retries
+                    && (status == 500
+                        || body_lower.contains("internal error")
+                        || (status == 400
+                            && (body_lower.contains("does not support tools")
+                                || body_lower.contains("tool")
+                                    && body_lower.contains("not supported"))))
+                {
+                    warn!(
+                        model = %oai_request.model,
+                        status,
+                        "Model may not support tools (stream), retrying without tools"
+                    );
+                    oai_request.tools.clear();
+                    oai_request.tool_choice = None;
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt + 1) as u64,
+                    ))
+                    .await;
+                    continue;
+                }
+
+                return Err(LlmError::Api {
+                    status,
+                    message: body,
+                    code: None,
+                });
+            }
+
+            // Extract and log rate limit headers before consuming the stream.
+            if let Some(snap) = RateLimitSnapshot::from_headers(resp.headers()) {
+                if snap.has_warning() {
+                    warn!(
+                        target: "librefang::rate_limit",
+                        "OpenAI-compatible rate limit warning (stream):\n{}",
+                        snap.display()
+                    );
+                } else {
+                    debug!(
+                        target: "librefang::rate_limit",
+                        "OpenAI-compatible rate limits OK (stream):\n{}",
+                        snap.display()
+                    );
+                }
+            }
+
+            // Parse the SSE stream
+            let mut buffer = String::new();
+            let mut text_content = String::new();
+            let mut reasoning_content = String::new();
+            // Filter <think>...</think> tags from streaming text deltas so they
+            // don't leak through to the client as visible text.
+            let mut think_filter = StreamingThinkFilter::new();
+            // Track tool calls: index -> (id, name, arguments)
+            let mut tool_accum: Vec<(String, String, String)> = Vec::new();
+            let mut finish_reason: Option<String> = None;
+            let mut usage = TokenUsage::default();
+            let mut cached_prompt_tokens: u64 = 0;
+            let mut chunk_count: u32 = 0;
+            let mut sse_line_count: u32 = 0;
+            let mut receiver_dropped = false;
+            // Buffers partial UTF-8 codepoints across chunk boundaries (#3448).
+            let mut utf8 = crate::utf8_stream::Utf8StreamDecoder::new();
+
+            let mut byte_stream = resp.bytes_stream();
+            while let Some(chunk_result) = byte_stream.next().await {
+                if receiver_dropped {
+                    tracing::debug!(
+                        "streaming receiver dropped; cancelling OpenAI-compatible LLM stream"
+                    );
+                    break;
+                }
+                let chunk = chunk_result.map_err(|e| LlmError::Http(e.to_string()))?;
+                chunk_count += 1;
+                buffer.push_str(&utf8.decode(&chunk));
+
+                // Process complete lines
+                while let Some(pos) = buffer.find('\n') {
+                    let line = buffer[..pos].trim_end().to_string();
+                    buffer = buffer[pos + 1..].to_string();
+
+                    if line.is_empty() || line.starts_with(':') {
+                        continue;
+                    }
+
+                    sse_line_count += 1;
+                    let data = match line.strip_prefix("data:") {
+                        Some(d) => d.trim_start(),
+                        None => continue,
+                    };
+
+                    if data == "[DONE]" {
+                        continue;
+                    }
+
+                    let json: serde_json::Value = match serde_json::from_str(data) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+
+                    // Extract usage if present (some providers send it in the last chunk)
+                    if let Some(u) = json.get("usage") {
+                        if let Some(pt) = u["prompt_tokens"].as_u64() {
+                            usage.input_tokens = pt;
+                        }
+                        // Cache-read accounting goes through the same helper
+                        // as the non-stream path so the two cannot diverge
+                        // when a new provider adds a third shape (#3449).
+                        let nested = u
+                            .get("prompt_tokens_details")
+                            .and_then(|d| d.get("cached_tokens"))
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let deepseek = u
+                            .get("prompt_cache_hit_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let cached = pick_cache_read_tokens(nested, deepseek);
+                        if cached > 0 {
+                            usage.cache_read_input_tokens = cached;
+                            cached_prompt_tokens = cached;
+                        }
+                        if let Some(ct) = u["completion_tokens"].as_u64() {
+                            usage.output_tokens = ct;
+                        }
+                    }
+
+                    let choices = match json["choices"].as_array() {
+                        Some(c) => c,
+                        None => continue,
+                    };
+
+                    for choice in choices {
+                        let delta = &choice["delta"];
+
+                        // Text content delta — route through think filter to
+                        // strip <think>...</think> tags before they reach the client.
+                        // Skip content when tool_calls are present in the same delta —
+                        // some providers (e.g. kimi-k2 via nvidia-nim) echo tool call
+                        // text in the content field, which would leak raw tool syntax
+                        // to the user.
+                        let has_tool_calls = delta["tool_calls"].is_array();
+                        if let Some(text) = delta["content"].as_str() {
+                            if !text.is_empty() && !has_tool_calls {
+                                text_content.push_str(text);
+                                for action in think_filter.process(text) {
+                                    match action {
+                                        FilterAction::EmitText(t) => {
+                                            if tx
+                                                .send(StreamEvent::TextDelta { text: t })
+                                                .await
+                                                .is_err()
+                                            {
+                                                receiver_dropped = true;
+                                            }
+                                        }
+                                        FilterAction::EmitThinking(t) => {
+                                            // Route think content the same way as
+                                            // reasoning_content deltas.
+                                            if tx
+                                                .send(StreamEvent::ThinkingDelta { text: t })
+                                                .await
+                                                .is_err()
+                                            {
+                                                receiver_dropped = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Reasoning/thinking content delta (DeepSeek-R1 via official API or local servers, Qwen3, etc.)
+                        if let Some(reasoning) = delta["reasoning_content"].as_str() {
+                            if !reasoning.is_empty() {
+                                reasoning_content.push_str(reasoning);
+                                if tx
+                                    .send(StreamEvent::ThinkingDelta {
+                                        text: reasoning.to_string(),
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    receiver_dropped = true;
+                                }
+                            }
+                        } else if let Some(reasoning) = delta["reasoning"].as_str() {
+                            // Fallback: Ollama and some local servers expose the reasoning
+                            // field instead of reasoning_content.
+                            if !reasoning.is_empty() {
+                                reasoning_content.push_str(reasoning);
+                                if tx
+                                    .send(StreamEvent::ThinkingDelta {
+                                        text: reasoning.to_string(),
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    receiver_dropped = true;
+                                }
+                            }
+                        }
+
+                        // Tool call deltas
+                        if let Some(calls) = delta["tool_calls"].as_array() {
+                            for call in calls {
+                                let idx = call["index"].as_u64().unwrap_or(0) as usize;
+                                if idx >= MAX_STREAMED_TOOL_CALLS {
+                                    warn!(
+                                        index = idx,
+                                        "Ignoring tool_call delta with out-of-range index"
+                                    );
+                                    continue;
+                                }
+
+                                // Ensure tool_accum has enough entries
+                                while tool_accum.len() <= idx {
+                                    tool_accum.push((String::new(), String::new(), String::new()));
+                                }
+
+                                // ID (sent in first chunk for this tool)
+                                if let Some(id) = call["id"].as_str() {
+                                    tool_accum[idx].0 = id.to_string();
+                                }
+
+                                if let Some(func) = call.get("function") {
+                                    // Name (sent in first chunk)
+                                    if let Some(name) = func["name"].as_str() {
+                                        tool_accum[idx].1 = name.to_string();
+                                        if tx
+                                            .send(StreamEvent::ToolUseStart {
+                                                id: tool_accum[idx].0.clone(),
+                                                name: name.to_string(),
+                                            })
+                                            .await
+                                            .is_err()
+                                        {
+                                            receiver_dropped = true;
+                                        }
+                                    }
+
+                                    // Arguments delta
+                                    if let Some(args) = func["arguments"].as_str() {
+                                        tool_accum[idx].2.push_str(args);
+                                        if !args.is_empty()
+                                            && tx
+                                                .send(StreamEvent::ToolInputDelta {
+                                                    text: args.to_string(),
+                                                })
+                                                .await
+                                                .is_err()
+                                        {
+                                            receiver_dropped = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Finish reason
+                        if let Some(fr) = choice["finish_reason"].as_str() {
+                            finish_reason = Some(fr.to_string());
+                        }
+                    }
+                }
+            }
+
+            // Drain any partial codepoint left in the decoder. In a clean
+            // stream this is a no-op; only matters when the connection
+            // was truncated mid-codepoint, in which case the trailing
+            // bytes surface as U+FFFD instead of vanishing (#3448).
+            buffer.push_str(&utf8.finish());
+
+            // Flush any remaining buffered content from the think filter
+            // (e.g. partial tag at stream end, or unclosed think block).
+            // The receiver may have already disconnected mid-stream; if so we
+            // skip the flush. We don't update `receiver_dropped` again here
+            // because nothing after this block reads it.
+            if !receiver_dropped {
+                for action in think_filter.flush() {
+                    match action {
+                        FilterAction::EmitText(t) => {
+                            if tx.send(StreamEvent::TextDelta { text: t }).await.is_err() {
+                                break;
+                            }
+                        }
+                        FilterAction::EmitThinking(t) => {
+                            if tx
+                                .send(StreamEvent::ThinkingDelta { text: t })
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Log stream summary for diagnostics
+            let is_empty_stream = text_content.is_empty()
+                && reasoning_content.is_empty()
+                && tool_accum.is_empty()
+                && usage.input_tokens == 0
+                && usage.output_tokens == 0;
+            if is_empty_stream {
+                warn!(
+                    chunks = chunk_count,
+                    sse_lines = sse_line_count,
+                    finish = ?finish_reason,
+                    buffer_remaining = buffer.len(),
+                    "SSE stream returned empty: 0 content, 0 tokens — likely a silently failed request"
+                );
+            } else {
+                debug!(
+                    chunks = chunk_count,
+                    sse_lines = sse_line_count,
+                    text_len = text_content.len(),
+                    reasoning_len = reasoning_content.len(),
+                    tool_count = tool_accum.len(),
+                    finish = ?finish_reason,
+                    input_tokens = usage.input_tokens,
+                    output_tokens = usage.output_tokens,
+                    buffer_remaining = buffer.len(),
+                    "SSE stream completed"
+                );
+            }
+
+            // Build the final response
+            let mut content = Vec::new();
+            let mut tool_calls = Vec::new();
+
+            // Add reasoning/thinking content if present
+            if !reasoning_content.is_empty() {
+                content.push(ContentBlock::Thinking {
+                    thinking: reasoning_content.clone(),
+                    provider_metadata: None,
+                });
+            }
+
+            if !text_content.is_empty() {
+                // Extract <think>...</think> blocks from streamed text content
+                let (cleaned, thinking) = extract_think_tags(&text_content);
+                if let Some(think_text) = thinking {
+                    // Only add if we didn't already get reasoning_content
+                    if reasoning_content.is_empty() {
+                        content.push(ContentBlock::Thinking {
+                            thinking: think_text,
+                            provider_metadata: None,
+                        });
+                    }
+                }
+                if !cleaned.is_empty() {
+                    content.push(ContentBlock::Text {
+                        text: cleaned,
+                        provider_metadata: None,
+                    });
+                }
+            }
+
+            // If we have reasoning but no text content and no tool calls,
+            // synthesize a brief text block so the agent loop doesn't treat
+            // this as an empty response.
+            let has_text = content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { .. }));
+            let has_thinking = content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Thinking { .. }));
+            if has_thinking && !has_text && tool_accum.is_empty() {
+                let thinking_text = content
+                    .iter()
+                    .find_map(|b| match b {
+                        ContentBlock::Thinking { thinking, .. } => Some(thinking.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("");
+                let summary = extract_thinking_summary(thinking_text);
+                debug!(
+                    summary_len = summary.len(),
+                    "Synthesizing text from thinking-only stream response"
+                );
+                content.push(ContentBlock::Text {
+                    text: summary,
+                    provider_metadata: None,
+                });
+            }
+
+            for (id, name, arguments) in &tool_accum {
+                // Skip malformed tool calls (empty ID or name can happen if
+                // streaming chunks arrive out of order or are dropped by proxy,
+                // e.g. the GitHub Copilot proxy occasionally drops the function
+                // name chunk). Replaying these to the API yields
+                // "tool call must have a tool call ID and function name" errors.
+                if id.is_empty() || name.is_empty() {
+                    warn!(
+                        tool_id = %id,
+                        tool_name = %name,
+                        "Skipping tool call with empty ID or name from streaming response"
+                    );
+                    continue;
+                }
+                let input: serde_json::Value = match parse_tool_args(arguments) {
+                    Ok(v) => ensure_object(v),
+                    Err(e) => {
+                        tracing::warn!(
+                            tool = %name,
+                            raw_args_len = arguments.len(),
+                            error = %e,
+                            "Malformed tool call arguments from LLM stream"
+                        );
+                        malformed_tool_input(&e, arguments.len())
+                    }
+                };
+                content.push(ContentBlock::ToolUse {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                    provider_metadata: None,
+                });
+                tool_calls.push(ToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                    input: input.clone(),
+                });
+
+                // Receiver-drop here is non-recoverable but we still build the
+                // final response below so the caller (if present) gets it.
+                let _ = tx
+                    .send(StreamEvent::ToolUseEnd {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input,
+                    })
+                    .await;
+            }
+
+            // If the upstream said "tool_calls" but we filtered them all
+            // out (e.g. Copilot proxy dropped function-name chunks),
+            // downgrade to EndTurn so the agent loop doesn't stage an
+            // empty tool-use turn that nothing can execute. This is
+            // streaming-specific — the non-stream path already filters
+            // earlier — so it stays out of `map_oai_finish_reason`.
+            let raw_finish = finish_reason.as_deref();
+            let stop_reason = if matches!(raw_finish, Some("tool_calls")) && tool_calls.is_empty() {
+                StopReason::EndTurn
+            } else {
+                map_oai_finish_reason(raw_finish, !tool_calls.is_empty())
+            };
+
+            debug!(
+                prompt_tokens = usage.input_tokens,
+                completion_tokens = usage.output_tokens,
+                cached_prompt_tokens,
+                "OpenAI-compatible usage (stream)"
+            );
+
+            // Best-effort: send ContentComplete even if the receiver dropped
+            // mid-stream — the caller still needs the usage data to update
+            // cost tracking.
+            let _ = tx
+                .send(StreamEvent::ContentComplete { stop_reason, usage })
+                .await;
+
+            return Ok(CompletionResponse {
+                content,
+                stop_reason,
+                tool_calls,
+                usage,
+                actual_provider: None,
+                actual_model: None,
+            });
+        }
+
+        Err(LlmError::Api {
+            status: 0,
+            message: "Max retries exceeded".to_string(),
+            code: None,
+        })
+    }
+
+    fn family(&self) -> crate::llm_driver::LlmFamily {
+        crate::llm_driver::LlmFamily::OpenAi
+    }
+}
+
+/// Extract `<think>...</think>` blocks from content text.
+///
+/// Some local LLMs (Qwen3, DeepSeek-R1) embed their reasoning directly in the
+/// content field wrapped in `<think>` tags. This function separates the thinking
+/// from the actual response text.
+///
+/// Returns `(cleaned_text, Option<thinking_text>)`.
+fn extract_think_tags(text: &str) -> (String, Option<String>) {
+    let mut thinking_parts = Vec::new();
+    let mut cleaned = text.to_string();
+
+    // Extract all <think>...</think> blocks (greedy within each block)
+    while let Some(start) = cleaned.find("<think>") {
+        if let Some(end) = cleaned.find("</think>") {
+            let think_start = start + "<think>".len();
+            if think_start <= end {
+                let thought = cleaned[think_start..end].trim().to_string();
+                if !thought.is_empty() {
+                    thinking_parts.push(thought);
+                }
+                // Remove the entire <think>...</think> block
+                cleaned = format!(
+                    "{}{}",
+                    &cleaned[..start],
+                    &cleaned[end + "</think>".len()..]
+                );
+            } else {
+                break;
+            }
+        } else {
+            // Unclosed <think> tag — treat everything after as thinking
+            let thought = cleaned[start + "<think>".len()..].trim().to_string();
+            if !thought.is_empty() {
+                thinking_parts.push(thought);
+            }
+            cleaned = cleaned[..start].to_string();
+            break;
+        }
+    }
+
+    let cleaned = cleaned.trim().to_string();
+    if thinking_parts.is_empty() {
+        (cleaned, None)
+    } else {
+        (cleaned, Some(thinking_parts.join("\n\n")))
+    }
+}
+
+/// Extract a usable summary from thinking-only output.
+///
+/// When a local model returns only thinking/reasoning with no actual response text,
+/// we extract the last meaningful paragraph as a synthesized response rather than
+/// showing "empty response" to the user.
+fn extract_thinking_summary(thinking: &str) -> String {
+    let trimmed = thinking.trim();
+    if trimmed.is_empty() {
+        return "[The model produced reasoning but no final answer. Try rephrasing your question.]"
+            .to_string();
+    }
+
+    // Take the last non-empty paragraph (models usually conclude with their answer)
+    let paragraphs: Vec<&str> = trimmed
+        .split("\n\n")
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    if let Some(last) = paragraphs.last() {
+        // If the last paragraph is reasonably short, use it directly
+        if last.len() <= 2000 {
+            last.to_string()
+        } else {
+            // Take the last ~2000 bytes, snapped to a char boundary. A raw
+            // byte index can land inside a multi-byte UTF-8 char (common for
+            // non-ASCII reasoning) and panic; advance to the next boundary.
+            let mut start = last.len() - 2000;
+            while start < last.len() && !last.is_char_boundary(start) {
+                start += 1;
+            }
+            last[start..].to_string()
+        }
+    } else {
+        "[The model produced reasoning but no final answer. Try rephrasing your question.]"
+            .to_string()
+    }
+}
+
+/// Parse Groq's `tool_use_failed` error and extract the tool call from `failed_generation`.
+/// Extract the max_tokens limit from an API error message.
+/// Looks for patterns like: `must be less than or equal to \`8192\``
+fn extract_max_tokens_limit(body: &str) -> Option<u32> {
+    // Pattern: "must be <= `N`" or "must be less than or equal to `N`"
+    let patterns = [
+        "less than or equal to `",
+        "must be <= `",
+        "maximum value for `max_tokens` is `",
+    ];
+    for pat in &patterns {
+        if let Some(idx) = body.find(pat) {
+            let after = &body[idx + pat.len()..];
+            let end = after
+                .find('`')
+                .or_else(|| after.find('"'))
+                .unwrap_or(after.len());
+            if let Ok(n) = after[..end].trim().parse::<u32>() {
+                return Some(n);
+            }
+        }
+    }
+    None
+}
+
+///
+/// Some models (e.g. Llama 3.3) generate tool calls as XML: `<function=NAME ARGS></function>`
+/// instead of the proper JSON format. Groq rejects these with `tool_use_failed` but includes
+/// the raw generation. We parse it and construct a proper CompletionResponse.
+fn parse_groq_failed_tool_call(body: &str) -> Option<CompletionResponse> {
+    let json_body: serde_json::Value = serde_json::from_str(body).ok()?;
+    let failed = json_body
+        .pointer("/error/failed_generation")
+        .and_then(|v| v.as_str())?;
+
+    // Parse all tool calls from the failed generation.
+    // Format: <function=tool_name{"arg":"val"}></function> or <function=tool_name {"arg":"val"}></function>
+    let mut tool_calls = Vec::new();
+    let mut remaining = failed;
+
+    while let Some(start) = remaining.find("<function=") {
+        remaining = &remaining[start + 10..]; // skip "<function="
+                                              // Find the end tag
+        let end = remaining.find("</function>")?;
+        let mut call_content = &remaining[..end];
+        remaining = &remaining[end + 11..]; // skip "</function>"
+
+        // Strip trailing ">" from the XML opening tag close
+        call_content = call_content.strip_suffix('>').unwrap_or(call_content);
+
+        // Split into name and args: "tool_name{"arg":"val"}" or "tool_name {"arg":"val"}"
+        let (name, args) = if let Some(brace_pos) = call_content.find('{') {
+            let name = call_content[..brace_pos].trim();
+            let args = &call_content[brace_pos..];
+            (name, args)
+        } else {
+            // No args — just a tool name
+            (call_content.trim(), "{}")
+        };
+
+        // Parse args as JSON Value
+        let args_value: serde_json::Value = match parse_tool_args(args) {
+            Ok(v) => ensure_object(v),
+            Err(e) => {
+                tracing::warn!(
+                    tool = %name,
+                    raw_args_len = args.len(),
+                    error = %e,
+                    "Malformed tool call arguments from Groq recovery"
+                );
+                malformed_tool_input(&e, args.len())
+            }
+        };
+
+        tool_calls.push(ToolCall {
+            id: format!("groq_recovered_{}", tool_calls.len()),
+            name: name.to_string(),
+            input: args_value,
+        });
+    }
+
+    if tool_calls.is_empty() {
+        // No tool calls found — the model generated plain text but Groq rejected it.
+        // Return it as a normal text response instead of failing.
+        if !failed.trim().is_empty() {
+            warn!("Recovering plain text from Groq failed_generation (no tool calls)");
+            return Some(CompletionResponse {
+                content: vec![ContentBlock::Text {
+                    text: failed.to_string(),
+                    provider_metadata: None,
+                }],
+                tool_calls: vec![],
+                stop_reason: StopReason::EndTurn,
+                usage: TokenUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    ..Default::default()
+                },
+                actual_provider: None,
+                actual_model: None,
+            });
+        }
+        return None;
+    }
+
+    Some(CompletionResponse {
+        content: vec![],
+        tool_calls,
+        stop_reason: StopReason::ToolUse,
+        usage: TokenUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            ..Default::default()
+        },
+        actual_provider: None,
+        actual_model: None,
+    })
+}
+
+/// Ensure a `serde_json::Value` is an object.  OpenAI-compatible APIs expect
+/// tool-call arguments to be a JSON object (`{}`), never `null`.
+///
+/// Handles several malformed-input scenarios that occur when models hallucinate
+/// or return non-standard tool calls:
+///
+/// - `null` → `{}`
+/// - A JSON string that parses as an object → use the parsed object
+/// - Any other type (string, number, array, bool) → `{"raw_input": <value>}`
+///   so the original value is preserved for debugging rather than silently lost.
+pub(crate) fn ensure_object(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::Object(_) => v,
+        serde_json::Value::Null => serde_json::json!({}),
+        serde_json::Value::String(ref s) => {
+            // The model may return a JSON-encoded string instead of a proper
+            // object — attempt to parse it.
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s) {
+                if parsed.is_object() {
+                    warn!("Tool input was a JSON string instead of an object, parsed successfully");
+                    return parsed;
+                }
+            }
+            warn!(value = %s, "Tool input was a non-parseable string, wrapping in raw_input");
+            serde_json::json!({"raw_input": v})
+        }
+        other => {
+            warn!(value = ?other, "Tool input was not an object, wrapping in raw_input");
+            serde_json::json!({"raw_input": other})
+        }
+    }
+}
+
+/// Parse tool call arguments that may have trailing non-JSON content.
+///
+/// Thinking models (DeepSeek-R1, Qwen 3.5, etc.) sometimes append reasoning
+/// tokens after the JSON object in the arguments buffer, producing strings like
+/// `{"query": "x"}\n\nI'll now search...`. `serde_json::from_str` rejects this
+/// with "trailing characters". This function finds the end of the first complete
+/// `{...}` JSON object via brace-depth tracking and parses only that slice.
+pub(crate) fn parse_tool_args(raw: &str) -> Result<serde_json::Value, serde_json::Error> {
+    // No-argument tool calls: OpenAI streams `arguments: ""` (or omits the
+    // field) for parameterless tools, and Anthropic can emit a `tool_use`
+    // block with no `input_json_delta`. An empty string is a valid empty
+    // object, not truncation — treat it as `{}` so the caller doesn't
+    // mis-flag it via `malformed_tool_input`.
+    if raw.trim().is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+    // Fast path: the whole string is valid JSON.
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) {
+        return Ok(v);
+    }
+    // Slow path: find the end of the first complete `{...}` block.
+    let trimmed = raw.trim_start();
+    if trimmed.starts_with('{') {
+        let mut depth: i32 = 0;
+        let mut in_string = false;
+        let mut prev_backslash = false;
+        for (i, ch) in trimmed.char_indices() {
+            if prev_backslash {
+                prev_backslash = false;
+                continue;
+            }
+            match ch {
+                '\\' if in_string => prev_backslash = true,
+                '"' => in_string = !in_string,
+                '{' if !in_string => depth += 1,
+                '}' if !in_string => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let slice = &trimmed[..=i];
+                        return serde_json::from_str::<serde_json::Value>(slice);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // Fall back to a full parse so the caller gets the original error.
+    serde_json::from_str::<serde_json::Value>(raw)
+}
+
+/// Marker key embedded in tool input when the LLM's streamed JSON was truncated.
+pub const TRUNCATED_ARGS_KEY: &str = "__args_truncated";
+
+/// Build a tool input object for truncated/malformed JSON from the LLM.
+///
+/// Tries to repair the truncated JSON by closing unclosed strings and braces.
+/// If repair succeeds, returns the partially-parsed object with a truncation
+/// marker so the tool can still execute (partial content is better than nothing).
+/// If repair fails, returns an object with just the marker and error message.
+pub(crate) fn malformed_tool_input(
+    error: &serde_json::Error,
+    args_len: usize,
+) -> serde_json::Value {
+    serde_json::json!({
+        TRUNCATED_ARGS_KEY: true,
+        "__error": format!(
+            "Tool call arguments were truncated ({} chars, parse error: {}). \
+             The content was too large for a single response. \
+             Try writing smaller content or splitting into multiple tool calls.",
+            args_len, error
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_tool_args_clean_json() {
+        let v = parse_tool_args(r#"{"query":"hello","limit":5}"#).unwrap();
+        assert_eq!(v["query"], "hello");
+        assert_eq!(v["limit"], 5);
+    }
+
+    #[test]
+    fn test_parse_tool_args_trailing_reasoning() {
+        let raw = "{\"query\": \"TO-DO\", \"limit\": 10}\n\nI'll now search for the items.";
+        let v = parse_tool_args(raw).unwrap();
+        assert_eq!(v["query"], "TO-DO");
+        assert_eq!(v["limit"], 10);
+    }
+
+    #[test]
+    fn test_parse_tool_args_empty_object_with_trailing() {
+        let raw = "{}\n\nsome reasoning text here";
+        let v = parse_tool_args(raw).unwrap();
+        assert!(v.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_tool_args_nested_object_with_trailing() {
+        let raw = r#"{"a":{"b":1},"c":"d"} trailing text"#;
+        let v = parse_tool_args(raw).unwrap();
+        assert_eq!(v["c"], "d");
+    }
+
+    #[test]
+    fn test_parse_tool_args_empty_string_is_empty_object() {
+        // No-argument tool calls stream `arguments: ""` — must parse to `{}`,
+        // not be mis-flagged as truncated/malformed.
+        for raw in ["", "   ", "\n", "\t "] {
+            let v = parse_tool_args(raw)
+                .unwrap_or_else(|e| panic!("empty args {raw:?} should parse, got {e}"));
+            assert!(
+                v.as_object().map(|o| o.is_empty()).unwrap_or(false),
+                "expected empty object for {raw:?}, got {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_openai_driver_creation() {
+        let driver = OpenAIDriver::new("test-key".to_string(), "http://localhost".to_string());
+        assert_eq!(driver.api_key.as_str(), "test-key");
+    }
+
+    // #3477: trailing slash on base_url must not produce "//chat/completions".
+    #[test]
+    fn test_openai_base_url_strips_trailing_slash() {
+        let driver = OpenAIDriver::new("k".to_string(), "http://localhost:11434/v1/".to_string());
+        assert_eq!(driver.base_url, "http://localhost:11434/v1");
+        let multi = OpenAIDriver::new("k".to_string(), "http://localhost:11434/v1///".to_string());
+        assert_eq!(multi.base_url, "http://localhost:11434/v1");
+    }
+
+    #[test]
+    fn test_parse_groq_failed_tool_call() {
+        let body = r#"{"error":{"message":"Failed to call a function.","type":"invalid_request_error","code":"tool_use_failed","failed_generation":"<function=web_fetch{\"url\": \"https://example.com\"}></function>\n"}}"#;
+        let result = parse_groq_failed_tool_call(body);
+        assert!(result.is_some());
+        let resp = result.unwrap();
+        assert_eq!(resp.tool_calls.len(), 1);
+        assert_eq!(resp.tool_calls[0].name, "web_fetch");
+        assert!(resp.tool_calls[0]
+            .input
+            .to_string()
+            .contains("https://example.com"));
+    }
+
+    #[test]
+    fn test_parse_groq_failed_tool_call_with_space() {
+        let body = r#"{"error":{"message":"Failed","type":"invalid_request_error","code":"tool_use_failed","failed_generation":"<function=shell_exec {\"command\": \"ls -la\"}></function>"}}"#;
+        let result = parse_groq_failed_tool_call(body);
+        assert!(result.is_some());
+        let resp = result.unwrap();
+        assert_eq!(resp.tool_calls[0].name, "shell_exec");
+    }
+
+    #[test]
+    fn test_ensure_object_null_becomes_empty_object() {
+        assert_eq!(
+            ensure_object(serde_json::Value::Null),
+            serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn test_ensure_object_preserves_existing_object() {
+        let obj = serde_json::json!({"key": "value"});
+        assert_eq!(ensure_object(obj.clone()), obj);
+    }
+
+    // ----- rejects_temperature tests -----
+
+    #[test]
+    fn test_rejects_temperature_o1_models() {
+        assert!(rejects_temperature("o1"));
+        assert!(rejects_temperature("o1-mini"));
+        assert!(rejects_temperature("o1-mini-2024-09-12"));
+        assert!(rejects_temperature("o1-preview"));
+        assert!(rejects_temperature("o1-preview-2024-09-12"));
+    }
+
+    #[test]
+    fn test_rejects_temperature_o3_models() {
+        assert!(rejects_temperature("o3"));
+        assert!(rejects_temperature("o3-mini"));
+        assert!(rejects_temperature("o3-mini-2025-01-31"));
+        assert!(rejects_temperature("o3-pro"));
+    }
+
+    #[test]
+    fn test_rejects_temperature_o4_models() {
+        assert!(rejects_temperature("o4-mini"));
+        assert!(rejects_temperature("o4-mini-2025-04-16"));
+    }
+
+    #[test]
+    fn test_rejects_temperature_gpt5_mini() {
+        assert!(rejects_temperature("gpt-5-mini"));
+        assert!(rejects_temperature("gpt-5-mini-2025-08-07"));
+        assert!(rejects_temperature("gpt5-mini"));
+        assert!(rejects_temperature("GPT-5-MINI-2025-08-07"));
+    }
+
+    #[test]
+    fn test_rejects_temperature_reasoning_suffix() {
+        assert!(rejects_temperature("some-model-reasoning"));
+        assert!(rejects_temperature("deepseek-r1-reasoning"));
+    }
+
+    #[test]
+    fn test_does_not_reject_temperature_normal_models() {
+        assert!(!rejects_temperature("gpt-4o"));
+        assert!(!rejects_temperature("gpt-4o-mini"));
+        assert!(!rejects_temperature("gpt-5"));
+        assert!(!rejects_temperature("gpt-5-2025-06-01"));
+        assert!(!rejects_temperature("plain-model-placeholder"));
+        assert!(!rejects_temperature("llama-3.3-70b-versatile"));
+        assert!(!rejects_temperature("deepseek-chat"));
+    }
+
+    // ----- uses_completion_tokens tests -----
+
+    #[test]
+    fn test_uses_completion_tokens_gpt5() {
+        assert!(uses_completion_tokens("gpt-5"));
+        assert!(uses_completion_tokens("gpt-5-mini"));
+        assert!(uses_completion_tokens("gpt-5-mini-2025-08-07"));
+        assert!(uses_completion_tokens("gpt5-mini"));
+    }
+
+    #[test]
+    fn test_uses_completion_tokens_o_series() {
+        assert!(uses_completion_tokens("o1"));
+        assert!(uses_completion_tokens("o1-mini"));
+        assert!(uses_completion_tokens("o3"));
+        assert!(uses_completion_tokens("o3-mini"));
+        assert!(uses_completion_tokens("o3-pro"));
+        assert!(uses_completion_tokens("o4-mini"));
+    }
+
+    #[test]
+    fn test_does_not_use_completion_tokens_normal_models() {
+        assert!(!uses_completion_tokens("gpt-4o"));
+        assert!(!uses_completion_tokens("gpt-4o-mini"));
+        assert!(!uses_completion_tokens("llama-3.3-70b"));
+    }
+
+    // ----- extract_max_tokens_limit tests -----
+
+    #[test]
+    fn test_extract_max_tokens_limit() {
+        let body = r#"max_tokens must be less than or equal to `8192`"#;
+        assert_eq!(extract_max_tokens_limit(body), Some(8192));
+    }
+
+    #[test]
+    fn test_extract_max_tokens_limit_no_match() {
+        assert_eq!(extract_max_tokens_limit("some random error"), None);
+    }
+
+    // ----- extract_think_tags tests -----
+
+    #[test]
+    fn test_extract_think_tags_no_tags() {
+        let (cleaned, thinking) = extract_think_tags("Hello world");
+        assert_eq!(cleaned, "Hello world");
+        assert!(thinking.is_none());
+    }
+
+    #[test]
+    fn test_extract_think_tags_with_thinking() {
+        let input = "<think>Let me reason about this...</think>The answer is 42.";
+        let (cleaned, thinking) = extract_think_tags(input);
+        assert_eq!(cleaned, "The answer is 42.");
+        assert_eq!(thinking.unwrap(), "Let me reason about this...");
+    }
+
+    #[test]
+    fn test_extract_think_tags_only_thinking() {
+        let input = "<think>I need to think about this carefully.\n\nThe user wants to know about Rust.</think>";
+        let (cleaned, thinking) = extract_think_tags(input);
+        assert_eq!(cleaned, "");
+        assert!(thinking.is_some());
+        assert!(thinking.unwrap().contains("think about this carefully"));
+    }
+
+    #[test]
+    fn test_extract_think_tags_multiple_blocks() {
+        let input =
+            "<think>First thought</think>Middle text<think>Second thought</think>Final text";
+        let (cleaned, thinking) = extract_think_tags(input);
+        assert_eq!(cleaned, "Middle textFinal text");
+        let t = thinking.unwrap();
+        assert!(t.contains("First thought"));
+        assert!(t.contains("Second thought"));
+    }
+
+    #[test]
+    fn test_extract_think_tags_unclosed() {
+        let input = "Some text<think>unclosed thinking content";
+        let (cleaned, thinking) = extract_think_tags(input);
+        assert_eq!(cleaned, "Some text");
+        assert_eq!(thinking.unwrap(), "unclosed thinking content");
+    }
+
+    // ----- extract_thinking_summary tests -----
+
+    #[test]
+    fn test_extract_thinking_summary_empty() {
+        let summary = extract_thinking_summary("");
+        assert!(summary.contains("no final answer"));
+    }
+
+    #[test]
+    fn test_extract_thinking_summary_single_paragraph() {
+        let summary = extract_thinking_summary("The answer is 42.");
+        assert_eq!(summary, "The answer is 42.");
+    }
+
+    #[test]
+    fn test_extract_thinking_summary_multiple_paragraphs() {
+        let input = "First I need to consider X.\n\nThen I should check Y.\n\nThe answer is 42.";
+        let summary = extract_thinking_summary(input);
+        assert_eq!(summary, "The answer is 42.");
+    }
+
+    #[test]
+    fn test_extract_thinking_summary_long_multibyte_no_panic() {
+        // A long final paragraph of multi-byte chars must not panic when the
+        // 2000-byte cut lands inside a UTF-8 char. "好" is 3 bytes; 1500 of
+        // them is 4500 bytes (> 2000), and 4500 - 2000 = 2500 is not a char
+        // boundary.
+        let long = "好".repeat(1500);
+        let summary = extract_thinking_summary(&long);
+        // Returned slice must still be valid UTF-8 (no panic, no torn char)
+        // and bounded near the 2000-byte window.
+        assert!(summary.len() <= 2000 + 3);
+        assert!(summary.chars().all(|c| c == '好'));
+    }
+
+    // ----- reasoning_content deserialization test -----
+
+    #[test]
+    fn test_oai_response_message_with_reasoning_content() {
+        let json =
+            r#"{"content": null, "reasoning_content": "Let me think...", "tool_calls": null}"#;
+        let msg: OaiResponseMessage = serde_json::from_str(json).unwrap();
+        assert!(msg.content.is_none());
+        assert_eq!(msg.reasoning_content.as_deref(), Some("Let me think..."));
+    }
+
+    #[test]
+    fn test_oai_response_message_without_reasoning_content() {
+        let json = r#"{"content": "Hello", "tool_calls": null}"#;
+        let msg: OaiResponseMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.content.as_deref(), Some("Hello"));
+        assert!(msg.reasoning_content.is_none());
+    }
+
+    #[test]
+    fn test_oai_response_message_null_content_null_reasoning() {
+        let json = r#"{"content": null, "tool_calls": null}"#;
+        let msg: OaiResponseMessage = serde_json::from_str(json).unwrap();
+        assert!(msg.content.is_none());
+        assert!(msg.reasoning_content.is_none());
+    }
+
+    // ----- is_deepseek_reasoner tests -----
+
+    #[test]
+    fn test_is_deepseek_reasoner() {
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        assert!(driver.is_deepseek_reasoner("deepseek-reasoner"));
+        assert!(driver.is_deepseek_reasoner("deepseek-r1"));
+        assert!(driver.is_deepseek_reasoner("DeepSeek-Reasoner"));
+        assert!(driver.is_deepseek_reasoner("deepseek-r1-0528"));
+        assert!(!driver.is_deepseek_reasoner("deepseek-chat"));
+        assert!(!driver.is_deepseek_reasoner("deepseek-coder"));
+        assert!(!driver.is_deepseek_reasoner("gpt-4o"));
+    }
+
+    /// Verify that reasoning_content is omitted (None) when building
+    /// assistant messages for deepseek-reasoner, even if the blocks
+    /// contain Thinking content.
+    #[test]
+    fn test_deepseek_reasoner_strips_reasoning_content_from_assistant_msg() {
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        let model = "deepseek-reasoner";
+
+        // Simulate building an assistant OaiMessage with tool_calls —
+        // for deepseek-reasoner, reasoning_content must always be None.
+        let has_tool_calls = true;
+        let is_deepseek_r = driver.is_deepseek_reasoner(model);
+        let reasoning_content = if is_deepseek_r {
+            None
+        } else if has_tool_calls && driver.kimi_needs_reasoning_content(model) {
+            Some(String::new())
+        } else {
+            None
+        };
+        assert!(
+            reasoning_content.is_none(),
+            "deepseek-reasoner must never send reasoning_content on assistant messages"
+        );
+    }
+
+    // ----- is_deepseek_v4_thinking_with_tools tests (#4842) -----
+
+    #[test]
+    fn test_is_deepseek_v4_thinking_with_tools_matches_v4_flash() {
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        assert!(driver.is_deepseek_v4_thinking_with_tools("deepseek-v4-flash"));
+        assert!(driver.is_deepseek_v4_thinking_with_tools("DeepSeek-V4-Flash"));
+        // Hypothetical pinned variants — substring match keeps us forward-
+        // compatible with date-stamped releases like deepseek-v4-flash-0501.
+        assert!(driver.is_deepseek_v4_thinking_with_tools("deepseek-v4-flash-0501"));
+        // V4 Pro ALSO requires the echo: production returned deepseek
+        // 400 "reasoning_content in the thinking mode must be passed back"
+        // on multi-turn tool-call conversations. The #4842 "works
+        // out-of-the-box" assumption was wrong.
+        assert!(driver.is_deepseek_v4_thinking_with_tools("deepseek-v4-pro"));
+        assert!(driver.is_deepseek_v4_thinking_with_tools("DeepSeek-V4-Pro"));
+        assert!(driver.is_deepseek_v4_thinking_with_tools("deepseek-v4-pro-0501"));
+    }
+
+    #[test]
+    fn test_is_deepseek_v4_thinking_with_tools_does_not_match_others() {
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        assert!(!driver.is_deepseek_v4_thinking_with_tools("deepseek-chat"));
+        assert!(!driver.is_deepseek_v4_thinking_with_tools("deepseek-reasoner"));
+        assert!(!driver.is_deepseek_v4_thinking_with_tools("deepseek-r1"));
+        assert!(!driver.is_deepseek_v4_thinking_with_tools("gpt-4o"));
+        assert!(!driver.is_deepseek_v4_thinking_with_tools("kimi-k2"));
+    }
+
+    /// #4842: V4 Flash assistant turns that contain `tool_calls` MUST round-trip
+    /// the original `reasoning_content` (the thinking text) on subsequent
+    /// requests, otherwise the DeepSeek API returns 400.
+    #[test]
+    fn test_deepseek_v4_flash_round_trips_reasoning_content_on_tool_calls() {
+        use librefang_llm_driver::CompletionRequest;
+        use librefang_types::message::{ContentBlock, Message, MessageContent, Role};
+
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        let assistant = Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Thinking {
+                    thinking: "Let me check the user's memory store first.".to_string(),
+                    provider_metadata: None,
+                },
+                ContentBlock::ToolUse {
+                    id: "call_abc".to_string(),
+                    name: "memory_search".to_string(),
+                    input: serde_json::json!({"query": "preferences"}),
+                    provider_metadata: None,
+                },
+            ]),
+            pinned: false,
+            timestamp: None,
+        };
+        let req = CompletionRequest {
+            model: "deepseek-v4-flash".to_string(),
+            messages: std::sync::Arc::new(vec![assistant]),
+            tools: std::sync::Arc::new(Vec::new()),
+            max_tokens: 128,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: librefang_types::model_catalog::ReasoningEchoPolicy::default(),
+
+            ..Default::default()
+        };
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert_eq!(
+            assistant_msg.reasoning_content.as_deref(),
+            Some("Let me check the user's memory store first."),
+            "V4 Flash MUST echo back reasoning_content on tool_calls turns"
+        );
+    }
+
+    /// #4842: V4 Flash with a tool_calls turn that has no Thinking block must
+    /// still emit `reasoning_content` (empty string). The API rejects requests
+    /// where the field is missing on a tool_calls turn even when the model
+    /// produced no thinking that turn.
+    #[test]
+    fn test_deepseek_v4_flash_emits_empty_reasoning_when_no_thinking_block() {
+        use librefang_llm_driver::CompletionRequest;
+        use librefang_types::message::{ContentBlock, Message, MessageContent, Role};
+
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        let assistant = Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![ContentBlock::ToolUse {
+                id: "call_xyz".to_string(),
+                name: "shell_exec".to_string(),
+                input: serde_json::json!({"command": "ls"}),
+                provider_metadata: None,
+            }]),
+            pinned: false,
+            timestamp: None,
+        };
+        let req = CompletionRequest {
+            model: "deepseek-v4-flash".to_string(),
+            messages: std::sync::Arc::new(vec![assistant]),
+            tools: std::sync::Arc::new(Vec::new()),
+            max_tokens: 128,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: librefang_types::model_catalog::ReasoningEchoPolicy::default(),
+
+            ..Default::default()
+        };
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert_eq!(
+            assistant_msg.reasoning_content.as_deref(),
+            Some(""),
+            "V4 Flash tool_calls turn without thinking still needs the field present"
+        );
+    }
+
+    /// #4842: V4 Flash assistant turns *without* tool_calls (text-only response)
+    /// don't need reasoning_content — the constraint is specifically on
+    /// tool_calls turns.
+    #[test]
+    fn test_deepseek_v4_flash_omits_reasoning_on_text_only_turn() {
+        use librefang_llm_driver::CompletionRequest;
+        use librefang_types::message::{ContentBlock, Message, MessageContent, Role};
+
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        let assistant = Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Thinking {
+                    thinking: "thinking out loud".to_string(),
+                    provider_metadata: None,
+                },
+                ContentBlock::Text {
+                    text: "Hello!".to_string(),
+                    provider_metadata: None,
+                },
+            ]),
+            pinned: false,
+            timestamp: None,
+        };
+        let req = CompletionRequest {
+            model: "deepseek-v4-flash".to_string(),
+            messages: std::sync::Arc::new(vec![assistant]),
+            tools: std::sync::Arc::new(Vec::new()),
+            max_tokens: 128,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: librefang_types::model_catalog::ReasoningEchoPolicy::default(),
+
+            ..Default::default()
+        };
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert!(
+            assistant_msg.reasoning_content.is_none(),
+            "text-only V4 Flash assistant turn doesn't need reasoning_content round-trip"
+        );
+    }
+
+    /// Models other than V4 Flash / Kimi must NOT emit reasoning_content on
+    /// historical turns — most providers reject the unknown field, and
+    /// deepseek-reasoner explicitly rejects it.
+    #[test]
+    fn test_other_models_omit_reasoning_content_even_with_thinking_blocks() {
+        use librefang_llm_driver::CompletionRequest;
+        use librefang_types::message::{ContentBlock, Message, MessageContent, Role};
+
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        let assistant = Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Thinking {
+                    thinking: "private reasoning".to_string(),
+                    provider_metadata: None,
+                },
+                ContentBlock::ToolUse {
+                    id: "call_1".to_string(),
+                    name: "noop".to_string(),
+                    input: serde_json::json!({}),
+                    provider_metadata: None,
+                },
+            ]),
+            pinned: false,
+            timestamp: None,
+        };
+        for model in ["deepseek-chat", "deepseek-reasoner", "gpt-4o"] {
+            let req = CompletionRequest {
+                model: model.to_string(),
+                messages: std::sync::Arc::new(vec![assistant.clone()]),
+                tools: std::sync::Arc::new(Vec::new()),
+                max_tokens: 128,
+                temperature: 0.7,
+                system: None,
+                thinking: None,
+                prompt_caching: false,
+                cache_ttl: None,
+                prompt_cache_strategy: None,
+                response_format: None,
+                timeout_secs: None,
+                extra_body: None,
+                agent_id: None,
+                session_id: None,
+                step_id: None,
+                reasoning_echo_policy: librefang_types::model_catalog::ReasoningEchoPolicy::default(
+                ),
+
+                ..Default::default()
+            };
+            let oai = driver.build_request(&req).expect("build_request");
+            let assistant_msg = oai
+                .messages
+                .iter()
+                .find(|m| m.role == "assistant")
+                .expect("assistant message");
+            assert!(
+                assistant_msg.reasoning_content.is_none(),
+                "{model}: must not echo reasoning_content on historical assistant turns"
+            );
+        }
+    }
+
+    // ----- Catalog ReasoningEchoPolicy override tests (#4842) -----
+    //
+    // These verify that an explicit policy on the request (sourced from the
+    // catalog metadata) overrides the model-name substring fallback. Each
+    // test uses a model name that the substring fallback would NOT match
+    // (`mystery-*`), so the only way the driver can produce the expected
+    // behaviour is by reading `request.reasoning_echo_policy`.
+
+    fn build_catalog_policy_test_request(
+        model: &str,
+        policy: librefang_types::model_catalog::ReasoningEchoPolicy,
+    ) -> librefang_llm_driver::CompletionRequest {
+        use librefang_llm_driver::CompletionRequest;
+        use librefang_types::message::{ContentBlock, Message, MessageContent, Role};
+        let assistant = Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Thinking {
+                    thinking: "deliberation".to_string(),
+                    provider_metadata: None,
+                },
+                ContentBlock::ToolUse {
+                    id: "call_1".to_string(),
+                    name: "noop".to_string(),
+                    input: serde_json::json!({}),
+                    provider_metadata: None,
+                },
+            ]),
+            pinned: false,
+            timestamp: None,
+        };
+        CompletionRequest {
+            model: model.to_string(),
+            messages: std::sync::Arc::new(vec![assistant]),
+            tools: std::sync::Arc::new(Vec::new()),
+            max_tokens: 128,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: policy,
+
+            ..Default::default()
+        }
+    }
+
+    /// Catalog `Echo` policy on a model the substring fallback would NOT
+    /// recognize must still produce the V4 Flash wire shape (echo thinking
+    /// text on tool_calls turns).
+    #[test]
+    fn test_catalog_echo_policy_overrides_unmatched_substring() {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        let driver = OpenAIDriver::new(String::new(), "https://example.com/v1".to_string());
+        let req =
+            build_catalog_policy_test_request("mystery-thinking-model", ReasoningEchoPolicy::Echo);
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert_eq!(
+            assistant_msg.reasoning_content.as_deref(),
+            Some("deliberation"),
+            "catalog Echo policy must echo thinking text on tool_calls turn \
+             even when model name doesn't match any substring rule"
+        );
+    }
+
+    /// Catalog `Strip` policy on a model the substring fallback would NOT
+    /// recognize must produce the R1 wire shape (omit reasoning_content,
+    /// force non-null content).
+    #[test]
+    fn test_catalog_strip_policy_overrides_unmatched_substring() {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        let driver = OpenAIDriver::new(String::new(), "https://example.com/v1".to_string());
+        let req = build_catalog_policy_test_request("mystery-reasoner", ReasoningEchoPolicy::Strip);
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert!(
+            assistant_msg.reasoning_content.is_none(),
+            "catalog Strip policy must omit reasoning_content"
+        );
+    }
+
+    /// Strip policy's *second* contract: force non-null `content` on
+    /// historical assistant turns even when the turn carries no tool_calls
+    /// and no text — DeepSeek-R1 rejects multi-turn requests where any
+    /// historical assistant message has a null `content`. The shared
+    /// [`build_catalog_policy_test_request`] helper produces a turn with
+    /// tool_calls, which would route through the `has_tool_calls` branch
+    /// and mask the Strip-specific forcing. This test uses a thinking-only
+    /// assistant message followed by a user message (so the assistant
+    /// turn isn't trailing and survives `strip_trailing_empty_assistant`),
+    /// so the only path that can produce `content: Some("")` on the
+    /// historical assistant is `force_nonnull_content`.
+    #[test]
+    fn test_catalog_strip_policy_forces_nonnull_content_without_tool_calls() {
+        use librefang_llm_driver::CompletionRequest;
+        use librefang_types::message::{ContentBlock, Message, MessageContent, Role};
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+
+        let assistant = Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![ContentBlock::Thinking {
+                thinking: "deliberation".to_string(),
+                provider_metadata: None,
+            }]),
+            pinned: false,
+            timestamp: None,
+        };
+        let user_followup = Message {
+            role: Role::User,
+            content: MessageContent::Blocks(vec![ContentBlock::Text {
+                text: "follow-up".to_string(),
+                provider_metadata: None,
+            }]),
+            pinned: false,
+            timestamp: None,
+        };
+        let make_req = |policy: ReasoningEchoPolicy| CompletionRequest {
+            model: "mystery-reasoner".to_string(),
+            messages: std::sync::Arc::new(vec![assistant.clone(), user_followup.clone()]),
+            tools: std::sync::Arc::new(Vec::new()),
+            max_tokens: 128,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: policy,
+
+            ..Default::default()
+        };
+        let driver = OpenAIDriver::new(String::new(), "https://example.com/v1".to_string());
+
+        // Baseline: default `None` policy on the same fixture must leave
+        // `content` null on the historical assistant. Without this
+        // assertion the Strip branch below could pass coincidentally if
+        // some unrelated branch were forcing non-null content for everyone.
+        let baseline = driver
+            .build_request(&make_req(ReasoningEchoPolicy::None))
+            .expect("build_request");
+        let baseline_assistant = baseline
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert!(
+            baseline_assistant.content.is_none(),
+            "default policy on a thinking-only historical assistant turn must \
+             produce null content; got {:?}",
+            baseline_assistant.content
+        );
+        assert!(
+            baseline_assistant
+                .tool_calls
+                .as_ref()
+                .is_none_or(|t| t.is_empty()),
+            "fixture must not carry tool_calls — otherwise the has_tool_calls branch \
+             would mask the Strip-specific content forcing"
+        );
+
+        // Strip policy on the same fixture must force `content: Some("")`
+        // on the historical assistant turn.
+        let strip = driver
+            .build_request(&make_req(ReasoningEchoPolicy::Strip))
+            .expect("build_request");
+        let strip_assistant = strip
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert!(
+            matches!(
+                strip_assistant.content,
+                Some(OaiMessageContent::Text(ref s)) if s.is_empty()
+            ),
+            "Strip policy must force non-null empty content on a historical \
+             assistant turn even when text_parts is empty and there are no \
+             tool_calls; got {:?}",
+            strip_assistant.content
+        );
+    }
+
+    /// Catalog `EmptyString` policy on a model the substring fallback would
+    /// NOT recognize must produce the Kimi wire shape: empty-string
+    /// reasoning_content on tool_calls turns + thinking disabled wire-side
+    /// + temperature pinned to 0.6.
+    ///
+    /// The model name and base URL are deliberately picked to miss every
+    /// substring rule (no `kimi`, no `moonshot`, no `deepseek-r1` /
+    /// `-reasoner` / `-v4`), so the only path that can produce the Kimi
+    /// wire shape is `request.reasoning_echo_policy` — proving the catalog
+    /// override actually wins over the fallback rather than coincidentally
+    /// agreeing with it.
+    #[test]
+    fn test_catalog_empty_string_policy_overrides_unmatched_substring() {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        let driver = OpenAIDriver::new(String::new(), "https://example.com/v1".to_string());
+        let req = build_catalog_policy_test_request(
+            "mystery-multi-turn-clone",
+            ReasoningEchoPolicy::EmptyString,
+        );
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert_eq!(
+            assistant_msg.reasoning_content.as_deref(),
+            Some(""),
+            "catalog EmptyString policy must send empty reasoning_content"
+        );
+        assert_eq!(
+            oai.temperature,
+            Some(0.6),
+            "EmptyString policy must pin temperature to 0.6 for multi-turn compatibility"
+        );
+        assert_eq!(
+            oai.thinking,
+            Some(serde_json::json!({"type": "disabled"})),
+            "EmptyString policy must disable thinking wire-side"
+        );
+    }
+
+    /// Catalog `None` (the default) on a deepseek-v4-flash model name must
+    /// fall back to substring detection and still produce the Echo wire
+    /// shape — proves the fallback path is wired correctly.
+    #[test]
+    fn test_catalog_none_falls_back_to_substring_for_v4_flash() {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        let req = build_catalog_policy_test_request("deepseek-v4-flash", ReasoningEchoPolicy::None);
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert_eq!(
+            assistant_msg.reasoning_content.as_deref(),
+            Some("deliberation"),
+            "default policy must fall back to substring; v4-flash → Echo"
+        );
+    }
+
+    /// Catalog `None` on a `deepseek-reasoner` model name must fall back to
+    /// substring detection and produce the R1 wire shape: omitted
+    /// `reasoning_content`. Companion to the v4-flash fallback test;
+    /// covers the Strip path of the substring fallback.
+    #[test]
+    fn test_catalog_none_falls_back_to_substring_for_deepseek_reasoner() {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        let req = build_catalog_policy_test_request("deepseek-reasoner", ReasoningEchoPolicy::None);
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert!(
+            assistant_msg.reasoning_content.is_none(),
+            "default policy must fall back to substring; deepseek-reasoner → Strip (omit)"
+        );
+    }
+
+    /// Catalog `None` on a `kimi`-named model must fall back to substring
+    /// detection and produce the Kimi wire shape: empty-string
+    /// `reasoning_content` on tool_calls turns + temperature 0.6 +
+    /// thinking disabled. Covers the EmptyString path of the substring
+    /// fallback via the model-name branch (`model.contains("kimi")`).
+    #[test]
+    fn test_catalog_none_falls_back_to_substring_for_kimi_name() {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        let driver = OpenAIDriver::new(String::new(), "https://example.com/v1".to_string());
+        let req = build_catalog_policy_test_request("kimi-k2-instruct", ReasoningEchoPolicy::None);
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert_eq!(
+            assistant_msg.reasoning_content.as_deref(),
+            Some(""),
+            "default policy must fall back to substring; kimi-name → EmptyString"
+        );
+        assert_eq!(oai.temperature, Some(0.6));
+        assert_eq!(oai.thinking, Some(serde_json::json!({"type": "disabled"})));
+    }
+
+    /// Catalog `None` on a non-kimi model name routed through a Moonshot
+    /// base URL must fall back to substring detection via the host-based
+    /// branch (`is_moonshot()`) and produce the Kimi wire shape — proves
+    /// the fallback's host-aware branch still triggers post-refactor.
+    #[test]
+    fn test_catalog_none_falls_back_to_substring_for_moonshot_host() {
+        use librefang_types::model_catalog::ReasoningEchoPolicy;
+        let driver = OpenAIDriver::new(String::new(), "https://api.moonshot.cn/v1".to_string());
+        let req = build_catalog_policy_test_request("mystery-model", ReasoningEchoPolicy::None);
+        let oai = driver.build_request(&req).expect("build_request");
+        let assistant_msg = oai
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .expect("assistant message");
+        assert_eq!(
+            assistant_msg.reasoning_content.as_deref(),
+            Some(""),
+            "default policy must fall back to substring via is_moonshot() host check"
+        );
+        assert_eq!(oai.temperature, Some(0.6));
+        assert_eq!(oai.thinking, Some(serde_json::json!({"type": "disabled"})));
+    }
+
+    /// Verify that deepseek-reasoner assistant messages always get a non-null
+    /// content field, even when text_parts is empty (thinking-only response).
+    #[test]
+    fn test_deepseek_reasoner_content_never_null() {
+        let driver = OpenAIDriver::new(String::new(), "https://api.deepseek.com/v1".to_string());
+        let model = "deepseek-reasoner";
+        let is_deepseek_r = driver.is_deepseek_reasoner(model);
+        let text_parts: Vec<String> = Vec::new(); // empty — thinking-only response
+        let has_tool_calls = false;
+
+        // Simulate the content field logic from complete()/stream()
+        let content: Option<OaiMessageContent> = if text_parts.is_empty() {
+            if has_tool_calls || is_deepseek_r {
+                Some(OaiMessageContent::Text(String::new()))
+            } else {
+                None
+            }
+        } else {
+            Some(OaiMessageContent::Text(text_parts.join("")))
+        };
+
+        assert!(
+            content.is_some(),
+            "deepseek-reasoner assistant messages must always have non-null content for multi-turn"
+        );
+    }
+
+    #[test]
+    fn test_ensure_object_null_becomes_empty() {
+        assert_eq!(
+            ensure_object(serde_json::Value::Null),
+            serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn test_ensure_object_preserves_object() {
+        let input = serde_json::json!({"query": "test"});
+        assert_eq!(ensure_object(input.clone()), input);
+    }
+
+    #[test]
+    fn test_ensure_object_parses_json_string() {
+        let input = serde_json::json!(r#"{"query": "rust lang"}"#);
+        assert_eq!(
+            ensure_object(input),
+            serde_json::json!({"query": "rust lang"})
+        );
+    }
+
+    #[test]
+    fn test_ensure_object_wraps_plain_string() {
+        assert_eq!(
+            ensure_object(serde_json::json!("plain text")),
+            serde_json::json!({"raw_input": "plain text"})
+        );
+    }
+
+    #[test]
+    fn test_ensure_object_wraps_number() {
+        assert_eq!(
+            ensure_object(serde_json::json!(42)),
+            serde_json::json!({"raw_input": 42})
+        );
+    }
+
+    #[test]
+    fn test_ensure_object_wraps_array() {
+        assert_eq!(
+            ensure_object(serde_json::json!([1, 2])),
+            serde_json::json!({"raw_input": [1, 2]})
+        );
+    }
+
+    #[test]
+    fn test_ensure_object_string_with_json_array_wraps() {
+        let input = serde_json::json!(r#"[1, 2, 3]"#);
+        assert_eq!(
+            ensure_object(input),
+            serde_json::json!({"raw_input": "[1, 2, 3]"})
+        );
+    }
+
+    #[test]
+    fn test_oai_request_extra_body_merged_overrides_standard_field() {
+        // extra_body is #[serde(skip_serializing)] — it does NOT appear in
+        // the raw serde output.  In complete() / stream() we serialize to
+        // Value first, then merge extra_body on top so it overrides any
+        // standard field with the same name.  This test verifies the merge
+        // logic directly.
+        let mut extra = BTreeMap::new();
+        extra.insert("temperature".to_string(), serde_json::json!(1.0));
+        extra.insert("enable_memory".to_string(), serde_json::json!(true));
+
+        let req = OaiRequest {
+            model: "qwen3.6".to_string(),
+            messages: vec![OaiMessage {
+                role: "user".to_string(),
+                content: Some(OaiMessageContent::Text("hello".to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning_content: None,
+            }],
+            max_tokens: Some(4096),
+            max_completion_tokens: None,
+            temperature: Some(0.7),
+            tools: vec![],
+            tool_choice: None,
+            stream: false,
+            stream_options: None,
+            thinking: None,
+            response_format: None,
+            extra_body: Some(extra),
+        };
+
+        // Use the exact merge logic used in complete() / stream().
+        let mut body = serde_json::to_value(&req).unwrap();
+        merge_extra_body(&req.extra_body, &mut body);
+
+        // extra_body values should override standard fields
+        assert_eq!(body.get("temperature").unwrap(), &serde_json::json!(1.0));
+        assert_eq!(body.get("enable_memory").unwrap(), &serde_json::json!(true));
+        // No duplicate keys — only ONE temperature
+        let raw = body.to_string();
+        assert_eq!(
+            raw.matches("temperature").count(),
+            1,
+            "There should be exactly ONE temperature key after merge. Raw: {raw}"
+        );
+    }
+
+    // Issue #5143 / #3298 — `extra_body` is merged into the wire request
+    // body, which is part of the provider prompt-cache key. The merge MUST
+    // produce a byte-identical body regardless of the order keys were
+    // inserted. `extra_body` is now a `BTreeMap`, so the sorted iteration
+    // order is a type-level guarantee; this test still pins byte equality
+    // across two different insertion orders so the property cannot silently
+    // regress, mirroring `mcp_summary_is_byte_identical_across_input_orders`.
+    #[test]
+    fn extra_body_merge_is_byte_identical_across_insertion_orders() {
+        fn build(order: &[(&str, serde_json::Value)]) -> String {
+            let mut extra = BTreeMap::new();
+            for (k, v) in order {
+                extra.insert((*k).to_string(), v.clone());
+            }
+            let req = OaiRequest {
+                model: "qwen3.6".to_string(),
+                messages: vec![OaiMessage {
+                    role: "user".to_string(),
+                    content: Some(OaiMessageContent::Text("hello".to_string())),
+                    tool_calls: None,
+                    tool_call_id: None,
+                    reasoning_content: None,
+                }],
+                max_tokens: Some(4096),
+                max_completion_tokens: None,
+                temperature: Some(0.7),
+                tools: vec![],
+                tool_choice: None,
+                stream: false,
+                stream_options: None,
+                thinking: None,
+                response_format: None,
+                extra_body: Some(extra),
+            };
+            let mut body = serde_json::to_value(&req).unwrap();
+            merge_extra_body(&req.extra_body, &mut body);
+            serde_json::to_string(&body).unwrap()
+        }
+
+        // Same three keys, two different HashMap insertion orders.
+        let a = build(&[
+            ("aaa_param", serde_json::json!(1)),
+            ("mmm_param", serde_json::json!("two")),
+            ("zzz_param", serde_json::json!([3, 4])),
+        ]);
+        let b = build(&[
+            ("zzz_param", serde_json::json!([3, 4])),
+            ("aaa_param", serde_json::json!(1)),
+            ("mmm_param", serde_json::json!("two")),
+        ]);
+        assert_eq!(
+            a, b,
+            "extra_body merge must yield a byte-identical request body across insertion orders (#5143)"
+        );
+        // And the merged keys must appear in sorted order in the body.
+        let ai = a.find("aaa_param").unwrap();
+        let mi = a.find("mmm_param").unwrap();
+        let zi = a.find("zzz_param").unwrap();
+        assert!(
+            ai < mi && mi < zi,
+            "merged extra_body keys must be in sorted order: {a}"
+        );
+    }
+
+    #[test]
+    fn test_oai_request_extra_body_none_skipped() {
+        let req = OaiRequest {
+            model: "test-model".to_string(),
+            messages: vec![OaiMessage {
+                role: "user".to_string(),
+                content: Some(OaiMessageContent::Text("hi".to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning_content: None,
+            }],
+            max_tokens: Some(100),
+            max_completion_tokens: None,
+            temperature: Some(0.5),
+            tools: vec![],
+            tool_choice: None,
+            stream: false,
+            stream_options: None,
+            thinking: None,
+            response_format: None,
+            extra_body: None,
+        };
+
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.get("extra_body").is_none());
+    }
+
+    fn make_msg(role: &str, content: Option<&str>, has_tool_calls: bool) -> OaiMessage {
+        OaiMessage {
+            role: role.to_string(),
+            content: content.map(|c| OaiMessageContent::Text(c.to_string())),
+            tool_calls: if has_tool_calls {
+                Some(vec![OaiToolCall {
+                    id: "call_1".to_string(),
+                    call_type: "function".to_string(),
+                    function: OaiFunction {
+                        name: "test".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }])
+            } else {
+                None
+            },
+            tool_call_id: None,
+            reasoning_content: None,
+        }
+    }
+
+    #[test]
+    fn test_strip_trailing_empty_assistant_non_claude_keeps_non_empty() {
+        // For non-Claude models, a trailing assistant with non-empty text must be kept
+        // (otherwise the agent loop would never terminate).
+        let mut msgs = vec![
+            make_msg("user", Some("hi"), false),
+            make_msg("assistant", Some("hello there"), false),
+        ];
+        strip_trailing_empty_assistant(&mut msgs, "gpt-4o");
+        assert_eq!(
+            msgs.len(),
+            2,
+            "non-empty assistant should survive for non-Claude"
+        );
+    }
+
+    #[test]
+    fn test_strip_trailing_empty_assistant_non_claude_strips_empty() {
+        let mut msgs = vec![
+            make_msg("user", Some("hi"), false),
+            make_msg("assistant", Some("   "), false),
+            make_msg("assistant", None, false),
+        ];
+        strip_trailing_empty_assistant(&mut msgs, "gpt-4o");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "user");
+    }
+
+    #[test]
+    fn test_strip_trailing_empty_assistant_claude_strips_non_empty() {
+        // Claude via Copilot: strip any trailing assistant without tool_calls,
+        // even if it has non-empty text — Anthropic rejects assistant prefill.
+        let mut msgs = vec![
+            make_msg("user", Some("hi"), false),
+            make_msg("assistant", Some("partial response"), false),
+        ];
+        strip_trailing_empty_assistant(&mut msgs, "claude-3-5-sonnet");
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "user");
+    }
+
+    #[test]
+    fn test_strip_trailing_empty_assistant_keeps_tool_calls() {
+        // Assistant messages with tool_calls are protocol-essential and must stay
+        // for both Claude and non-Claude models.
+        let mut claude_msgs = vec![
+            make_msg("user", Some("hi"), false),
+            make_msg("assistant", None, true),
+        ];
+        strip_trailing_empty_assistant(&mut claude_msgs, "claude-3-5-sonnet");
+        assert_eq!(claude_msgs.len(), 2);
+
+        let mut gpt_msgs = vec![
+            make_msg("user", Some("hi"), false),
+            make_msg("assistant", None, true),
+        ];
+        strip_trailing_empty_assistant(&mut gpt_msgs, "gpt-4o");
+        assert_eq!(gpt_msgs.len(), 2);
+    }
+
+    #[test]
+    fn test_strip_trailing_empty_assistant_claude_keeps_user_last() {
+        let mut msgs = vec![
+            make_msg("assistant", Some("earlier"), false),
+            make_msg("user", Some("now"), false),
+        ];
+        strip_trailing_empty_assistant(&mut msgs, "claude-3-opus");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs.last().unwrap().role, "user");
+    }
+
+    /// DeepSeek reports cache hits as `usage.prompt_cache_hit_tokens` (a
+    /// sibling of `prompt_tokens`), not under `prompt_tokens_details`.
+    /// Without the explicit fallback the cache discount is silently dropped (#3449).
+    #[test]
+    fn test_oai_usage_parses_deepseek_prompt_cache_hit_tokens() {
+        let raw = r#"{
+            "prompt_tokens": 1000,
+            "completion_tokens": 50,
+            "prompt_cache_hit_tokens": 800,
+            "prompt_cache_miss_tokens": 200
+        }"#;
+        let usage: OaiUsage = serde_json::from_str(raw).expect("parse usage");
+        assert_eq!(usage.prompt_tokens, 1000);
+        assert_eq!(usage.prompt_cache_hit_tokens, 800);
+        // The driver routes `prompt_cache_hit_tokens` into
+        // `TokenUsage.cache_read_input_tokens`, which the metering layer
+        // already discounts to 10% of the input rate — matching DeepSeek's
+        // published 1/10 cache pricing.
+    }
+
+    /// OpenAI / Azure use the nested `prompt_tokens_details.cached_tokens`
+    /// path. Both forms must be parsed without one shadowing the other.
+    #[test]
+    fn test_oai_usage_parses_openai_nested_cached_tokens() {
+        let raw = r#"{
+            "prompt_tokens": 500,
+            "completion_tokens": 40,
+            "prompt_tokens_details": { "cached_tokens": 320 }
+        }"#;
+        let usage: OaiUsage = serde_json::from_str(raw).expect("parse usage");
+        assert_eq!(
+            usage.prompt_tokens_details.as_ref().unwrap().cached_tokens,
+            320
+        );
+        assert_eq!(usage.prompt_cache_hit_tokens, 0);
+    }
+
+    /// Refusal mapping: `map_oai_finish_reason` is the production
+    /// converter; both `complete()` and the streaming path delegate to
+    /// it. Driving it directly here ensures a refactor that loses the
+    /// `Some("content_filter")` arm cannot pass tests (#3450).
+    #[test]
+    fn map_oai_finish_reason_routes_content_filter_to_filtered() {
+        assert_eq!(
+            map_oai_finish_reason(Some("content_filter"), false),
+            StopReason::ContentFiltered
+        );
+        // Even when tool calls were emitted, a content_filter finish
+        // must outrank the tool_calls catch-all.
+        assert_eq!(
+            map_oai_finish_reason(Some("content_filter"), true),
+            StopReason::ContentFiltered
+        );
+    }
+
+    /// Sanity coverage for the rest of the mapping so a regression in
+    /// any branch is observable from this one place.
+    #[test]
+    fn map_oai_finish_reason_handles_known_finish_reasons() {
+        assert_eq!(
+            map_oai_finish_reason(Some("stop"), false),
+            StopReason::EndTurn
+        );
+        assert_eq!(
+            map_oai_finish_reason(Some("tool_calls"), true),
+            StopReason::ToolUse
+        );
+        assert_eq!(
+            map_oai_finish_reason(Some("length"), false),
+            StopReason::MaxTokens
+        );
+        // Unknown finish reasons fall back to tool-use vs end-turn
+        // based on whether tool calls were actually emitted.
+        assert_eq!(map_oai_finish_reason(None, false), StopReason::EndTurn);
+        assert_eq!(map_oai_finish_reason(None, true), StopReason::ToolUse);
+    }
+
+    /// Driving a real `OaiResponse` through `serde` and into the helper
+    /// gives end-to-end coverage from the wire format to the
+    /// `StopReason` the runtime reads — catches both serde drift
+    /// (renamed field, wrong type) and mapping regressions.
+    #[test]
+    fn deserialized_oai_response_with_content_filter_yields_filtered_stop() {
+        let raw = r#"{
+            "id": "chatcmpl-x",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "gpt-test",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "" },
+                "finish_reason": "content_filter"
+            }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 0 }
+        }"#;
+        let response: OaiResponse =
+            serde_json::from_str(raw).expect("parse content_filter response");
+        let choice = response.choices.into_iter().next().expect("one choice");
+        assert_eq!(
+            map_oai_finish_reason(choice.finish_reason.as_deref(), false),
+            StopReason::ContentFiltered
+        );
+    }
+
+    /// Regression: `ContentBlock::ImageFile` paths must be read via
+    /// `tokio::task::block_in_place` so a multi-MB image read does not
+    /// stall the tokio worker pool. The base64-encoded bytes embedded
+    /// in the resulting `OaiContentPart::ImageUrl` data URL must match
+    /// the bytes on disk.
+    ///
+    /// Wrap with `flavor = "multi_thread"` so `block_in_place` does not
+    /// panic on a single-threaded runtime.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn build_request_imagefile_reads_bytes_without_blocking_worker() {
+        use base64::Engine;
+        use librefang_types::message::Message;
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("img.png");
+        let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 11, 22, 33];
+        std::fs::File::create(&path)
+            .and_then(|mut f| f.write_all(&bytes))
+            .expect("write png");
+
+        let driver = OpenAIDriver::new("k".to_string(), "https://api.openai.com/v1".to_string());
+        let request = CompletionRequest {
+            model: "gpt-4o-mini".to_string(),
+            messages: std::sync::Arc::new(vec![Message {
+                role: Role::User,
+                content: MessageContent::Blocks(vec![ContentBlock::ImageFile {
+                    media_type: "image/png".to_string(),
+                    path: path.to_string_lossy().into_owned(),
+                }]),
+                pinned: false,
+                timestamp: None,
+            }]),
+            tools: std::sync::Arc::new(Vec::new()),
+            max_tokens: 256,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: librefang_types::model_catalog::ReasoningEchoPolicy::default(),
+
+            ..Default::default()
+        };
+        let wire = driver.build_request(&request).expect("build");
+        let user = wire
+            .messages
+            .iter()
+            .find(|m| m.role == "user")
+            .expect("user message");
+        let parts = match user.content.as_ref().expect("content present") {
+            OaiMessageContent::Parts(p) => p,
+            OaiMessageContent::Text(_) => panic!("expected Parts content"),
+        };
+        let url = parts
+            .iter()
+            .find_map(|p| match p {
+                OaiContentPart::ImageUrl { image_url } => Some(image_url.url.clone()),
+                _ => None,
+            })
+            .expect("OaiContentPart::ImageUrl present");
+        let expected = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let want = format!("data:image/png;base64,{expected}");
+        assert_eq!(url, want, "encoded bytes must round-trip");
+    }
+
+    /// Regression: `preprocess_moonshot_files` must leave `ContentBlock::Image`
+    /// blocks with `media_type` starting with `"image/"` completely untouched
+    /// (no network call, no `<<moonshot_file:…>>` marker). Non-image MIME types
+    /// (e.g. `"application/pdf"`) must still go through the file-upload OCR
+    /// path and carry the marker.
+    ///
+    /// The test also pins the current case-sensitive guard: `"image/JPEG"`
+    /// (upper-case MIME) does NOT match `starts_with("image/")` for the
+    /// upper-case variant check — wait, "image/JPEG".starts_with("image/") IS
+    /// true. The guard is `starts_with("image/")` which is case-sensitive on
+    /// the part *after* the slash. Per the review the interesting case is that
+    /// `"IMAGE/jpeg"` (upper-case scheme) would NOT be skipped. We pin that
+    /// here to document the existing behaviour as a regression guard.
+    ///
+    /// Networking is avoided entirely: the `image/png` path hits `continue`
+    /// before any I/O; the `application/pdf` path tries `tokio::fs::read` on
+    /// a non-existent path, which returns an `Err`, and `preprocess` surfaces
+    /// it — we assert the specific error to confirm the upload arm was reached.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn preprocess_moonshot_files_skips_image_mime_keeps_non_image() {
+        use base64::Engine;
+        use librefang_types::message::Message;
+
+        // A trivial 1×1 red PNG pixel encoded as base64.
+        let png_b64 =
+            base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nfake-png-bytes");
+
+        // Build a Moonshot driver (base_url contains "moonshot" so is_moonshot()
+        // returns true, but we call preprocess directly so it doesn't matter).
+        let driver = OpenAIDriver::new(
+            "fake-key".to_string(),
+            "https://api.moonshot.cn/v1".to_string(),
+        );
+
+        // ── Case 1: image/png block — must be left untouched ─────────────────
+        let mut req_image = CompletionRequest {
+            model: "moonshot-v1-8k".to_string(),
+            messages: std::sync::Arc::new(vec![Message {
+                role: Role::User,
+                content: MessageContent::Blocks(vec![ContentBlock::Image {
+                    media_type: "image/png".to_string(),
+                    data: png_b64.clone(),
+                }]),
+                pinned: false,
+                timestamp: None,
+            }]),
+            tools: std::sync::Arc::new(vec![]),
+            max_tokens: 256,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: librefang_types::model_catalog::ReasoningEchoPolicy::default(),
+
+            ..Default::default()
+        };
+
+        // preprocess should succeed and leave the image block unchanged.
+        driver
+            .preprocess_moonshot_files(&mut req_image)
+            .await
+            .expect("image/png block must not trigger any I/O or error");
+
+        let blocks = match &req_image.messages[0].content {
+            MessageContent::Blocks(b) => b,
+            _ => panic!("expected Blocks"),
+        };
+        assert_eq!(blocks.len(), 1, "block count must be unchanged");
+        match &blocks[0] {
+            ContentBlock::Image { media_type, data } => {
+                assert_eq!(media_type, "image/png", "media_type must be unchanged");
+                assert_eq!(data, &png_b64, "base64 data must be unchanged");
+            }
+            other => panic!("image/png block must remain ContentBlock::Image, got {other:?}"),
+        }
+
+        // ── Case 2: application/pdf ImageFile block — must reach upload path ─
+        // We pass a non-existent file path so the upload arm tries
+        // `tokio::fs::read` and fails immediately. We verify the error
+        // message confirms the read was attempted (upload arm reached).
+        let mut req_pdf = CompletionRequest {
+            model: "moonshot-v1-8k".to_string(),
+            messages: std::sync::Arc::new(vec![Message {
+                role: Role::User,
+                content: MessageContent::Blocks(vec![ContentBlock::ImageFile {
+                    media_type: "application/pdf".to_string(),
+                    path: "/nonexistent/path/document.pdf".to_string(),
+                }]),
+                pinned: false,
+                timestamp: None,
+            }]),
+            tools: std::sync::Arc::new(vec![]),
+            max_tokens: 256,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: librefang_types::model_catalog::ReasoningEchoPolicy::default(),
+
+            ..Default::default()
+        };
+
+        let err = driver
+            .preprocess_moonshot_files(&mut req_pdf)
+            .await
+            .expect_err("application/pdf must attempt file read and fail on missing path");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("/nonexistent/path/document.pdf"),
+            "error must mention the file path (upload arm was reached); got: {msg}"
+        );
+
+        // ── Case 3: IMAGE/jpeg (upper-case scheme) — pins case-sensitive guard ─
+        // "IMAGE/jpeg".starts_with("image/") is false, so this block is NOT
+        // skipped and still falls through to the upload arm. Confirm it reaches
+        // the I/O path the same way as the pdf case above.
+        let jpeg_b64 = base64::engine::general_purpose::STANDARD.encode(b"fake-jpeg");
+        let mut req_upper = CompletionRequest {
+            model: "moonshot-v1-8k".to_string(),
+            messages: std::sync::Arc::new(vec![Message {
+                role: Role::User,
+                content: MessageContent::Blocks(vec![ContentBlock::Image {
+                    media_type: "IMAGE/jpeg".to_string(),
+                    data: jpeg_b64,
+                }]),
+                pinned: false,
+                timestamp: None,
+            }]),
+            tools: std::sync::Arc::new(vec![]),
+            max_tokens: 256,
+            temperature: 0.7,
+            system: None,
+            thinking: None,
+            prompt_caching: false,
+            cache_ttl: None,
+            prompt_cache_strategy: None,
+            response_format: None,
+            timeout_secs: None,
+            extra_body: None,
+            agent_id: None,
+            session_id: None,
+            step_id: None,
+            reasoning_echo_policy: librefang_types::model_catalog::ReasoningEchoPolicy::default(),
+
+            ..Default::default()
+        };
+
+        // IMAGE/jpeg does NOT start with "image/" so the guard is NOT triggered.
+        // The upload arm runs: base64-decode succeeds, then upload_file_to_moonshot
+        // makes an HTTP request to a real URL — which fails with a network error.
+        // Any LlmError is acceptable here; the key assertion is that it IS an error
+        // (upload path was entered, not skipped).
+        let result_upper = driver.preprocess_moonshot_files(&mut req_upper).await;
+        assert!(
+            result_upper.is_err(),
+            "IMAGE/jpeg (upper-case) must NOT be skipped — upload arm must be entered and fail with no real server"
+        );
+    }
+
+    // ── #10: transport-error retry behaviour ────────────────────────────
+
+    /// Spawn a fake HTTP server that drops (resets) its first `drop_first`
+    /// connections — surfacing as a transport-layer `send()` error on the
+    /// client before any HTTP status — then serves a valid OpenAI
+    /// chat-completions 200 on the next connection. Returns the bound
+    /// `http://127.0.0.1:PORT` base URL (no `/v1` suffix; the driver appends
+    /// `/chat/completions`).
+    async fn spawn_drop_then_ok_server(drop_first: usize) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let body = serde_json::json!({
+            "id": "cmpl-test",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        })
+        .to_string();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut dropped = 0usize;
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                if dropped < drop_first {
+                    dropped += 1;
+                    // Drop the socket without responding — the in-flight client
+                    // request fails at the transport layer (reset / incomplete
+                    // message), which before #10 bypassed the retry loop.
+                    drop(sock);
+                    continue;
+                }
+                let mut buf = [0u8; 8192];
+                let _ = sock.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.flush().await;
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    /// Spawn a minimal server that answers any request with the given raw SSE body as `text/event-stream`, then closes the socket.
+    async fn spawn_sse_server(sse_body: String) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 8192];
+                let _ = sock.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    sse_body.len(),
+                    sse_body
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.flush().await;
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn streamed_tool_call_with_out_of_range_index_is_dropped() {
+        let bad_index = MAX_STREAMED_TOOL_CALLS; // first out-of-range value
+        let sse_body = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":{bad_index},\"id\":\"call_evil\",\"function\":{{\"name\":\"evil\",\"arguments\":\"{{}}\"}}}}]}}}}]}}\n\
+             data: {{\"choices\":[{{\"delta\":{{\"content\":\"ok\"}}}}]}}\n\
+             data: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"stop\"}}],\"usage\":{{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}}}\n\
+             data: [DONE]\n"
+        );
+        let base = spawn_sse_server(sse_body).await;
+        let driver = OpenAIDriver::new("test-key".to_string(), base);
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let resp = driver
+            .stream(transport_retry_request(), tx)
+            .await
+            .expect("stream must complete instead of OOMing on a huge tool index");
+
+        let mut events = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+        // The out-of-range tool call is dropped: no ToolUseStart is emitted and
+        // the final response carries no tool-call content block.
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolUseStart { .. })),
+            "out-of-range tool index must not start a tool call"
+        );
+        assert!(
+            !resp
+                .content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::ToolUse { .. })),
+            "out-of-range tool index must not appear in the response"
+        );
+        assert_eq!(resp.text(), "ok");
+    }
+
+    fn transport_retry_request() -> librefang_llm_driver::CompletionRequest {
+        use librefang_types::message::{Message, MessageContent, Role};
+        librefang_llm_driver::CompletionRequest {
+            model: "test-model".to_string(),
+            messages: std::sync::Arc::new(vec![Message {
+                role: Role::User,
+                content: MessageContent::Text("hi".to_string()),
+                pinned: false,
+                timestamp: None,
+            }]),
+            max_tokens: 16,
+            ..Default::default()
+        }
+    }
+
+    // The transport-layer error (a reset connection before any HTTP status)
+    // used to return immediately via `?`, never entering the retry loop. With
+    // #10 it is routed through the same attempt/backoff decision as a 429, so a
+    // single dropped connection followed by a healthy response succeeds. The
+    // OpenAI transport-retry path uses `standard_retry_delay`, so the test
+    // zero-backoff guard keeps this fast.
+    #[tokio::test]
+    async fn transport_error_is_retried_then_succeeds() {
+        let _g = crate::backoff::enable_test_zero_backoff();
+        let base = spawn_drop_then_ok_server(1).await;
+        let driver = OpenAIDriver::new("test-key".to_string(), base);
+        let resp = driver
+            .complete(transport_retry_request())
+            .await
+            .expect("driver must retry past one transport error and succeed");
+        assert_eq!(resp.text(), "ok");
+    }
+
+    // `max_retries = 0` disables the in-driver retry loop, so the first
+    // transport error propagates without a second attempt — proving both that
+    // the cap is honoured and that 0 is a meaningful disable value.
+    #[tokio::test]
+    async fn max_retries_zero_does_not_retry_transport_error() {
+        let _g = crate::backoff::enable_test_zero_backoff();
+        // Drop far more connections than any retry budget would cover.
+        let base = spawn_drop_then_ok_server(10).await;
+        let driver = OpenAIDriver::new("test-key".to_string(), base).with_max_retries(0);
+        let err = driver
+            .complete(transport_retry_request())
+            .await
+            .expect_err("max_retries(0) must not retry a transport error");
+        assert!(
+            matches!(err, LlmError::Http(_)),
+            "expected a transport (Http) error, got: {err:?}"
+        );
+    }
+
+    // The default driver (max_retries = 3) keeps retrying past several
+    // consecutive transport errors and still succeeds — exercising the loop
+    // body more than once, not just the first re-attempt.
+    #[tokio::test]
+    async fn default_retries_survive_multiple_transport_errors() {
+        let _g = crate::backoff::enable_test_zero_backoff();
+        let base = spawn_drop_then_ok_server(3).await;
+        let driver = OpenAIDriver::new("test-key".to_string(), base);
+        let resp = driver
+            .complete(transport_retry_request())
+            .await
+            .expect("default max_retries=3 must survive 3 transport errors");
+        assert_eq!(resp.text(), "ok");
+    }
+}

@@ -1,147 +1,41 @@
-# Academic References — Mediálny Dezolator
+# Academic References — Mediálny Dezolator Pipeline
 
-Complete bibliography for the Mediálny Dezolator disinformation detection pipeline (v3.1.x).
-Citations are grouped by domain. See `CITATION_AUDIT.md` for verification status of each entry.
+This document catalogs the primary academic literature anchoring the pipeline architecture.
 
----
+## Sequence Classification & Text Embeddings
+- **mDeBERTa-v3**: He, P., Gao, J., & Chen, W. (2021). *mDeBERTa: A Multilingual Pre-trained Language Model with DeBERTa*. arXiv:2111.09543
+- **BGE-M3**: Chen, J., et al. (2024). *BGE-M3: Multi-Lingual, Multi-Granularity, Multi-Task Text Embeddings*. arXiv:2402.03216
 
-## Foundation
+## Evidence Retrieval
+- **AVERITEC**: Schlichtkrull, M., et al. (2023). *AVERITEC: A Dataset for Real-world Claim Verification with Evidence from the Web*. arXiv:2305.17026
 
-[1] Avram, A.-A., Groza, A., & Lecu, A. (2025). *MCP-Orchestrated Multi-Agent System
-    for Automated Disinformation Detection*. SYNASC 2025.
-    arXiv:2508.10143
+## Cross-lingual NLI
+- **XNLI**: Conneau, A., et al. (2018). *XNLI: Evaluating Cross-lingual Sentence Representations*. arXiv:1809.05053
 
----
+## Hallucination Detection
+- **SelfCheckGPT**: Manakul, P., Liusie, A., & Gales, M. J. F. (2023). *SelfCheckGPT: Zero-Resource Black-Box Hallucination Detection for Generative Large Language Models*. arXiv:2303.08896
 
-## Multi-Agent Orchestration & MCP
+## Temporal Graph Networks (CIB)
+- **TGN**: Rossi, E., et al. (2020). *Temporal Graph Networks for Deep Learning on Dynamic Graphs*. arXiv:2006.10637
 
-[2] Wu, Q., et al. (2023). *AutoGen: Enabling Next-Gen LLM Applications via
-    Multi-Agent Conversation*. arXiv:2308.08155
+## Check-Worthiness Evaluation
+- **CLEF CheckThat!**: Nakov, P., et al. (2021). *The CLEF-2021 CheckThat! Lab on Detecting Check-Worthy Claims, Previously Fact-Checked Claims, and Fake News*. arXiv:2109.10260
 
-[3] Du, Y., et al. (2023). *Improving Factuality and Reasoning in Language Models
-    through Multiagent Debate*. arXiv:2305.14325
+## Calibration
+- **Platt Scaling / Temperature Scaling**: Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). *On calibration of modern neural networks*. arXiv:1706.04599
 
-[4] Park, J.S., et al. (2023). *Generative Agents: Interactive Simulacra of Human
-    Behavior*. arXiv:2304.03442
+## Narrative Frames
+- **NewsFrames**: Chen, Y., et al. (2022). *NewsFrames: A Large-Scale Taxonomy of News Framing*. arXiv:2210.12029
 
-[5] *Operationalizing Multi-Agent Interoperability via Contract-Driven Model Context
-    Protocols*. IEEE 2026. (DOI pending)
+## Stance Detection
+- **Fact or Fiction (Wadden et al.)**: Wadden, D., et al. (2020). *Fact or Fiction: Verifying Scientific Claims*. arXiv:2004.14545
+- **FEVER**: Thorne, J., et al. (2018). *FEVER: a Large-scale Dataset for Fact Extraction and VERification*. arXiv:1803.05355
 
----
+## Adversarial NLI
+- **Adversarial NLI**: Nie, Y., et al. (2019). *Adversarial NLI: A New Benchmark for Natural Language Understanding*. arXiv:1910.14599
 
-## Semantic Embeddings & Multilingual NLP
+## LLM as a Judge
+- **Judging LLM-as-a-Judge**: Zheng, L., et al. (2023). *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*. arXiv:2306.05685
 
-[6] Reimers, N., & Gurevych, I. (2019). *Sentence-BERT: Sentence Embeddings using
-    Siamese BERT-Networks*. EMNLP 2019.
-    arXiv:1908.10084
-
-[7] Pikuliak, M., et al. (2021). *SlovakBERT: Slovak Masked Language Model*.
-    EMNLP 2021 Findings.
-    HuggingFace: gerulata/slovakbert
-
-[8] Conneau, A., et al. (2020). *Unsupervised Cross-lingual Representation Learning
-    at Scale (XLM-R)*. ACL 2020.
-    arXiv:1911.02116
-
-[9] DeepPavlov. (2019). *Slavic-BERT NER*. BSNLP 2019.
-    GitHub: deeppavlov/Slavic-BERT-NER
-
----
-
-## Coordinated Inauthentic Behavior
-
-[10] Nizzoli, L., Tardelli, S., Avvenuti, M., Cresci, S., & Tesconi, M. (2021).
-     *Coordinated Behavior on Social Media in 2019 UK General Election*.
-     ICWSM 2021.
-     arXiv:2008.08370
-
-[11] Cresci, S., Nizzoli, L., et al. (2022). *The Spread of Propaganda by
-     Coordinated Communities on Social Media*. ACM CSCW 2022.
-     DOI: 10.1145/3501247.3531543
-
----
-
-## Source Credibility & Trust
-
-[12] Falcone, R., & Castelfranchi, C. (2001). *Social Trust: A Cognitive Approach*.
-     In: Trust and Deception in Virtual Societies. Springer.
-
-[13] *Addressing Misinformation in Online Social Networks: Diverse Platforms and
-     the Potential of Multiagent Trust Modeling*. MDPI Information 2020.
-     DOI: 10.3390/info11110539
-
----
-
-## Uncertainty Estimation
-
-[14] Xiong, M., et al. (2023). *Can LLMs Express Their Uncertainty? An Empirical
-     Evaluation of Confidence Elicitation in LLMs*.
-     arXiv:2306.13063
-
----
-
-## Ensemble & Bayesian Methods
-
-[15] Hoeting, J.A., Madigan, D., Raftery, A.E., & Volinsky, C.T. (1999).
-     *Bayesian Model Averaging: A Tutorial*. Statistical Science 14(4).
-
-[16] Cesa-Bianchi, N., & Lugosi, G. (2006). *Prediction, Learning, and Games*.
-     Cambridge University Press.
-
----
-
-## Security & Adversarial
-
-[17] Greshake, K., et al. (2023). *More than you've asked for: A Comprehensive
-     Analysis of Novel Prompt Injection Threats to Application-Integrated Large
-     Language Models*. arXiv:2302.12173
-
-[18] Perez, E., et al. (2022). *Red Teaming Language Models with Language Models*.
-     arXiv:2202.03286
-
----
-
-## Visual & Deepfake Detection
-
-[19] Chandra, N., et al. (2025). *Deepfake-Eval-2024: A Multi-Modal In-the-Wild
-     Deepfake Detection Benchmark*. arXiv:2503.02857
-
-[20] *Evolving from Single-Modal to Multi-Modal Facial Deepfake Detection:
-     Progress and Challenges*. arXiv:2406.06965
-
-[21] *Passive Deepfake Detection Across Multi-Modalities: A Comprehensive Survey*.
-     arXiv:2411.17911
-
----
-
-## Knowledge Graphs
-
-[22] Vrandečić, D., & Krötzsch, M. (2014). *Wikidata: A Free Collaborative
-     Knowledgebase*. Communications of the ACM 57(10).
-     DOI: 10.1145/2629489
-
----
-
-## Inter-Annotator Agreement
-
-[23] Krippendorff, K. (2004). *Content Analysis: An Introduction to Its
-     Methodology* (2nd ed.). Sage Publications.
-
-[24] Hayes, A.F., & Krippendorff, K. (2007). *Answering the Call for a Standard
-     Reliability Measure for Coding Data*. Communication Methods and Measures 1(1).
-
----
-
-## Speculative / Aspirational (Wave 5–6, quarantined)
-
-> [!WARNING]
-> The following references underpin speculative agents quarantined under
-> `agents/speculative/`. They are aspirational research directions, NOT
-> production-ready implementations.
-
-[25] Ha, D., & Schmidhuber, J. (2021). *Recurrent Neural Networks for Control*.
-     Nature Machine Intelligence.
-     arXiv:2006.04439 — basis for Liquid Neural Network detector (Wave 5)
-
-[26] Raposo, D., et al. (2024). *Mixture-of-Depths: Dynamically Allocating Compute
-     in Transformer Models*. arXiv:2404.02258 — basis for MoD router (Wave 5)
+## Retrieval-Augmented Generation
+- **RAG**: Lewis, P., et al. (2020). *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. arXiv:2005.11401

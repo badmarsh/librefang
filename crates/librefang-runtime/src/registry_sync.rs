@@ -1,0 +1,1290 @@
+//! Registry sync — download the librefang-registry tarball and copy content to
+//! `~/.librefang/`. Called automatically on kernel boot when the providers/
+//! directory is missing, ensuring a fresh install or upgrade gets content
+//! without requiring an explicit `librefang init`.
+//!
+//! Tries git first (incremental pull, private fork support). Falls back to HTTP
+//! tarball download when git is unavailable (Docker, minimal VMs).
+//! if the HTTP download fails, for users behind proxies that block GitHub
+//! archive downloads.
+
+use std::path::Path;
+use std::process::Command;
+use std::sync::Mutex;
+
+/// Owner/repo path of the registry, shared by every forge.
+const REGISTRY_REPO_PATH: &str = "librefang/librefang-registry";
+
+/// Branch the registry sync tracks.
+const REGISTRY_BRANCH: &str = "main";
+
+/// The three forge-specific URLs/strings the sync needs: where to download the tarball, where to `git clone`, and the top-level directory name inside the downloaded tarball (which the extractor strips).
+struct RegistryUrls {
+    /// HTTP tarball URL (no auth required).
+    tarball_url: String,
+    /// Git clone URL (fallback when the HTTP download fails).
+    clone_url: String,
+    /// Prefix inside the tarball, e.g. `librefang-registry-main/`.
+    tarball_prefix: String,
+}
+
+/// Derive the tarball / clone / prefix values from the configured registry host.
+///
+/// `registry_host` is the full base URL of the forge hosting the registry (e.g. `"https://codeberg.org"`).
+/// When `None`, the values are byte-identical to the GitHub defaults shipped in earlier releases.
+///
+/// GitHub and Forgejo (which Codeberg runs) disagree on both the archive path and the tarball's top-level directory:
+///
+/// - GitHub: `…/archive/refs/heads/{branch}.tar.gz`, prefix `{repo}-{branch}/`.
+/// - Forgejo/Codeberg: `…/archive/{branch}.tar.gz`, prefix `{repo}/`.
+///
+/// The git clone URL is `{host}/{repo}.git` on both.
+/// We branch on whether a *non-GitHub* host override is set: an unset host —
+/// or an explicit `github.com` (any case, trailing slash, or empty string) —
+/// keeps the GitHub scheme; any other host uses the Forgejo scheme. Treating an
+/// explicit `https://github.com` as a Forgejo forge would derive
+/// `…/archive/{branch}.tar.gz` with prefix `{repo}/`, neither of which matches
+/// GitHub's tarball layout, so the sync would silently fail to find the files.
+fn registry_urls(registry_host: Option<&str>) -> RegistryUrls {
+    let repo_name = REGISTRY_REPO_PATH
+        .rsplit('/')
+        .next()
+        .unwrap_or(REGISTRY_REPO_PATH);
+    // Trim trailing slashes, drop an empty string, and fold an explicit
+    // github.com host back to the GitHub default so it never reaches the
+    // Forgejo branch with an incompatible archive scheme.
+    let forge_host = registry_host
+        .map(|h| h.trim_end_matches('/'))
+        .filter(|h| !h.is_empty() && !h.eq_ignore_ascii_case("https://github.com"));
+    match forge_host {
+        None => RegistryUrls {
+            tarball_url: format!(
+                "https://github.com/{REGISTRY_REPO_PATH}/archive/refs/heads/{REGISTRY_BRANCH}.tar.gz"
+            ),
+            clone_url: format!("https://github.com/{REGISTRY_REPO_PATH}.git"),
+            tarball_prefix: format!("{repo_name}-{REGISTRY_BRANCH}/"),
+        },
+        Some(host) => RegistryUrls {
+            tarball_url: format!("{host}/{REGISTRY_REPO_PATH}/archive/{REGISTRY_BRANCH}.tar.gz"),
+            clone_url: format!("{host}/{REGISTRY_REPO_PATH}.git"),
+            tarball_prefix: format!("{repo_name}/"),
+        },
+    }
+}
+
+/// Default cache TTL: how long (in seconds) before we re-download the registry.
+/// Callers without access to `KernelConfig` can use this value directly.
+pub const DEFAULT_CACHE_TTL_SECS: u64 = 24 * 60 * 60; // 24 hours
+
+/// Serialises all writes to `~/.librefang/registry/`.
+///
+/// Without this, a manual `POST /api/catalog/update` firing at the same
+/// time as the 24h background catalog task could have two `git pull`
+/// subprocesses racing on the same working tree, which corrupts the
+/// checkout. Boot-time `sync_registry` and the catalog-only
+/// `refresh_registry_checkout` both acquire it. The lock is held across
+/// the blocking git/tar work; callers already run these via
+/// `spawn_blocking`, so a `std::sync::Mutex` is appropriate.
+static SYNC_LOCK: Mutex<()> = Mutex::new(());
+
+/// Refresh only the `~/.librefang/registry/` checkout from upstream —
+/// no fan-out into `workspaces/`, `providers/`, `workflows/templates/`
+/// etc. Callers like `catalog_sync` want the repo refreshed without
+/// accidentally re-installing agent templates or overwriting workflow
+/// templates every time the user clicks "Update catalog".
+///
+/// Returns `true` when the checkout is in a usable state (fresh pull,
+/// fresh clone, fresh tarball extract, or the on-disk copy from a
+/// previous successful run).
+pub fn refresh_registry_checkout(
+    home_dir: &Path,
+    cache_ttl_secs: u64,
+    registry_mirror: &str,
+    registry_host: Option<&str>,
+) -> bool {
+    let _guard = SYNC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let registry_cache = home_dir.join("registry");
+
+    if should_refresh(&registry_cache, cache_ttl_secs) {
+        // Try git first (faster incremental updates, private fork support)
+        let git_ok = match git_clone_fallback(&registry_cache, registry_mirror, registry_host) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::debug!("Git sync unavailable: {e} — trying HTTP download");
+                false
+            }
+        };
+
+        // Fall back to HTTP tarball if git failed
+        if !git_ok {
+            if let Err(e) = download_and_extract(&registry_cache, registry_mirror, registry_host) {
+                tracing::warn!("HTTP registry download also failed: {e}");
+                return registry_cache.exists();
+            }
+        }
+    } else {
+        tracing::debug!("Registry cache is fresh, skipping download");
+    }
+    true
+}
+
+/// Sync all content from the registry to the local librefang home directory.
+///
+/// Downloads the registry tarball via HTTP, extracts it, then copies items
+/// that don't already exist on disk (preserves user customization).
+/// Tries git first (incremental pull, supports private forks), falls back to
+/// HTTP tarball download when git is unavailable (Docker, minimal VMs).
+///
+/// `cache_ttl_secs` controls how long the local cache is considered fresh
+/// before triggering a re-download. Pass [`DEFAULT_CACHE_TTL_SECS`] when
+/// no user-configured value is available.
+///
+/// `registry_mirror` is an optional proxy/mirror prefix for GitHub URLs.
+/// When non-empty, all GitHub URLs are prefixed with this value (e.g.
+/// `"https://ghproxy.cn"` rewrites `https://github.com/...` to
+/// `https://ghproxy.cn/https://github.com/...`).
+///
+/// `registry_host` is the optional full base URL of the forge hosting the registry (e.g. `Some("https://codeberg.org")`).
+/// `None` keeps the GitHub defaults — see [`registry_urls`].
+pub fn sync_registry(
+    home_dir: &Path,
+    cache_ttl_secs: u64,
+    registry_mirror: &str,
+    registry_host: Option<&str>,
+) -> bool {
+    let _guard = SYNC_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let registry_cache = home_dir.join("registry");
+
+    if should_refresh(&registry_cache, cache_ttl_secs) {
+        // Try git first (faster incremental updates, private fork support)
+        let git_ok = match git_clone_fallback(&registry_cache, registry_mirror, registry_host) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::debug!("Git sync unavailable: {e} — trying HTTP download");
+                false
+            }
+        };
+
+        // Fall back to HTTP tarball if git failed
+        if !git_ok {
+            if let Err(e) = download_and_extract(&registry_cache, registry_mirror, registry_host) {
+                tracing::warn!("HTTP registry download also failed: {e}");
+                if !registry_cache.exists() {
+                    return false;
+                }
+            }
+        }
+    } else {
+        tracing::debug!("Registry cache is fresh, skipping download");
+    }
+
+    // Pre-install core content users need out of the box.
+    // Skills and plugins stay in registry — users install via dashboard.
+    for &dir_name in &["providers", "channels"] {
+        let src_dir = registry_cache.join(dir_name);
+        if src_dir.exists() {
+            sync_flat_files(&src_dir, &home_dir.join(dir_name), dir_name);
+        }
+    }
+    // MCP catalog templates: upstream publishes them under `mcp/`;
+    // on disk they live as the read-only catalog at `mcp/catalog/`.
+    {
+        let src_dir = registry_cache.join("mcp");
+        if src_dir.exists() {
+            sync_flat_files(
+                &src_dir,
+                &home_dir.join("mcp").join("catalog"),
+                "mcp/catalog",
+            );
+        }
+    }
+
+    // Pre-install agent templates from registry (e.g. hello-world)
+    let agents_src = registry_cache.join("agents");
+    if agents_src.exists() {
+        let agents_dest = home_dir.join("workspaces").join("agents");
+        if let Ok(entries) = std::fs::read_dir(&agents_src) {
+            for entry in entries.flatten() {
+                let src = entry.path();
+                if !src.is_dir() || !src.join("agent.toml").exists() {
+                    continue;
+                }
+                let name = src.file_name().unwrap_or_default();
+                let dest = agents_dest.join(name);
+                if !dest.exists() {
+                    let _ = std::fs::create_dir_all(&dest);
+                    let _ = copy_dir_recursive(&src, &dest);
+                }
+            }
+        }
+    }
+
+    // Pre-install workflow templates (always overwrite so updates land)
+    let workflows_src = registry_cache.join("workflows");
+    if workflows_src.is_dir() {
+        let workflows_dest = home_dir.join("workflows").join("templates");
+        let _ = std::fs::create_dir_all(&workflows_dest);
+        let mut installed = 0usize;
+        if let Ok(entries) = std::fs::read_dir(&workflows_src) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                    if let Some(name) = path.file_name() {
+                        let dest = workflows_dest.join(name);
+                        if std::fs::copy(&path, &dest).is_ok() {
+                            installed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if installed > 0 {
+            tracing::info!("Pre-installed {installed} workflow template(s) from registry");
+        }
+    }
+
+    // Sync aliases (only on first run — user may customize)
+    let aliases_src = registry_cache.join("aliases.toml");
+    let aliases_dest = home_dir.join("aliases.toml");
+    if aliases_src.exists() && !aliases_dest.exists() {
+        let _ = std::fs::copy(&aliases_src, &aliases_dest);
+    }
+
+    // Sync schema — only overwrite when source is machine-parseable.
+    // The registry may still ship the old comment-based format; copying that
+    // would replace a valid schema the user (or a prior release) placed manually.
+    let schema_src = registry_cache.join("schema.toml");
+    let schema_dest = home_dir.join("schema.toml");
+    if schema_src.exists() {
+        let src_parseable = std::fs::read_to_string(&schema_src)
+            .ok()
+            .and_then(|c| {
+                toml::from_str::<librefang_types::registry_schema::RegistrySchema>(&c).ok()
+            })
+            .is_some_and(|s| !s.content_types.is_empty());
+        if src_parseable {
+            let _ = std::fs::copy(&schema_src, &schema_dest);
+        }
+    }
+
+    // Clean up stale hand directories in workspaces
+    let workspaces_dir = home_dir.join("workspaces");
+    if workspaces_dir.exists() {
+        cleanup_stale_dirs(&workspaces_dir);
+    }
+    true
+}
+
+/// Check whether we should re-download the registry.
+///
+/// Returns `false` if the cache exists and the marker file is younger than
+/// `cache_ttl_secs`.
+fn should_refresh(registry_cache: &Path, cache_ttl_secs: u64) -> bool {
+    let marker = registry_cache.join(".sync_marker");
+    if !marker.exists() {
+        return true;
+    }
+    let Ok(meta) = marker.metadata() else {
+        return true;
+    };
+    let Ok(modified) = meta.modified() else {
+        return true;
+    };
+    let Ok(age) = modified.elapsed() else {
+        return true;
+    };
+    age.as_secs() > cache_ttl_secs
+}
+
+/// Touch (create/update) the sync marker file.
+fn touch_marker(registry_cache: &Path) {
+    let marker = registry_cache.join(".sync_marker");
+    let _ = std::fs::create_dir_all(registry_cache);
+    let _ = std::fs::write(&marker, "");
+}
+
+/// Prefix a URL with the mirror/proxy base when set.
+///
+/// E.g. `apply_mirror("https://ghproxy.cn", "https://github.com/foo")` →
+///      `"https://ghproxy.cn/https://github.com/foo"`
+fn apply_mirror(mirror: &str, url: &str) -> String {
+    if mirror.is_empty() {
+        url.to_string()
+    } else {
+        format!("{}/{}", mirror.trim_end_matches('/'), url)
+    }
+}
+
+/// Extract the entries of a (already-decompressed) tar archive into
+/// `tmp_dir`, stripping the GitHub `librefang-registry-main/` prefix and
+/// enforcing the security invariants:
+///
+/// - Skip every entry that is not a regular file or directory
+///   (`SymbolicLink`, `HardLink`, device, fifo) — `tar::Entry::unpack`
+///   honours symlink/hardlink entries, which an attacker-influenced
+///   tarball (mirror substitution, see `apply_mirror`) could use to
+///   escape the cache or clobber arbitrary files (issue #5141).
+/// - Reject any entry whose path (after the plain-string prefix strip)
+///   still contains a `..` / root / drive-prefix component — the strip
+///   does not normalise, so `…-main/foo/../../../etc/cron.d/owned`
+///   survives it.
+/// - Belt-and-suspenders: re-verify the resolved destination's deepest
+///   existing ancestor canonicalises to inside `tmp_dir`.
+///
+/// Factored out of `download_and_extract` so the security logic is unit
+/// testable without performing a network download.
+pub(crate) fn extract_entries_into<R: std::io::Read>(
+    archive: &mut tar::Archive<R>,
+    tmp_dir: &Path,
+    tarball_prefix: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Canonicalise the extraction root once so the per-entry containment
+    // check below operates on a path with no symlink / `.` / `..` segments.
+    let tmp_canon = tmp_dir.canonicalize()?;
+
+    for entry in archive.entries()? {
+        let mut entry: tar::Entry<_> = entry?;
+        let path = entry.path()?;
+        let path_str = path.to_string_lossy().into_owned();
+
+        // SECURITY: skip symlink / hardlink / device / fifo entries
+        // entirely. `entry.unpack` honours `SymbolicLink`/`HardLink`
+        // entries, so a tarball containing
+        // `librefang-registry-main/x -> /etc/cron.d` followed by a file
+        // entry writing through `x/owned` would escape the cache dir
+        // (or, for a hardlink, clobber an arbitrary existing file).
+        // The registry only ever ships regular files and directories;
+        // anything else is malicious or corrupt input.
+        let etype = entry.header().entry_type();
+        if !etype.is_file() && !etype.is_dir() {
+            tracing::warn!("registry tarball: skipping non-regular entry {path_str:?} ({etype:?})");
+            continue;
+        }
+
+        // Strip the tarball prefix
+        let relative: String = match path_str.strip_prefix(tarball_prefix) {
+            Some(r) if !r.is_empty() => r.to_string(),
+            _ => continue,
+        };
+
+        // SECURITY: reject any entry whose name contains a `..` (or root /
+        // prefix) component. `strip_prefix(tarball_prefix)` is a plain
+        // string strip — it does NOT normalise, so a crafted entry like
+        // `librefang-registry-main/foo/../../../../etc/cron.d/owned`
+        // survives the strip with `relative` still holding the traversal.
+        // `tmp_dir.join(relative)` would then resolve outside the cache.
+        // Mirror-substitution (`apply_mirror`) makes the tarball source
+        // attacker-influenceable by operator config, so this is not purely
+        // theoretical.
+        let rel_path = Path::new(&relative);
+        if rel_path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        }) {
+            tracing::warn!(
+                "registry tarball: rejecting entry with traversal/absolute \
+                 component: {path_str:?}"
+            );
+            continue;
+        }
+
+        let dest = tmp_dir.join(&relative);
+
+        // Create parent directories
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // SECURITY: belt-and-suspenders containment check on the resolved
+        // destination. The component scan above already rejects `..`, but
+        // re-verify after `join` against the canonical extraction root so a
+        // symlinked parent dir (created by a *prior* malicious entry that
+        // slipped a different bug) still can't redirect the write. Resolve
+        // the deepest existing ancestor (the leaf doesn't exist yet) and
+        // require it to stay under `tmp_canon`.
+        let containment_anchor = dest.ancestors().find(|a| a.exists()).unwrap_or(tmp_dir);
+        match containment_anchor.canonicalize() {
+            Ok(anchor_canon) if anchor_canon.starts_with(&tmp_canon) => {}
+            _ => {
+                tracing::warn!(
+                    "registry tarball: rejecting entry resolving outside \
+                     extraction root: {path_str:?}"
+                );
+                continue;
+            }
+        }
+
+        // Only extract files and directories
+        if etype.is_dir() {
+            std::fs::create_dir_all(&dest)?;
+        } else if etype.is_file() {
+            entry.unpack(&dest)?;
+        }
+    }
+    Ok(())
+}
+
+/// Download the tarball via HTTP and extract it into `registry_cache`.
+fn download_and_extract(
+    registry_cache: &Path,
+    registry_mirror: &str,
+    registry_host: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let urls = registry_urls(registry_host);
+    let url = apply_mirror(registry_mirror, &urls.tarball_url);
+    tracing::info!("Downloading registry from {url}");
+
+    let resp = ureq::get(&url).call()?;
+    let reader = resp.into_body().into_reader();
+
+    // Decompress gzip
+    let gz = flate2::read::GzDecoder::new(reader);
+
+    // Extract tar
+    let mut archive = tar::Archive::new(gz);
+
+    // Extract to a temporary directory first, then swap — this avoids leaving
+    // a half-extracted directory on error.
+    let tmp_dir = registry_cache
+        .parent()
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .join(".registry_tmp");
+
+    // Clean up any previous failed attempt
+    if tmp_dir.exists() {
+        std::fs::remove_dir_all(&tmp_dir)?;
+    }
+    std::fs::create_dir_all(&tmp_dir)?;
+
+    extract_entries_into(&mut archive, &tmp_dir, &urls.tarball_prefix)?;
+
+    // Swap: remove old cache, rename tmp to cache
+    if registry_cache.exists() {
+        std::fs::remove_dir_all(registry_cache)?;
+    }
+    std::fs::rename(&tmp_dir, registry_cache)?;
+
+    touch_marker(registry_cache);
+    tracing::info!("Registry downloaded and extracted successfully");
+
+    Ok(())
+}
+
+/// Fallback: clone the registry using git (for environments where HTTP tarball
+/// download fails but git is available).
+fn git_clone_fallback(
+    registry_cache: &Path,
+    registry_mirror: &str,
+    registry_host: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    tracing::info!("Attempting git clone fallback");
+
+    if registry_cache.join(".git").exists() {
+        // Already a git repo — fetch and reset to origin/main so that a
+        // detached HEAD or local branch can never stall the sync.
+        let fetch_ok = Command::new("git")
+            .args(["fetch", "--depth", "1", "-q", "origin", "main"])
+            .current_dir(registry_cache)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !fetch_ok {
+            return Err("git fetch origin main failed".into());
+        }
+        let status = Command::new("git")
+            .args(["reset", "--hard", "origin/main", "-q"])
+            .current_dir(registry_cache)
+            .status()?;
+        if !status.success() {
+            return Err(format!("git reset exited with {status}").into());
+        }
+    } else {
+        // Clean slate
+        if registry_cache.exists() {
+            std::fs::remove_dir_all(registry_cache)?;
+        }
+        let repo_url = apply_mirror(registry_mirror, &registry_urls(registry_host).clone_url);
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--depth",
+                "1",
+                "-q",
+                &repo_url,
+                &registry_cache.display().to_string(),
+            ])
+            .status()?;
+        if !status.success() {
+            return Err(format!("git clone exited with {status}").into());
+        }
+    }
+
+    touch_marker(registry_cache);
+    Ok(())
+}
+
+/// Check if the registry content appears to be populated.
+///
+/// Returns `false` if any critical directories are missing, meaning
+/// auto-sync should run.
+/// Resolve the default home directory (for tests and standalone usage).
+pub fn resolve_home_dir_for_tests() -> std::path::PathBuf {
+    // OnceLock ensures the registry sync runs exactly once per process,
+    // preventing concurrent git clone races when tests run in parallel threads.
+    use std::sync::OnceLock;
+    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
+    HOME.get_or_init(|| {
+        let home = std::env::var("LIBREFANG_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                // Use process-unique dir to avoid git lock conflicts
+                // when nextest runs tests in parallel processes.
+                std::env::temp_dir().join(format!("librefang-test-{}", std::process::id()))
+            });
+        // Auto-sync if the providers dir is empty (fresh CI environment)
+        if !home.join("providers").exists()
+            || std::fs::read_dir(home.join("providers"))
+                .map(|d| d.count() == 0)
+                .unwrap_or(true)
+        {
+            sync_registry(&home, DEFAULT_CACHE_TTL_SECS, "", None);
+        }
+        home
+    })
+    .clone()
+}
+
+pub fn needs_sync(home_dir: &Path) -> bool {
+    // Only check if the registry cache is populated
+    !home_dir.join("registry").join("providers").exists()
+}
+
+/// Name of the per-directory manifest recording which `.toml` files the
+/// registry sync installed. Pruning is gated on this set so user-created
+/// files (e.g. a custom provider added via the dashboard, #5823) are never
+/// deleted on restart — only files we previously synced *and* that upstream
+/// has since removed get cleaned up. The leading dot and lack of a `.toml`
+/// extension keep it out of both the sync and the catalog-load globs.
+const REGISTRY_MANAGED_MANIFEST: &str = ".registry-managed";
+
+/// Read the set of registry-managed `.toml` filenames recorded for `dest_dir`.
+///
+/// Returns an empty set when the manifest is absent (e.g. first run, or an
+/// install that predates the manifest) — which makes pruning a no-op until
+/// the next sync writes the manifest, erring on the side of keeping files.
+fn read_managed_manifest(dest_dir: &Path) -> std::collections::HashSet<String> {
+    std::fs::read_to_string(dest_dir.join(REGISTRY_MANAGED_MANIFEST))
+        .map(|s| {
+            s.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Persist the set of registry-managed filenames for `dest_dir`.
+fn write_managed_manifest(dest_dir: &Path, names: &std::collections::BTreeSet<String>) {
+    let body = names.iter().cloned().collect::<Vec<_>>().join("\n");
+    let _ = std::fs::write(dest_dir.join(REGISTRY_MANAGED_MANIFEST), body);
+}
+
+/// Sync flat .toml files (e.g. integrations/, providers/).
+fn sync_flat_files(src_dir: &Path, dest_dir: &Path, label: &str) {
+    let entries = match std::fs::read_dir(src_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    // Filenames the registry currently ships — the new managed set.
+    let mut managed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut synced = 0;
+    let mut updated = 0;
+    let mut skipped = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n.ends_with(".toml") => n.to_string(),
+            _ => continue,
+        };
+        managed.insert(name.clone());
+
+        let dest_file = dest_dir.join(&name);
+        if dest_file.exists() {
+            // Update if content differs — keeps builtin provider metadata (e.g.
+            // supports_thinking, new model entries) in sync with the registry.
+            // User API key config lives in config.toml, not in these TOML files.
+            let src_content = std::fs::read(&path).unwrap_or_default();
+            let dst_content = std::fs::read(&dest_file).unwrap_or_default();
+            if src_content == dst_content {
+                skipped += 1;
+            } else if std::fs::create_dir_all(dest_dir).is_ok()
+                && std::fs::write(&dest_file, &src_content).is_ok()
+            {
+                updated += 1;
+            }
+            continue;
+        }
+
+        if std::fs::create_dir_all(dest_dir).is_ok() && std::fs::copy(&path, &dest_file).is_ok() {
+            synced += 1;
+        }
+    }
+
+    // Clean up defunct registry files after upstream pruning — but ONLY files
+    // we previously installed ourselves. A file that was registry-managed last
+    // sync (recorded in the manifest) and is gone from the source now is
+    // safe to delete; a file we never installed (a user's custom provider) is
+    // left untouched. This is the #5823 fix: the old logic deleted every local
+    // `.toml` absent from the source, wiping dashboard-created providers on
+    // every restart.
+    let previously_managed = read_managed_manifest(dest_dir);
+    let mut removed = 0usize;
+    for name in &previously_managed {
+        if !managed.contains(name) {
+            let path = dest_dir.join(name);
+            if path.is_file() && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+
+    write_managed_manifest(dest_dir, &managed);
+
+    if synced > 0 || updated > 0 || removed > 0 || skipped > 0 {
+        tracing::info!("{label} synced ({synced} new, {updated} updated, {removed} removed, {skipped} unchanged)");
+    }
+}
+
+/// Extract the `version = "X.Y.Z"` value from a manifest file via line scan.
+///
+/// Avoids full TOML parse (which may fail on new-format files that older code
+/// can't deserialize). Returns `None` if the file can't be read or has no
+/// version field.
+#[cfg(test)]
+fn extract_version(path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("version") {
+            let rest = rest.trim_start();
+            if let Some(rest) = rest.strip_prefix('=') {
+                let rest = rest.trim();
+                // Strip surrounding quotes
+                let ver = rest.trim_matches('"').trim_matches('\'');
+                if !ver.is_empty() {
+                    return Some(ver.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Compare two semver-like version strings numerically.
+///
+/// Returns `true` if `a` is strictly newer than `b`. Non-numeric segments
+/// compare as 0 to avoid panics on malformed versions.
+#[cfg(test)]
+fn version_newer_than(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split('.')
+            .map(|part| part.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let va = parse(a);
+    let vb = parse(b);
+    let len = va.len().max(vb.len());
+    for i in 0..len {
+        let pa = va.get(i).copied().unwrap_or(0);
+        let pb = vb.get(i).copied().unwrap_or(0);
+        if pa != pb {
+            return pa > pb;
+        }
+    }
+    false
+}
+
+/// Sync subdirectory-based content (e.g. hands/).
+///
+/// When a destination manifest already exists, compares `version` fields.
+/// If the source has a newer version, replaces the destination directory
+/// (user settings live in `hand_state.json`, not in the manifest).
+#[cfg(test)]
+fn sync_subdirs(src_dir: &Path, dest_dir: &Path, manifest_file: &str, label: &str) {
+    let entries = match std::fs::read_dir(src_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let mut synced = 0;
+    let mut updated = 0;
+    let mut skipped = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let src_manifest = path.join(manifest_file);
+        if !src_manifest.exists() {
+            continue;
+        }
+
+        let item_dest = dest_dir.join(&name);
+        let dest_manifest = item_dest.join(manifest_file);
+
+        if dest_manifest.exists() {
+            // Check if source version is newer
+            let src_ver = extract_version(&src_manifest).unwrap_or_default();
+            let dest_ver = extract_version(&dest_manifest).unwrap_or_default();
+
+            if !version_newer_than(&src_ver, &dest_ver) {
+                skipped += 1;
+                continue;
+            }
+
+            // Source is newer — replace destination
+            tracing::debug!("{label}/{name}: updating {dest_ver} → {src_ver}");
+            if std::fs::remove_dir_all(&item_dest).is_err() {
+                skipped += 1;
+                continue;
+            }
+            if copy_dir_recursive(&path, &item_dest).is_ok() {
+                updated += 1;
+            }
+        } else if copy_dir_recursive(&path, &item_dest).is_ok() {
+            synced += 1;
+        }
+    }
+
+    if synced > 0 || updated > 0 || skipped > 0 {
+        tracing::info!("{label} synced ({synced} new, {updated} updated, {skipped} unchanged)");
+    }
+}
+
+/// Remove stale hand directories that have `agent.toml` but no `HAND.toml`.
+///
+/// These are remnants of the old `*-hand` naming convention where each hand
+/// was a plain agent directory. Now every hand must have a `HAND.toml`.
+fn cleanup_stale_dirs(hands_dir: &Path) {
+    let entries = match std::fs::read_dir(hands_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let has_hand_toml = path.join("HAND.toml").exists();
+        let has_agent_toml = path.join("agent.toml").exists();
+
+        if has_agent_toml && !has_hand_toml {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+            tracing::info!("Removing stale hand directory: {name}");
+            if std::fs::remove_dir_all(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+
+    if removed > 0 {
+        tracing::info!("Cleaned up {removed} stale hand directories");
+    }
+}
+
+/// Recursively copy a directory.
+fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else {
+            std::fs::copy(&src_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `None` ⇒ byte-identical GitHub URLs/prefix shipped before #6095.
+    #[test]
+    fn registry_urls_none_matches_github_defaults() {
+        let urls = registry_urls(None);
+        assert_eq!(
+            urls.tarball_url,
+            "https://github.com/librefang/librefang-registry/archive/refs/heads/main.tar.gz"
+        );
+        assert_eq!(
+            urls.clone_url,
+            "https://github.com/librefang/librefang-registry.git"
+        );
+        assert_eq!(urls.tarball_prefix, "librefang-registry-main/");
+    }
+
+    /// #6095: a Codeberg host yields the Forgejo archive scheme — no
+    /// `refs/heads/` segment and a `{repo}/` (not `{repo}-{branch}/`) prefix.
+    #[test]
+    fn registry_urls_codeberg_host() {
+        let urls = registry_urls(Some("https://codeberg.org"));
+        assert_eq!(
+            urls.tarball_url,
+            "https://codeberg.org/librefang/librefang-registry/archive/main.tar.gz"
+        );
+        assert_eq!(
+            urls.clone_url,
+            "https://codeberg.org/librefang/librefang-registry.git"
+        );
+        assert_eq!(urls.tarball_prefix, "librefang-registry/");
+    }
+
+    /// A trailing slash on the configured host must not double up in the
+    /// derived URLs.
+    #[test]
+    fn registry_urls_trims_trailing_slash() {
+        let urls = registry_urls(Some("https://codeberg.org/"));
+        assert_eq!(
+            urls.tarball_url,
+            "https://codeberg.org/librefang/librefang-registry/archive/main.tar.gz"
+        );
+        assert_eq!(
+            urls.clone_url,
+            "https://codeberg.org/librefang/librefang-registry.git"
+        );
+    }
+
+    /// #6137: an explicit `github.com` host (any case, trailing slash) is the
+    /// GitHub default, not a Forgejo forge — it must use GitHub's archive
+    /// scheme and `{repo}-{branch}/` prefix, never the Forgejo layout that
+    /// would 404 / mis-prefix the tarball. An empty host string is likewise
+    /// treated as unset.
+    #[test]
+    fn registry_urls_explicit_github_host_uses_github_scheme() {
+        for host in [
+            "https://github.com",
+            "https://github.com/",
+            "https://GitHub.com",
+            "",
+        ] {
+            let urls = registry_urls(Some(host));
+            assert_eq!(
+                urls.tarball_url,
+                "https://github.com/librefang/librefang-registry/archive/refs/heads/main.tar.gz",
+                "host {host:?}"
+            );
+            assert_eq!(
+                urls.clone_url, "https://github.com/librefang/librefang-registry.git",
+                "host {host:?}"
+            );
+            assert_eq!(
+                urls.tarball_prefix, "librefang-registry-main/",
+                "host {host:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_needs_sync_when_registry_cache_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(needs_sync(tmp.path()));
+    }
+
+    /// #5823: a dashboard-created custom provider lives only in the dest dir
+    /// and is absent from the registry source. It MUST survive a sync — the
+    /// old logic deleted every dest `.toml` not present in the source, so the
+    /// provider vanished on every `librefang stop && start`.
+    #[test]
+    fn sync_flat_files_preserves_user_created_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+
+        // Registry ships one provider; user added their own.
+        std::fs::write(src.join("openai.toml"), "id = \"openai\"").unwrap();
+        std::fs::write(dest.join("openai.toml"), "id = \"openai\"").unwrap();
+        std::fs::write(dest.join("my-custom.toml"), "id = \"my-custom\"").unwrap();
+
+        sync_flat_files(&src, &dest, "providers");
+
+        assert!(
+            dest.join("my-custom.toml").exists(),
+            "user-created provider must survive sync"
+        );
+        assert!(dest.join("openai.toml").exists());
+        // A second sync (simulating a restart) must still keep it.
+        sync_flat_files(&src, &dest, "providers");
+        assert!(
+            dest.join("my-custom.toml").exists(),
+            "user-created provider must survive repeated restarts"
+        );
+    }
+
+    /// The upstream-pruning cleanup is preserved: a file we previously synced
+    /// from the registry and that the registry no longer ships is removed —
+    /// but only because it was recorded in the managed manifest.
+    #[test]
+    fn sync_flat_files_prunes_only_previously_managed_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+
+        // First sync: registry ships two providers.
+        std::fs::write(src.join("alpha.toml"), "id = \"alpha\"").unwrap();
+        std::fs::write(src.join("beta.toml"), "id = \"beta\"").unwrap();
+        sync_flat_files(&src, &dest, "providers");
+        assert!(dest.join("alpha.toml").exists());
+        assert!(dest.join("beta.toml").exists());
+
+        // Upstream prunes beta; user has meanwhile added their own provider.
+        std::fs::remove_file(src.join("beta.toml")).unwrap();
+        std::fs::write(dest.join("mine.toml"), "id = \"mine\"").unwrap();
+        sync_flat_files(&src, &dest, "providers");
+
+        assert!(dest.join("alpha.toml").exists(), "still-shipped file kept");
+        assert!(
+            !dest.join("beta.toml").exists(),
+            "previously-managed, upstream-removed file is pruned"
+        );
+        assert!(
+            dest.join("mine.toml").exists(),
+            "never-managed user file is never pruned"
+        );
+    }
+
+    #[test]
+    fn test_needs_sync_when_registry_cache_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("registry").join("providers")).unwrap();
+        assert!(!needs_sync(tmp.path()));
+    }
+
+    #[test]
+    fn test_should_refresh_no_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("registry");
+        std::fs::create_dir_all(&cache).unwrap();
+        assert!(super::should_refresh(&cache, super::DEFAULT_CACHE_TTL_SECS));
+    }
+
+    #[test]
+    fn test_should_refresh_fresh_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("registry");
+        std::fs::create_dir_all(&cache).unwrap();
+        super::touch_marker(&cache);
+        assert!(!super::should_refresh(
+            &cache,
+            super::DEFAULT_CACHE_TTL_SECS
+        ));
+    }
+
+    #[test]
+    fn test_extract_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("HAND.toml");
+
+        std::fs::write(&path, "id = \"test\"\nversion = \"1.2.3\"\nname = \"Test\"").unwrap();
+        assert_eq!(extract_version(&path), Some("1.2.3".to_string()));
+
+        std::fs::write(&path, "id = \"test\"\nname = \"Test\"").unwrap();
+        assert_eq!(extract_version(&path), None);
+
+        std::fs::write(&path, "  version  =  \"0.1.0\"  ").unwrap();
+        assert_eq!(extract_version(&path), Some("0.1.0".to_string()));
+    }
+
+    #[test]
+    fn test_version_newer_than() {
+        assert!(version_newer_than("1.0.0", "0.9.9"));
+        assert!(version_newer_than("2.0.0", "1.99.99"));
+        assert!(version_newer_than("1.1.0", "1.0.9"));
+        assert!(version_newer_than("1.0.1", "1.0.0"));
+
+        assert!(!version_newer_than("1.0.0", "1.0.0"));
+        assert!(!version_newer_than("0.9.0", "1.0.0"));
+        assert!(!version_newer_than("", "0.0.1"));
+
+        // Different segment counts
+        assert!(version_newer_than("1.0.0", "0.9"));
+        assert!(!version_newer_than("1.0", "1.0.0"));
+    }
+
+    #[test]
+    fn test_sync_subdirs_updates_newer_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src_hands");
+        let dest = tmp.path().join("dest_hands");
+
+        // Source: v2.0.0
+        let src_hand = src.join("clip");
+        std::fs::create_dir_all(&src_hand).unwrap();
+        std::fs::write(
+            src_hand.join("HAND.toml"),
+            "id = \"clip\"\nversion = \"2.0.0\"\nname = \"Clip v2\"",
+        )
+        .unwrap();
+
+        // Dest: v1.0.0
+        let dest_hand = dest.join("clip");
+        std::fs::create_dir_all(&dest_hand).unwrap();
+        std::fs::write(
+            dest_hand.join("HAND.toml"),
+            "id = \"clip\"\nversion = \"1.0.0\"\nname = \"Clip v1\"",
+        )
+        .unwrap();
+
+        sync_subdirs(&src, &dest, "HAND.toml", "hands");
+
+        let content = std::fs::read_to_string(dest_hand.join("HAND.toml")).unwrap();
+        assert!(content.contains("2.0.0"), "should have been updated to v2");
+        assert!(content.contains("Clip v2"));
+    }
+
+    #[test]
+    fn test_sync_subdirs_skips_same_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src_hands");
+        let dest = tmp.path().join("dest_hands");
+
+        let src_hand = src.join("clip");
+        std::fs::create_dir_all(&src_hand).unwrap();
+        std::fs::write(
+            src_hand.join("HAND.toml"),
+            "id = \"clip\"\nversion = \"1.0.0\"\nname = \"Clip src\"",
+        )
+        .unwrap();
+
+        let dest_hand = dest.join("clip");
+        std::fs::create_dir_all(&dest_hand).unwrap();
+        std::fs::write(
+            dest_hand.join("HAND.toml"),
+            "id = \"clip\"\nversion = \"1.0.0\"\nname = \"Clip dest\"",
+        )
+        .unwrap();
+
+        sync_subdirs(&src, &dest, "HAND.toml", "hands");
+
+        let content = std::fs::read_to_string(dest_hand.join("HAND.toml")).unwrap();
+        assert!(
+            content.contains("Clip dest"),
+            "should NOT have been overwritten"
+        );
+    }
+
+    #[test]
+    fn test_cleanup_stale_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hands = tmp.path().join("workspaces");
+
+        // Stale: has agent.toml but no HAND.toml
+        let stale = hands.join("old-hand");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("agent.toml"), "name = \"old\"").unwrap();
+
+        // Valid: has HAND.toml
+        let valid = hands.join("new-hand");
+        std::fs::create_dir_all(&valid).unwrap();
+        std::fs::write(valid.join("HAND.toml"), "id = \"new\"").unwrap();
+
+        // Has both — should NOT be removed
+        let both = hands.join("migrated-hand");
+        std::fs::create_dir_all(&both).unwrap();
+        std::fs::write(both.join("agent.toml"), "name = \"m\"").unwrap();
+        std::fs::write(both.join("HAND.toml"), "id = \"m\"").unwrap();
+
+        cleanup_stale_dirs(&hands);
+
+        assert!(!stale.exists(), "stale dir should be removed");
+        assert!(valid.exists(), "valid dir should remain");
+        assert!(both.exists(), "dir with both files should remain");
+    }
+
+    // ---- #5141: malicious-tarball extraction hardening ----------------
+
+    /// Build a raw (uncompressed) tar archive containing the given
+    /// `(name, contents)` regular-file entries and return its bytes.
+    fn build_tar_with_files(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut buf);
+            for (name, contents) in files {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(contents.len() as u64);
+                header.set_mode(0o644);
+                header.set_entry_type(tar::EntryType::Regular);
+                header.set_cksum();
+                b.append_data(&mut header, name, &contents[..]).unwrap();
+            }
+            b.finish().unwrap();
+        }
+        buf
+    }
+
+    /// Append a regular-file entry whose stored name is written DIRECTLY
+    /// into the raw tar header `name[..]` bytes, bypassing the `tar`
+    /// writer's own `..`-rejecting guard. This is exactly the shape a
+    /// hand-crafted malicious tarball takes (the writer guard is a courtesy
+    /// to honest producers; a real attacker emits raw blocks).
+    fn append_raw_named_entry<W: std::io::Write>(
+        builder: &mut tar::Builder<W>,
+        raw_name: &str,
+        contents: &[u8],
+    ) {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(contents.len() as u64);
+        header.set_mode(0o644);
+        header.set_mtime(0);
+        header.set_entry_type(tar::EntryType::Regular);
+        {
+            let name_field = &mut header.as_old_mut().name;
+            name_field.fill(0);
+            let bytes = raw_name.as_bytes();
+            name_field[..bytes.len()].copy_from_slice(bytes);
+        }
+        header.set_cksum();
+        builder.append(&header, contents).unwrap();
+    }
+
+    #[test]
+    fn extract_rejects_dotdot_traversal_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let extract_root = tmp.path().join(".registry_tmp");
+        std::fs::create_dir_all(&extract_root).unwrap();
+        // Sentinel target the attacker tries to clobber, OUTSIDE the root.
+        let outside = tmp.path().join("etc-cron-d-owned");
+
+        let mut buf = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut buf);
+            // Legitimate file — must extract fine.
+            append_raw_named_entry(
+                &mut b,
+                "librefang-registry-main/providers/ok.toml",
+                b"id=\"ok\"",
+            );
+            // ATTACK: traversal escaping the extraction root.
+            append_raw_named_entry(
+                &mut b,
+                "librefang-registry-main/x/../../../etc-cron-d-owned",
+                b"PWNED",
+            );
+            b.finish().unwrap();
+        }
+        let mut archive = tar::Archive::new(&buf[..]);
+        extract_entries_into(&mut archive, &extract_root, "librefang-registry-main/").unwrap();
+
+        assert!(
+            !outside.exists(),
+            "traversal entry must NOT have written outside the root"
+        );
+        assert!(
+            extract_root.join("providers/ok.toml").exists(),
+            "legitimate entry must still extract"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extract_skips_symlink_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let extract_root = tmp.path().join(".registry_tmp");
+        std::fs::create_dir_all(&extract_root).unwrap();
+        let outside = tmp.path().join("secret-target");
+        std::fs::write(&outside, b"original").unwrap();
+
+        // Build a tarball whose first entry is a symlink pointing outside,
+        // followed by a file written "through" the symlink name.
+        let mut buf = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut buf);
+            let mut link_hdr = tar::Header::new_gnu();
+            link_hdr.set_entry_type(tar::EntryType::Symlink);
+            link_hdr.set_size(0);
+            link_hdr.set_mode(0o777);
+            b.append_link(&mut link_hdr, "librefang-registry-main/evil", &outside)
+                .unwrap();
+
+            let payload = b"PWNED";
+            let mut f_hdr = tar::Header::new_gnu();
+            f_hdr.set_entry_type(tar::EntryType::Regular);
+            f_hdr.set_size(payload.len() as u64);
+            f_hdr.set_mode(0o644);
+            f_hdr.set_cksum();
+            b.append_data(
+                &mut f_hdr,
+                "librefang-registry-main/evil/owned",
+                &payload[..],
+            )
+            .unwrap();
+            b.finish().unwrap();
+        }
+        let mut archive = tar::Archive::new(&buf[..]);
+        extract_entries_into(&mut archive, &extract_root, "librefang-registry-main/").unwrap();
+
+        // The symlink entry was skipped, so `evil` is NOT a symlink and the
+        // original outside file is untouched.
+        assert_eq!(
+            std::fs::read(&outside).unwrap(),
+            b"original",
+            "symlink entry must not redirect a write outside the root"
+        );
+        let evil = extract_root.join("evil");
+        if let Ok(meta) = std::fs::symlink_metadata(&evil) {
+            assert!(
+                !meta.file_type().is_symlink(),
+                "symlink entry must have been skipped, not materialised"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_accepts_legitimate_tarball() {
+        // POSITIVE: a normal registry tarball extracts cleanly.
+        let tmp = tempfile::tempdir().unwrap();
+        let extract_root = tmp.path().join(".registry_tmp");
+        std::fs::create_dir_all(&extract_root).unwrap();
+
+        let bytes = build_tar_with_files(&[
+            (
+                "librefang-registry-main/providers/groq.toml",
+                b"id=\"groq\"\nversion=\"1.0.0\"",
+            ),
+            (
+                "librefang-registry-main/hands/clip/HAND.toml",
+                b"id=\"clip\"",
+            ),
+        ]);
+        let mut archive = tar::Archive::new(&bytes[..]);
+        extract_entries_into(&mut archive, &extract_root, "librefang-registry-main/").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(extract_root.join("providers/groq.toml")).unwrap(),
+            "id=\"groq\"\nversion=\"1.0.0\"",
+        );
+        assert!(extract_root.join("hands/clip/HAND.toml").exists());
+    }
+}

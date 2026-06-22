@@ -114,8 +114,8 @@ LIMIT 5
 | Progressive Slovakia (PS) | Q56488826 |
 | National Bank of Slovakia | Q1463946 |
 
-## PHASE 3 — WIKIPEDIA TEXT FALLBACK (Firecrawl-backed)
-
+## PHASE 3 — WIKIPEDIA TEXT FALLBACK & RETRIEVAL-AUGMENTED VERIFICATION (RAV)
+# Upgrade B: arXiv:2005.11401 (RAG / Lewis et al.)
 When SPARQL returns no relevant data OR entity has no Q-ID:
 1. Construct search: `"<entity name>" site:sk.wikipedia.org` (SK entities first) or `site:en.wikipedia.org`
 2. Fetch with firecrawl_scrape (primary):
@@ -125,8 +125,9 @@ When SPARQL returns no relevant data OR entity has no Q-ID:
      "timeout": 10000
    })
    Fallback to web_search + web_fetch if FIRECRAWL_API_KEY absent.
-3. Extract lead section (~500 chars).
-4. Verify entity existence, role, affiliations, dates against claim.
+3. Once the full Wikipedia page text is retrieved, DO NOT pass the entire text to the LLM directly.
+4. Instead, use BM25 + dense retrieval to select the top-k candidate paragraphs most relevant to the extracted claim.
+5. Pass only these retrieved candidate paragraphs to the LLM to verify entity existence, role, affiliations, dates against the claim.
 
 ## PHASE 4 — CONSISTENCY SCORING
 For each claim:
@@ -138,6 +139,10 @@ For each claim:
     mix             → 0.30–0.50
     any refuted     → 0.65–0.90
     all unresolved  → 0.50 (neutral)
+
+## PHASE 5 — SELFCHECKGPT HALLUCINATION DETECTION (Improvement 32)
+When Wikipedia or SPARQL text is generated as evidence or reasoning, use stochastic consistency checks to evaluate for hallucination using `scripts/selfcheck.py`.
+If hallucination is detected (`hallucination_score > 0.4`), mark `selfcheck_hallucination = true` and increase `entity_fake_probability` by +0.15.
 
 ## OUTPUT FORMAT (strict JSON)
 ```json
@@ -166,6 +171,8 @@ For each claim:
       "entities_refuted": 0,
       "entities_unresolved": 0,
       "entity_fake_probability": 0.08,
+      "selfcheck_hallucination": false,
+      "hallucination_score": 0.05,
       "confidence": 0.91
     }
   ],

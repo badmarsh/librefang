@@ -1,0 +1,27 @@
+[package]
+name = "xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Build automation for the LibreFang workspace"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+serde_json = "1"
+toml_edit = "0.25"
+regex = "1"
+chrono = "0.4"
+base64 = { workspace = true }
+sha2 = { workspace = true }
+# Host probe (RAM / CPU) for `LIBREFANG_LOCAL_CHECK_MODE` auto-throttle (#3301).
+# Kept xtask-local; not promoted to workspace.dependencies because no
+# production crate consumes it. Default features are disabled — we only need
+# the system probe, not disks/networks/processes.
+# Capped at 0.38: the entire sysinfo 0.39.x line requires rustc 1.95, which
+# exceeds this workspace's pinned MSRV (Cargo.toml rust-version = 1.94.1).
+# 0.38.4 needs only rustc 1.88 and exposes the same probe API we use.
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+librefang-import = { path = "../crates/librefang-import" }
+
+[lints]
+workspace = true

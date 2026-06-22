@@ -1,0 +1,58 @@
+name: Lighthouse
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "web/**"
+  workflow_dispatch:
+
+concurrency:
+  group: lighthouse-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      # setup-node's `cache: pnpm` runs `pnpm store path --silent` from the
+      # repo root to compute the cache directory. Our `packageManager` field
+      # lives in web/package.json, so corepack at the root falls back to the
+      # runner image's default pnpm 11 and records `~/.local/share/pnpm/store/v11`.
+      # The actual install (`cd web && pnpm install`) then runs pnpm 10.32.1,
+      # which writes to `…/store/v10`. Post-job cache save then errors with
+      # "Path Validation Error" because the v11 directory was never populated.
+      # Pin pnpm explicitly via web/package.json so PATH carries the right
+      # version before setup-node's cache pre-step runs.
+      - name: Install pnpm (version from web/package.json packageManager)
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          package_json_file: web/package.json
+          run_install: false
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version-file: "web/.nvmrc"
+          cache: "pnpm"
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install web deps
+        run: cd web && pnpm install --frozen-lockfile
+
+      - name: Build
+        run: cd web && pnpm build
+
+      - name: Run Lighthouse CI
+        run: |
+          cd web
+          npx --yes @lhci/cli@0.15.x autorun --config=lighthouserc.json
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}

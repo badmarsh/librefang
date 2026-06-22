@@ -1,0 +1,747 @@
+# ══════════════════════════════════════════════════════════════
+# LibreFang Agent OS — Example Configuration
+# Copy to ~/.librefang/config.toml and customize.
+# Docs: https://docs.librefang.ai/configuration
+# ══════════════════════════════════════════════════════════════
+
+# ── Server ────────────────────────────────────────────────────
+# Default is loopback-only. To expose on LAN/remote, FIRST configure
+# authentication (set `api_key` below, configure dashboard credentials, or
+# define `[[users]]` with `api_key_hash`), THEN change `api_listen`. The
+# daemon refuses to start on a non-loopback bind without configured auth —
+# set `LIBREFANG_ALLOW_NO_AUTH=1` to override (not recommended).
+api_listen = "127.0.0.1:4545"
+log_level = "info"             # trace | debug | info | warn | error
+mode = "default"               # stable | default | dev
+
+# ── Dashboard Login ───────────────────────────────────────────
+# ⚠️  Change the default password after first login!
+# Secure storage options:
+#   1. Vault:   librefang vault set dashboard_password
+#               dashboard_pass = "vault:dashboard_password"
+#   2. Env var: LIBREFANG_DASHBOARD_PASS=your-secret
+dashboard_user = "librefang"
+dashboard_pass = "librefang"
+
+# ── API Authentication ────────────────────────────────────────
+# api_key = ""                 # Set to enable Bearer auth for API clients
+
+# ── Default LLM ──────────────────────────────────────────────
+[default_model]
+provider = "anthropic"                    # "anthropic", "openai", "gemini", "groq", "ollama", etc.
+model = "claude-sonnet-4-20250514"        # Model identifier
+api_key_env = "ANTHROPIC_API_KEY"         # Environment variable holding API key
+# base_url = ""                           # Override API endpoint
+
+# ── Performance ──────────────────────────────────────────────
+prompt_caching = true           # Reduce LLM costs (Anthropic/OpenAI)
+stable_prefix_mode = true       # Improve prompt cache hit rate
+usage_footer = "tokens"         # off | tokens | cost | full
+
+# ── Memory ───────────────────────────────────────────────────
+# Embedding configuration (for semantic memory)
+# [embedding]
+# provider = "openai"                     # "openai", "groq", "ollama", "bedrock", etc.
+# model = "text-embedding-3-small"        # Model identifier
+# api_key_env = "OPENAI_API_KEY"          # Env var holding API key (ignored for bedrock)
+# dimensions = 1536                       # Optional: override auto-detected dimensions
+
+# Amazon Bedrock embedding example:
+# [embedding]
+# provider = "bedrock"
+# model = "amazon.titan-embed-text-v2:0"  # Bedrock model ID
+# # Auth via AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION env vars
+# # Or override region:
+# # base_url = "eu-west-1"               # Region override (not a full URL for bedrock)
+
+[memory]
+decay_rate = 0.05               # Memory confidence decay per cycle
+# embedding_model = "all-MiniLM-L6-v2"
+
+# ── Memory Decay (time-based expiry) ────────────────────────
+# [memory.decay]
+# enabled = false               # Enable time-based memory decay
+# session_ttl_days = 7          # SESSION memories expire after N days of no access
+# agent_ttl_days = 30           # AGENT memories expire after N days of no access
+# decay_interval_hours = 1      # How often to run the decay sweep
+# Note: USER memories never decay.
+
+# ── Proactive Memory (auto-memorize & auto-retrieve) ─────────
+[proactive_memory]
+enabled = true
+auto_memorize = true            # Auto-extract facts from conversations
+auto_retrieve = true            # Auto-recall relevant memories
+max_retrieve = 10               # Max memories per retrieval
+# extraction_threshold = 0.7   # Min confidence to save memory
+# session_ttl_hours = 24
+# duplicate_threshold = 0.5
+# max_memories_per_agent = 1000
+
+# ── Web Tools ────────────────────────────────────────────────
+[web]
+search_provider = "auto"        # Tavily → Brave → Jina → Perplexity → DuckDuckGo (auto-detect)
+# cache_ttl_minutes = 15
+# timeout_secs = 15               # 15 for most providers, 30+ recommended for Jina
+# Session retention & context injection
+# [session]
+# retention_days = 30                        # Auto-cleanup idle sessions (0 = unlimited)
+# max_sessions_per_agent = 100               # Max sessions per agent (0 = unlimited)
+# cleanup_interval_hours = 24                # Cleanup job interval
+# reset_prompt = "You are a helpful assistant."  # Injected on every session start/reset
+# on_session_start_script = "/path/to/hook.sh"   # Script run on session start (args: agent_id session_id)
+#
+# # Context injections — multiple named entries injected at different positions
+# [[session.context_injection]]
+# name = "project-rules"
+# content = "Always follow the project coding standards."
+# position = "system"                        # "system", "before_user", or "after_reset"
+#
+# [[session.context_injection]]
+# name = "user-prefs"
+# content = "The user prefers concise answers."
+# position = "after_reset"
+# condition = "agent.tags contains 'chat'"   # Only inject for agents with this tag
+
+# Session compaction (LLM-based context management)
+# [compaction]
+# threshold = 80                          # Compact when messages exceed this count
+# keep_recent = 20                        # Keep this many recent messages after compaction
+# max_summary_tokens = 1024               # Max tokens for LLM summary
+
+[web.fetch]
+max_chars = 50000               # Max chars extracted from web pages
+timeout_secs = 30
+readability = true              # Clean HTML → readable text
+
+# ── Task Queue ───────────────────────────────────────────────
+[queue.concurrency]
+main_lane = 3                   # Concurrent user messages
+cron_lane = 2                   # Concurrent scheduled jobs
+subagent_lane = 3               # Concurrent child agents
+# Heartbeat monitor (global defaults for autonomous agents)
+# [heartbeat]
+# check_interval_secs = 30               # How often to check agent health
+# default_timeout_secs = 60              # Seconds of inactivity before agent is unresponsive
+# keep_recent = 10                       # Heartbeat turns to keep in session context
+
+# Prompt caching — reduces LLM costs by caching system prompts (default: true)
+# prompt_caching = true                   # Anthropic cache_control + OpenAI auto-cache
+
+# ── Shell Execution Policy ───────────────────────────────────
+[exec_policy]
+mode = "deny"                   # deny | allowlist | full
+timeout_secs = 30
+max_output_bytes = 102400       # 100 KB
+
+# ── Config Hot-Reload ────────────────────────────────────────
+[reload]
+mode = "hybrid"                 # off | restart | hot | hybrid
+debounce_ms = 500
+
+# ── Provider Regions (uncomment to use) ──────────────────────
+# Extended thinking — enable chain-of-thought for supported models (Claude, DeepSeek, etc.)
+# [thinking]
+# budget_tokens = 10000                   # Max tokens the model can use for thinking
+# stream_thinking = false                 # Stream thinking tokens to the client
+# Structured output — constrain agent responses to JSON or a JSON Schema.
+# Set per-agent in [[agents]] tables. Values: "text" (default), "json", or json_schema.
+#
+# Example: force JSON output
+# [agents.my_agent.response_format]
+# type = "json"
+#
+# Example: enforce a specific JSON Schema (OpenAI native; Anthropic via prompt injection)
+# [agents.my_agent.response_format]
+# type = "json_schema"
+# name = "weather_report"
+# strict = true
+# [agents.my_agent.response_format.schema]
+# type = "object"
+# properties.location.type = "string"
+# properties.temperature.type = "number"
+# required = ["location", "temperature"]
+
+# Provider region selection (provider ID → region name)
+# Some providers offer region-specific endpoints defined in registry TOML files.
+# Selecting a region overrides the provider's base_url (and optionally api_key_env).
+# [provider_regions]
+# qwen = "intl"                # Qwen international endpoint
+# minimax = "china"            # MiniMax China endpoint
+
+# ── Provider URL Overrides (uncomment to use) ────────────────
+# [provider_urls]
+# ollama = "http://localhost:11434/v1"
+# vllm = "http://localhost:8000/v1"
+
+# ── Provider API Key Overrides ───────────────────────────────
+# [provider_api_keys]
+# openai = "OPENAI_API_KEY"
+# nvidia = "NVIDIA_API_KEY"
+
+# ── Fallback Providers (LLM failover chain) ──────────────────
+# [[fallback_providers]]
+# provider = "openai"
+# model = "gpt-4o"
+# api_key_env = "OPENAI_API_KEY"
+
+# ── Budget & Cost Control ────────────────────────────────────
+# [budget]
+# max_hourly_usd = 0.0         # 0 = unlimited
+# max_daily_usd = 0.0
+# max_monthly_usd = 0.0
+# alert_threshold = 0.8        # Alert at 80% of limit
+
+# ── Extended Thinking (Claude models) ────────────────────────
+# [thinking]
+# budget_tokens = 10000
+# stream_thinking = false
+
+# ── Session Retention ────────────────────────────────────────
+# [session]
+# retention_days = 30
+# max_sessions_per_agent = 100
+
+# ── Audit Logging ────────────────────────────────────────────
+# [audit]
+# retention_days = 90
+
+# ── Sidecar channel adapters (out-of-process, any language) ──
+# Run a channel adapter as a supervised subprocess that speaks
+# newline-delimited JSON-RPC over stdin/stdout. `name` and `command`
+# are required; every field below is optional and shown with its
+# default. The daemon restarts the subprocess on crash with
+# exponential backoff and a circuit-breaker.
+# [[sidecar_channels]]
+# name = "my-adapter"
+# command = "python3"
+# args = ["adapters/my_adapter.py"]
+# env = { MY_API_TOKEN = "xxx" }
+# channel_type = "my-platform"          # defaults to Custom(name)
+# restart = true                        # auto-restart on unexpected exit
+# restart_initial_backoff_ms = 500      # doubles per consecutive failure
+# restart_max_backoff_ms = 30000        # backoff cap
+# restart_max_retries = 10              # then circuit-break (give up)
+# restart_reset_after_secs = 60         # stable uptime resets the counter
+# ready_timeout_secs = 30               # max wait for the adapter's `ready`
+# shutdown_grace_secs = 5               # clean-exit grace before SIGKILL
+# message_buffer = 256                  # bounded inbound buffer (backpressure); 0 is clamped to 1
+# overflow = "block"                    # or "drop_newest" (shed load)
+
+# ── Sidecar channel adapters (one block per channel) ─────────
+# All channel adapters now run as out-of-process Python sidecars
+# speaking newline-delimited JSON-RPC over stdio.
+#
+# PREREQUISITE — install the LibreFang Python SDK so the daemon
+# can spawn the sidecars and so the `python3 -m ...` discovery
+# at boot can read each adapter's SCHEMA:
+#   pip install librefang-sdk
+# Or, from a source checkout:
+#   pip install -e sdk/python/
+# Make sure you install into the SAME Python interpreter the
+# `command = "python3"` lines below will resolve to — daemons
+# launched under mise / pyenv / conda often pick a different
+# `python3` than the one your shell uses. Verify with
+#   python3 -c 'import librefang.sidecar; print(librefang.__file__)'
+# from the same shell that starts `librefang`.
+#
+# Each block below is independent — uncomment only the adapters
+# you need. Secrets belong in ~/.librefang/secrets.env, NOT here.
+#
+# Per-instance secrets: to run two instances of the same adapter as
+# different accounts (e.g. one Matrix handle per agent), prefix the
+# secret in secrets.env with the block's `name`, uppercased and with
+# non-alphanumerics turned into `_`, followed by `__`. A block named
+# "agent-a" reads `AGENT_A__MATRIX_ACCESS_TOKEN` as its own
+# `MATRIX_ACCESS_TOKEN`; it overrides the global one and never leaks
+# to another instance. Without a prefix, all instances share the
+# global secret. `__` is reserved as this namespace delimiter: a bare
+# global secret key must NOT contain `__`, or it is treated as another
+# instance's namespaced secret and withheld from every child.
+# The full env-var inventory for an adapter lives in its SCHEMA:
+#   python3 -m librefang.sidecar.adapters.<name> --describe
+#
+# (for librefang maintainers only — operators can ignore this)
+# Regenerate this listing from each adapter's SCHEMA with
+#   cd sdk/python && python3 ../../scripts/gen_sidecar_samples.py
+# from a librefang source checkout. Operators do not need to
+# run this — the listing is already in your sample file.
+
+# Bluesky — Bluesky / AT Protocol
+# Migrated from in-process to sidecar in #5277. Old `[channels.bluesky]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "bluesky"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.bluesky"]
+# channel_type = "bluesky"
+# [sidecar_channels.env]
+# BLUESKY_IDENTIFIER = "alice.bsky.social"
+# BLUESKY_APP_PASSWORD = "..."  # xxxx-xxxx-xxxx-xxxx
+# # BLUESKY_SERVICE_URL = "https://bsky.social"  # optional
+# # BLUESKY_ACCOUNT_ID = "prod"  # optional
+
+# DingTalk — DingTalk (钉钉) Robot stream-mode WebSocket adapter
+# Migrated from in-process to sidecar in #5417. Old `[channels.dingtalk]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "dingtalk"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.dingtalk"]
+# channel_type = "dingtalk"
+# [sidecar_channels.env]
+# DINGTALK_APP_KEY = "dingxxxxxxxxxxxx"
+# DINGTALK_APP_SECRET = "..."  # app secret from DingTalk Open Platform
+# # DINGTALK_ALLOWED_USERS = "staff-id-1,staff-id-2"  # optional
+# # DINGTALK_ACCOUNT_ID = "prod-bot"  # optional
+
+# Discord — Discord Gateway bot adapter
+# Migrated from in-process to sidecar in #5299. Old `[channels.discord]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "discord"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.discord"]
+# channel_type = "discord"
+# [sidecar_channels.env]
+# DISCORD_BOT_TOKEN = "..."  # MTIz...
+# # DISCORD_ALLOWED_GUILDS = "123456789, 987654321"  # optional
+# # DISCORD_ALLOWED_USERS = "123456789, 987654321"  # optional
+
+# Email (IMAP + SMTP) — Polls an IMAP mailbox for new messages and replies via SMTP
+# Migrated from in-process to sidecar in #5408. Old `[channels.email]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "email"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.email"]
+# channel_type = "email"
+# [sidecar_channels.env]
+# EMAIL_IMAP_HOST = "imap.example.com"
+# EMAIL_SMTP_HOST = "smtp.example.com"
+# EMAIL_USERNAME = "bot@example.com"
+# EMAIL_PASSWORD = "..."
+# # EMAIL_IMAP_PORT = "993"  # optional
+# # EMAIL_SMTP_PORT = "587"  # optional
+
+# Feishu / Lark — Unified Feishu (CN) / Lark (international) sidecar adapter
+# Migrated from in-process to sidecar in #5380. Old `[channels.feishu]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "feishu"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.feishu"]
+# channel_type = "feishu"
+# [sidecar_channels.env]
+# FEISHU_APP_ID = "cli_a..."
+# FEISHU_APP_SECRET = "..."
+# # FEISHU_REGION = "cn"  # optional
+# # FEISHU_RECEIVE_MODE = "websocket"  # optional
+
+# Google Chat — Google Chat adapter
+# Migrated from in-process to sidecar in #5459. Old `[channels.google_chat]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "google_chat"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.google_chat"]
+# channel_type = "google_chat"
+# [sidecar_channels.env]
+# GOOGLE_CHAT_SERVICE_ACCOUNT_JSON = "..."  # {"client_email": "...", "private_key": "-----BEGIN PRIVATE KEY-----..."}
+# # GOOGLE_CHAT_WEBHOOK_PORT = "8090"  # optional
+# # GOOGLE_CHAT_BIND_HOST = "0.0.0.0"  # optional
+
+# Gotify — Gotify push notifications
+# Migrated from in-process to sidecar in #5263. Old `[channels.gotify]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "gotify"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.gotify"]
+# channel_type = "gotify"
+# [sidecar_channels.env]
+# GOTIFY_SERVER_URL = "https://gotify.example.com"
+# GOTIFY_APP_TOKEN = "..."  # A...
+# GOTIFY_CLIENT_TOKEN = "..."  # C...
+# # GOTIFY_ACCOUNT_ID = "prod"  # optional
+
+# LINE — LINE Messaging API adapter
+# Migrated from in-process to sidecar in #5312. Old `[channels.line]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "line"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.line"]
+# channel_type = "line"
+# [sidecar_channels.env]
+# LINE_CHANNEL_SECRET = "..."  # abc123...
+# LINE_CHANNEL_ACCESS_TOKEN = "..."  # xyz789...
+# # LINE_WEBHOOK_PORT = "9090"  # optional
+# # LINE_WEBHOOK_PATH = "/webhook"  # optional
+
+# Mastodon — Mastodon Streaming API
+# Migrated from in-process to sidecar in #5264. Old `[channels.mastodon]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "mastodon"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.mastodon"]
+# channel_type = "mastodon"
+# [sidecar_channels.env]
+# MASTODON_INSTANCE_URL = "https://mastodon.social"
+# MASTODON_ACCESS_TOKEN = "..."  # from Settings → Development → Your apps
+# # MASTODON_VISIBILITY = "unlisted"  # optional
+# # MASTODON_MAX_MESSAGE_LEN = "500"  # optional
+
+# Matrix — Matrix Client-Server API adapter
+# Migrated from in-process to sidecar in #5368. Old `[channels.matrix]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "matrix"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.matrix"]
+# channel_type = "matrix"
+# [sidecar_channels.env]
+# MATRIX_HOMESERVER_URL = "https://matrix.example.com"
+# MATRIX_USER_ID = "@bot:matrix.example.com"
+# MATRIX_ACCESS_TOKEN = "..."  # syt_...
+# # MATRIX_ALLOWED_ROOMS = "!abc:matrix.org,!def:matrix.org"  # optional
+# # MATRIX_ACCOUNT_ID = "prod-bot"  # optional
+
+# Mattermost — Mattermost WebSocket + REST adapter
+# Migrated from in-process to sidecar in #5315. Old `[channels.mattermost]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "mattermost"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.mattermost"]
+# channel_type = "mattermost"
+# [sidecar_channels.env]
+# MATTERMOST_SERVER_URL = "https://mattermost.example.com"
+# MATTERMOST_TOKEN = "..."  # abc123...
+# # MATTERMOST_ALLOWED_CHANNELS = "ch-id-1, ch-id-2"  # optional
+# # MATTERMOST_ACCOUNT_ID = "team-prod"  # optional
+
+# Nextcloud Talk — Nextcloud Talk OCS REST adapter
+# Migrated from in-process to sidecar in #5301. Old `[channels.nextcloud]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "nextcloud"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.nextcloud"]
+# channel_type = "nextcloud"
+# [sidecar_channels.env]
+# NEXTCLOUD_SERVER_URL = "https://cloud.example.com"
+# NEXTCLOUD_TOKEN = "..."  # abc123...
+# # NEXTCLOUD_ROOMS = "abc123,def456"  # optional
+# # NEXTCLOUD_ACCOUNT_ID = "prod"  # optional
+
+# ntfy — ntfy.sh pub/sub notifications
+# Migrated from in-process to sidecar in #5224. Old `[channels.ntfy]` blocks are no longer recognised.
+# NTFY_SERVER_URL defaults to the PUBLIC ntfy.sh server — set this to your own server for private notifications.
+# [[sidecar_channels]]
+# name = "ntfy"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.ntfy"]
+# channel_type = "ntfy"
+# [sidecar_channels.env]
+# NTFY_TOPIC = "my-topic"
+# # NTFY_SERVER_URL = "https://ntfy.sh"  # optional
+# # NTFY_TOKEN = "..."  # optional; tk_...
+
+# QQ Bot — QQ Bot API v2 WebSocket + REST adapter
+# Migrated from in-process to sidecar in #5325. Old `[channels.qq]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "qq"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.qq"]
+# channel_type = "qq"
+# [sidecar_channels.env]
+# QQ_APP_ID = "1234567890"
+# QQ_APP_SECRET = "..."  # abc123...
+# # QQ_ALLOWED_USERS = "openid-1,openid-2"  # optional
+# # QQ_ACCOUNT_ID = "prod-bot"  # optional
+
+# Reddit — Reddit OAuth2 API
+# Migrated from in-process to sidecar in #5281. Old `[channels.reddit]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "reddit"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.reddit"]
+# channel_type = "reddit"
+# [sidecar_channels.env]
+# REDDIT_CLIENT_ID = "from https://www.reddit.com/prefs/apps"
+# REDDIT_CLIENT_SECRET = "..."
+# REDDIT_USERNAME = "librefang-bot"
+# REDDIT_PASSWORD = "..."
+# REDDIT_SUBREDDITS = "rust,programming"
+# REDDIT_USER_AGENT = "myorg/1.0 (by /u/myactual-reddit-name)"
+# # REDDIT_ACCOUNT_ID = "prod"  # optional
+# # REDDIT_POLL_INTERVAL_SECS = "30"  # optional
+
+# Rocket.Chat — Rocket.Chat REST API
+# Migrated from in-process to sidecar in #5298. Old `[channels.rocketchat]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "rocketchat"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.rocketchat"]
+# channel_type = "rocketchat"
+# [sidecar_channels.env]
+# ROCKETCHAT_SERVER_URL = "https://chat.example.com"
+# ROCKETCHAT_TOKEN = "..."  # abc123...
+# ROCKETCHAT_USER_ID = "abc123"
+# # ROCKETCHAT_CHANNELS = "GENERAL,room2"  # optional
+# # ROCKETCHAT_ACCOUNT_ID = "prod"  # optional
+
+# Signal — signal-cli REST API adapter
+# Migrated from in-process to sidecar in #5317. Old `[channels.signal]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "signal"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.signal"]
+# channel_type = "signal"
+# [sidecar_channels.env]
+# SIGNAL_API_URL = "https://signal-cli.example.com"
+# SIGNAL_NUMBER = "+15555550100"
+# # SIGNAL_API_KEY = "..."  # optional; api-key-...
+# # SIGNAL_ALLOWED_USERS = "+15555550199,+15555550200"  # optional
+
+# Slack — Slack Socket Mode bot adapter
+# Migrated from in-process to sidecar in #5302. Old `[channels.slack]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "slack"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.slack"]
+# channel_type = "slack"
+# [sidecar_channels.env]
+# SLACK_APP_TOKEN = "..."  # xapp-1-...
+# SLACK_BOT_TOKEN = "..."  # xoxb-...
+# # SLACK_ALLOWED_CHANNELS = "C0123, C0456"  # optional
+# # SLACK_UNFURL_LINKS = "true"  # optional
+
+# Microsoft Teams — Microsoft Teams adapter via Bot Framework v3
+# Migrated from in-process to sidecar in #5433. Old `[channels.teams]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "teams"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.teams"]
+# channel_type = "teams"
+# [sidecar_channels.env]
+# TEAMS_APP_ID = "00000000-0000-0000-0000-000000000000"
+# TEAMS_APP_PASSWORD = "..."
+# # TEAMS_SECURITY_TOKEN = "..."  # optional; (from Teams portal — disables HMAC verification when blank)
+# # TEAMS_WEBHOOK_PORT = "8459"  # optional
+
+# Telegram — Telegram Bot API adapter
+# Migrated from in-process to sidecar in #5241. Old `[channels.telegram]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "telegram"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.telegram"]
+# channel_type = "telegram"
+# [sidecar_channels.env]
+# TELEGRAM_BOT_TOKEN = "..."  # 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+# # ALLOWED_USERS = "123456789, 987654321"  # optional
+
+# Twitch — Twitch IRC gateway adapter
+# Migrated from in-process to sidecar in #5297. Old `[channels.twitch]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "twitch"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.twitch"]
+# channel_type = "twitch"
+# [sidecar_channels.env]
+# TWITCH_OAUTH_TOKEN = "..."  # oauth:abc123… (the prefix is auto-added)
+# TWITCH_NICK = "librefang-bot"
+# TWITCH_CHANNELS = "channel1,channel2"
+# # TWITCH_ACCOUNT_ID = "prod"  # optional
+# # TWITCH_RATE_LIMIT_MSGS = "20"  # optional
+
+# Webex — Cisco Webex bot adapter
+# Migrated from in-process to sidecar in #5309. Old `[channels.webex]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "webex"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.webex"]
+# channel_type = "webex"
+# [sidecar_channels.env]
+# WEBEX_BOT_TOKEN = "..."  # NjIzOTkz...
+# # WEBEX_ALLOWED_ROOMS = "Y2lzY29zcGFyazov..."  # optional
+# # WEBEX_ACCOUNT_ID = "org-prod"  # optional
+
+# Webhook — Generic HMAC-signed HTTP webhook adapter
+# Migrated from in-process to sidecar in #5455. Old `[channels.webhook]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "webhook"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.webhook"]
+# channel_type = "webhook"
+# [sidecar_channels.env]
+# WEBHOOK_SECRET = "..."
+# # WEBHOOK_LISTEN_PORT = "8461"  # optional
+# # WEBHOOK_LISTEN_PATH = "/webhook"  # optional
+
+# WeChat — WeChat personal-account adapter via Tencent's iLink (open-source ClawBot) gateway
+# Migrated from in-process to sidecar in #5421. Old `[channels.wechat]` blocks are no longer recognised.
+# Requires either WECHAT_BOT_TOKEN (pre-supplied) OR no token set (triggers QR-login on first start).
+# [[sidecar_channels]]
+# name = "wechat"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.wechat"]
+# channel_type = "wechat"
+# [sidecar_channels.env]
+# # WECHAT_BOT_TOKEN = "..."  # optional; (optional, populated by QR login)
+# # WECHAT_ALLOWED_USERS = "hash1@im.wechat,hash2@im.wechat"  # optional
+# # WECHAT_INITIAL_BACKOFF_SECS = "2"  # optional
+# # WECHAT_MAX_BACKOFF_SECS = "60"  # optional
+
+# WeCom — WeCom (企业微信) intelligent-bot WebSocket adapter
+# Migrated from in-process to sidecar in #5392. Old `[channels.wecom]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "wecom"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.wecom"]
+# channel_type = "wecom"
+# [sidecar_channels.env]
+# WECOM_BOT_ID = "aibxxxxxxx"
+# WECOM_BOT_SECRET = "..."  # bot secret from WeCom admin console
+# # WECOM_ALLOWED_USERS = "alice,bob"  # optional
+# # WECOM_ACCOUNT_ID = "prod-bot"  # optional
+
+# WhatsApp — WhatsApp adapter: Meta Cloud API for production, Web/QR via Baileys gateway for personal accounts
+# Migrated from in-process to sidecar in #5445. Old `[channels.whatsapp]` blocks are no longer recognised.
+# Requires EITHER (Cloud API path) WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN + WHATSAPP_VERIFY_TOKEN OR (Baileys gateway path) WHATSAPP_GATEWAY_URL pointing at a running Baileys instance.
+# [[sidecar_channels]]
+# name = "whatsapp"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.whatsapp"]
+# channel_type = "whatsapp"
+# [sidecar_channels.env]
+# # WHATSAPP_PHONE_NUMBER_ID = "123456789012345"  # optional
+# # WHATSAPP_ACCESS_TOKEN = "..."  # optional
+# # WHATSAPP_VERIFY_TOKEN = "..."  # optional
+# # WHATSAPP_APP_SECRET = "..."  # optional; (production should always set this)
+
+# Zulip — Zulip REST + event-queue long-poll adapter
+# Migrated from in-process to sidecar in #5310. Old `[channels.zulip]` blocks are no longer recognised.
+# [[sidecar_channels]]
+# name = "zulip"
+# command = "python3"
+# args = ["-m", "librefang.sidecar.adapters.zulip"]
+# channel_type = "zulip"
+# [sidecar_channels.env]
+# ZULIP_SERVER_URL = "https://myorg.zulipchat.com"
+# ZULIP_BOT_EMAIL = "bot-bot@myorg.zulipchat.com"
+# ZULIP_API_KEY = "..."  # abcd1234...
+# # ZULIP_STREAMS = "engineering, general"  # optional
+# # ZULIP_ACCOUNT_ID = "prod"  # optional
+
+
+
+
+
+
+# ── MCP Servers (external tool integration) ──────────────────
+# PII privacy controls — filter personal data before sending to LLM providers
+# [privacy]
+# mode = "pseudonymize"                  # "off" (default), "redact", or "pseudonymize"
+# redact_patterns = ["\\bCUST-\\d{6}\\b"]  # Additional regex patterns to filter
+
+# MCP server connections
+# [[mcp_servers]]
+# name = "filesystem"
+# timeout_secs = 30
+# [mcp_servers.transport]
+# type = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+# [[mcp_servers]]
+# name = "remote-tools"
+# timeout_secs = 60
+# [mcp_servers.transport]
+# type = "sse"
+# url = "https://mcp.example.com/events"
+
+# ── Browser Automation ───────────────────────────────────────
+# [browser]
+# headless = true
+# viewport_width = 1280
+# viewport_height = 720
+# max_sessions = 5
+
+# ── Docker Sandbox ───────────────────────────────────────────
+# [docker]
+# enabled = false
+# image = "python:3.12-slim"
+# memory_limit = "512m"
+# timeout_secs = 60
+
+# ── Text-to-Speech ───────────────────────────────────────────
+# [tts]
+# enabled = false
+# provider = "openai"          # or "elevenlabs" or "google_tts"
+#
+# [tts.elevenlabs]
+# voice_id = "21m00Tcm4TlvDq8ikWAM"   # Rachel (default)
+# model_id = "eleven_monolingual_v1"
+# stability = 0.5
+# similarity_boost = 0.75
+# output_format = "opus_48000_32"      # WhatsApp PTT voice-notes need Ogg/Opus.
+#                                      # Others: mp3_44100_128, mp3_22050_32,
+#                                      # opus_24000_32, pcm_16000, pcm_44100, ulaw_8000.
+
+# ── Network (P2P Federation) ─────────────────────────────────
+# network_enabled = false
+# [network]
+# shared_secret = ""           # Required for P2P auth
+
+# ── External Auth (OAuth2/OIDC) ──────────────────────────────
+# [external_auth]
+# enabled = false
+# issuer_url = "https://accounts.google.com"
+# client_id = ""
+# client_secret_env = "OAUTH_CLIENT_SECRET"
+
+# ── File Inbox (Async External Commands) ──────────────────────
+# Drop text files into a directory to send messages to agents.
+# First line may contain `agent:<name>` to target a specific agent.
+# [inbox]
+# enabled = false
+# directory = "~/.librefang/inbox/"   # Defaults to $HOME_DIR/inbox/
+# poll_interval_secs = 5
+# default_agent = "assistant"         # Agent to use when no agent: directive
+
+# ── Vault (Encrypted Credential Storage) ─────────────────────
+# [vault]
+# enabled = true               # Auto-detected if vault.enc exists
+
+# ── HTTP-Compatible MCP Servers ────────────────────────────────
+# [[mcp_servers]]
+# name = "internal-http"
+# timeout_secs = 30
+# [mcp_servers.transport]
+# type = "http_compat"
+# base_url = "http://127.0.0.1:8080"
+# [[mcp_servers.transport.headers]]
+# name = "Authorization"
+# value_env = "INTERNAL_HTTP_TOKEN"
+# [[mcp_servers.transport.tools]]
+# name = "search"
+# path = "/search"
+# method = "get"
+# request_mode = "query"
+# response_mode = "json"
+
+# Execution approval policy
+# [approval]
+# require_approval = ["shell_exec"]       # Tools requiring human approval (default: ["shell_exec"])
+# timeout_secs = 60                       # Auto-deny after this many seconds (10..=300)
+# auto_approve = false                    # Set true to disable all approval gates
+#
+# # Trusted senders — these user IDs auto-approve all tools (bypass approval gate)
+# trusted_senders = ["admin_123", "ops_456"]
+#
+# # Per-channel tool authorization rules
+# [[approval.channel_rules]]
+# channel = "telegram"
+# denied_tools = ["shell_exec"]           # Block shell_exec from Telegram
+#
+# [[approval.channel_rules]]
+# channel = "admin_cli"
+# allowed_tools = ["shell_exec", "file_write", "file_delete"]  # Only these tools from admin CLI
+#
+# # TOTP second-factor verification for critical tool approvals.
+# # When enabled, approving a tool requires a 6-digit TOTP code from an authenticator app.
+# # Setup: POST /api/approvals/totp/setup → scan QR → POST /api/approvals/totp/confirm
+# second_factor = "none"                   # "none" (default) or "totp"
+# totp_issuer = "LibreFang"                # Issuer name shown in authenticator app
+# totp_grace_period_secs = 300             # Skip TOTP re-verification within this window (0 = always require)
+# totp_tools = ["shell_exec"]              # Only these tools require TOTP (empty = all tools in require_approval)

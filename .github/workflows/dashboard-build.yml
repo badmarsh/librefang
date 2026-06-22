@@ -1,0 +1,133 @@
+name: Dashboard Build
+
+# `release: published` requires release-create.yml to use a PAT — releases
+# created by GITHUB_TOKEN do not fire downstream triggers.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/librefang-api/dashboard/src/**'
+      - 'crates/librefang-api/dashboard/package.json'
+      - 'crates/librefang-api/dashboard/pnpm-lock.yaml'
+      - 'crates/librefang-api/dashboard/vite.config.*'
+      - 'crates/librefang-api/dashboard/tsconfig.*'
+      - 'crates/librefang-api/dashboard/eslint.config.*'
+      - '.github/workflows/dashboard-build.yml'
+  pull_request:
+    paths:
+      - 'crates/librefang-api/dashboard/src/**'
+      - 'crates/librefang-api/dashboard/package.json'
+      - 'crates/librefang-api/dashboard/pnpm-lock.yaml'
+      - 'crates/librefang-api/dashboard/vite.config.*'
+      - 'crates/librefang-api/dashboard/tsconfig.*'
+      - 'crates/librefang-api/dashboard/eslint.config.*'
+      - '.github/workflows/dashboard-build.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to upload dashboard asset to (e.g. v2026.4.5-beta.14)'
+        required: true
+        type: string
+
+# Cancel superseded runs on the same ref (e.g. when a PR is force-pushed).
+# Main-branch and release runs each get their own group so they don't cancel
+# each other.
+concurrency:
+  group: dashboard-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Dashboard Lint
+    runs-on: ubuntu-latest
+    # ESLint guards security-sensitive JSX (jsx-no-target-blank,
+    # no-danger-with-children) and acts as a fast pre-build gate so the
+    # heavier typecheck + build jobs don't waste a runner on a PR that
+    # would have failed the lint anyway (refs #5561).
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 10
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 20
+      - name: Install dependencies
+        working-directory: crates/librefang-api/dashboard
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
+      - name: Lint
+        working-directory: crates/librefang-api/dashboard
+        run: pnpm run lint
+
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        with:
+          version: 10
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: crates/librefang-api/dashboard
+        # pnpm 10 in CI ignores both .npmrc and pnpm-workspace.yaml for the
+        # ignored-builds setting; pass it on the CLI so it can't be missed.
+        run: pnpm install --frozen-lockfile --config.strict-dep-builds=false
+
+      - name: Typecheck
+        working-directory: crates/librefang-api/dashboard
+        run: pnpm run typecheck
+
+      - name: Run tests
+        working-directory: crates/librefang-api/dashboard
+        # Includes the no-inline-fetch lint test (src/lib/__tests__/no-inline-fetch.test.ts)
+        run: pnpm run test
+
+      - name: Build dashboard
+        working-directory: crates/librefang-api/dashboard
+        run: pnpm run build
+
+      - name: Package dashboard assets
+        run: |
+          cd crates/librefang-api/static/react
+          tar -czf /tmp/dashboard-dist.tar.gz .
+
+      - name: Upload to release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          case "${{ github.event_name }}" in
+            release)
+              TAG="${{ github.event.release.tag_name }}"
+              ;;
+            workflow_dispatch)
+              TAG="${{ github.event.inputs.tag }}"
+              ;;
+            *)
+              # push to main — upload to the most recent release
+              TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+              ;;
+          esac
+          if [ -z "$TAG" ]; then
+            echo "No release found, skipping upload"
+            exit 0
+          fi
+          echo "Uploading dashboard-dist.tar.gz to $TAG"
+          for attempt in $(seq 1 5); do
+            if gh release upload "$TAG" /tmp/dashboard-dist.tar.gz --clobber; then
+              echo "✓ Upload succeeded (attempt $attempt)"
+              exit 0
+            fi
+            echo "Upload failed (attempt $attempt/5), retrying in 10s..."
+            sleep 10
+          done
+          echo "::error::Upload failed after 5 attempts"
+          exit 1

@@ -1,0 +1,26 @@
+[
+  {
+    "tweet_id": "1",
+    "text": "Slovenský premiér dnes ohlásil nové opatrenia pre dôchodcov.",
+    "check_worthy": 1,
+    "claim_type": "political_statement"
+  },
+  {
+    "tweet_id": "2",
+    "text": "Dnes je krásne počasie, idem von.",
+    "check_worthy": 0,
+    "claim_type": "personal_update"
+  },
+  {
+    "tweet_id": "3",
+    "text": "Podľa novej správy EÚ zakáže všetky autá na spaľovací motor už zajtra.",
+    "check_worthy": 1,
+    "claim_type": "policy_claim"
+  },
+  {
+    "tweet_id": "4",
+    "text": "Mám rád bryndzové halušky s veľa slaninou.",
+    "check_worthy": 0,
+    "claim_type": "personal_opinion"
+  }
+]

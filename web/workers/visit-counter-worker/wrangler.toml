@@ -1,0 +1,8 @@
+name = "librefang-visit-counter"
+main = "index.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "librefang-marketplace"
+database_id = "1bbf40ca-963b-4b94-b65d-062b9e7bbb42"

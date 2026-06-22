@@ -1,0 +1,140 @@
+# Sidecar Channel Adapter — Python Example
+
+This directory now holds **only** the generic template adapter
+(`adapter.py`) — a minimal, deletable starting point for writing your
+own channel adapter in Python (or any language) that communicates with
+LibreFang via JSON-RPC over stdin/stdout.
+
+> **First-party adapters moved.** The production ntfy / Telegram /
+> webhook adapters used to live here as `*_adapter.py`. They now ship
+> inside the SDK package (`librefang-sdk`) under
+> `librefang.sidecar.adapters` — `pip install librefang-sdk` once and
+> point `[[sidecar_channels]].args` at the module. See "Running a
+> first-party adapter" below.
+
+## How It Works
+
+LibreFang spawns your adapter as a subprocess. Communication uses **newline-delimited
+JSON** (one JSON object per line):
+
+- **stdout** (adapter -> LibreFang): Events such as incoming messages
+- **stdin** (LibreFang -> adapter): Commands such as "send a message"
+- **stderr**: Forwarded to LibreFang's logs (use for debugging)
+
+## Protocol
+
+### Events (adapter -> LibreFang via stdout)
+
+#### `ready` — Signal that the adapter is initialized and ready
+
+```json
+{"method": "ready"}
+```
+
+#### `message` — An incoming message from the platform
+
+```json
+{
+  "method": "message",
+  "params": {
+    "user_id": "user-123",
+    "user_name": "Alice",
+    "text": "Hello!",
+    "channel_id": "general",
+    "platform": "my-platform"
+  }
+}
+```
+
+Fields `text`, `channel_id`, and `platform` are optional.
+
+#### `error` — Report an error to LibreFang
+
+```json
+{"method": "error", "params": {"message": "Connection lost"}}
+```
+
+### Commands (LibreFang -> adapter via stdin)
+
+#### `send` — Send a message to the platform
+
+```json
+{
+  "method": "send",
+  "params": {
+    "channel_id": "general",
+    "text": "Hello from LibreFang!"
+  }
+}
+```
+
+#### `shutdown` — Graceful shutdown request
+
+```json
+{"method": "shutdown"}
+```
+
+The adapter should clean up and exit.
+
+## Running a first-party adapter
+
+`ntfy`, `telegram`, and `webhook` ship inside the SDK package. Install
+the SDK once and reference the module from your config:
+
+```bash
+pip install librefang-sdk   # or: pip install -e sdk/python  (from a checkout)
+```
+
+```toml
+# ~/.librefang/config.toml — ntfy example
+[[sidecar_channels]]
+name = "ntfy"
+command = "python3"
+args = ["-m", "librefang.sidecar.adapters.ntfy"]
+channel_type = "ntfy"
+[sidecar_channels.env]
+NTFY_TOPIC = "my-topic"
+# NTFY_SERVER_URL = "https://ntfy.sh"   # default
+# NTFY_TOKEN = "tk_..."                 # omit for public topics
+```
+
+The same pattern works for the other two:
+`-m librefang.sidecar.adapters.telegram` (needs `TELEGRAM_BOT_TOKEN`,
+also `pip install requests`) and `-m librefang.sidecar.adapters.webhook`
+(stdlib-only HTTP receiver). See each module's docstring for the full
+env-var list.
+
+## Configuration for a custom adapter
+
+Add to your `~/.librefang/config.toml`:
+
+```toml
+[[sidecar_channels]]
+name = "echo-test"
+command = "python3"
+args = ["path/to/adapter.py"]
+# Optional: extra environment variables
+env = {}
+# Optional: channel type identifier (defaults to the adapter name)
+# channel_type = "custom-echo"
+```
+
+## Running the Example
+
+```bash
+# Test the adapter standalone
+echo '{"method":"send","params":{"channel_id":"test","text":"Hello"}}' | python3 adapter.py
+
+# Or configure it in LibreFang and start the daemon
+```
+
+## Writing Your Own Adapter
+
+1. Read commands from stdin (one JSON per line)
+2. Write events to stdout (one JSON per line, flush after each)
+3. Use stderr for debug logging
+4. Send `{"method": "ready"}` on stdout when initialized
+5. Handle `{"method": "shutdown"}` by cleaning up and exiting
+6. Handle `{"method": "send", "params": {...}}` by delivering the message
+
+You can write adapters in any language: Python, Go, Node.js, Ruby, Bash, etc.

@@ -1,0 +1,552 @@
+//! Shared `.env` file loader for LibreFang.
+//!
+//! Loads `~/.librefang/.env`, `~/.librefang/secrets.env`, and the credential
+//! vault into the process environment. Used by the CLI, desktop app, and kernel
+//! so that every entry point loads secrets the same way.
+//!
+//! **Priority order** (highest first):
+//! 1. System environment variables (already present in `std::env`)
+//! 2. Credential vault (`vault.enc`)
+//! 3. `.env` file
+//! 4. `secrets.env` file
+//!
+//! Existing environment variables are **never** overridden.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::Once;
+
+/// Gate for [`load_dotenv`] so repeated calls are cheap no-ops.
+static DOTENV_LOADED: Once = Once::new();
+
+/// Get the LibreFang home directory, respecting `LIBREFANG_HOME` env var.
+fn librefang_home() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("LIBREFANG_HOME") {
+        return Some(PathBuf::from(home));
+    }
+    dirs::home_dir().map(|h| h.join(".librefang"))
+}
+
+fn env_file_path() -> Option<PathBuf> {
+    librefang_home().map(|h| h.join(".env"))
+}
+
+fn secrets_file_path() -> Option<PathBuf> {
+    librefang_home().map(|h| h.join("secrets.env"))
+}
+
+/// Load vault + `.env` + `secrets.env` into `std::env`. Call from the
+/// synchronous `main()` of a binary *before* spawning any tokio runtime —
+/// `std::env::set_var` is UB in Rust 1.80+ once other threads exist.
+pub fn load_dotenv() {
+    DOTENV_LOADED.call_once(|| {
+        // #5139: the vault master key may itself live in `~/.librefang/.env`
+        // (or `secrets.env`). `Vault::resolve_master_key()` reads
+        // `LIBREFANG_VAULT_KEY` directly from `std::env`, so if the dotenv
+        // files aren't parsed *before* `load_vault()` the key isn't present
+        // yet and vault unlock fails silently — every vault-stored secret
+        // (provider keys, MCP client_ids, OAuth tokens) then becomes
+        // unavailable for the whole process lifetime. Pre-seed ONLY that one
+        // key here so the documented priority order (system env > vault >
+        // .env > secrets.env) is otherwise unchanged: every other key is
+        // still resolved vault-first below, and an already-set process env
+        // var is never overridden (see `preseed_vault_key_from`).
+        if let Some(p) = env_file_path() {
+            preseed_vault_key_from(&p);
+        }
+        if let Some(p) = secrets_file_path() {
+            preseed_vault_key_from(&p);
+        }
+        load_vault();
+        if let Some(p) = env_file_path() {
+            load_env_file(&p);
+        }
+        if let Some(p) = secrets_file_path() {
+            load_env_file(&p);
+        }
+    });
+}
+
+/// Name of the vault master-key env var. Mirrors
+/// `librefang_extensions::vault`'s `VAULT_KEY_ENV` (kept as a local literal
+/// because that constant is private to the `vault` module).
+const VAULT_KEY_ENV: &str = "LIBREFANG_VAULT_KEY";
+
+/// Parse `path` and, if it defines `LIBREFANG_VAULT_KEY` and the process env
+/// does not already have it, set it so the subsequent `load_vault()` call can
+/// resolve the master key. Only this single key is pre-seeded — all other
+/// entries keep their vault-first priority via the later `load_env_file`.
+fn preseed_vault_key_from(path: &Path) {
+    // Already provided by the real system environment — that wins, do nothing.
+    if std::env::var(VAULT_KEY_ENV).is_ok() {
+        return;
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = parse_env_line(trimmed) {
+            if key == VAULT_KEY_ENV {
+                // SAFETY: called before the tokio runtime starts (from
+                // synchronous main()); no other threads exist yet.
+                unsafe { std::env::set_var(&key, &value) };
+                return;
+            }
+        }
+    }
+}
+
+/// Try to unlock the credential vault and inject secrets into process env.
+///
+/// Vault secrets have higher priority than `.env` but lower than system env vars.
+/// Silently does nothing if vault is not initialized or cannot be unlocked.
+fn load_vault() {
+    let vault_path = match librefang_home() {
+        Some(h) => h.join("vault.enc"),
+        None => return,
+    };
+
+    if !vault_path.exists() {
+        return;
+    }
+
+    let vault_display = vault_path.display().to_string();
+    let mut vault = crate::vault::CredentialVault::new(vault_path);
+    if let Err(e) = vault.unlock() {
+        // `eprintln!` rather than `tracing::warn!`: load_dotenv runs from
+        // sync main() before any tracing subscriber is installed.
+        eprintln!(
+            "librefang-dotenv: credential vault at {vault_display} could not be unlocked: {e}; \
+             skipping vault-provided secrets"
+        );
+        return;
+    }
+
+    for key in vault.list_keys() {
+        if std::env::var(key).is_err() {
+            if let Some(val) = vault.get(key) {
+                // SAFETY: called before the tokio runtime starts (from synchronous
+                // main()); no other threads exist yet.
+                unsafe { std::env::set_var(key, val.as_str()) };
+            }
+        }
+    }
+}
+
+fn load_env_file(path: &Path) {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if let Some((key, value)) = parse_env_line(trimmed) {
+            if std::env::var(&key).is_err() {
+                // SAFETY: called before the tokio runtime starts (from synchronous
+                // main()); no other threads exist yet.
+                unsafe { std::env::set_var(&key, &value) };
+            }
+        }
+    }
+}
+
+/// Parses a `KEY=VALUE` line; undoes double-quote escape sequences, single-quoted values are literal.
+fn parse_env_line(line: &str) -> Option<(String, String)> {
+    let eq_pos = line.find('=')?;
+    let key = line[..eq_pos].trim().to_string();
+    let mut value = line[eq_pos + 1..].trim().to_string();
+
+    if key.is_empty() {
+        return None;
+    }
+
+    // Strip matching quotes and remember which kind we stripped, so we
+    // only undo escapes inside double quotes (single-quoted = literal).
+    let mut was_double_quoted = false;
+    if value.len() >= 2 {
+        if value.starts_with('"') && value.ends_with('"') {
+            value = value[1..value.len() - 1].to_string();
+            was_double_quoted = true;
+        } else if value.starts_with('\'') && value.ends_with('\'') {
+            value = value[1..value.len() - 1].to_string();
+        }
+    }
+
+    if was_double_quoted {
+        value = unescape_env_value(&value);
+    }
+
+    Some((key, value))
+}
+
+/// Escapes `\`, `\n`, `\r`, `"` for writing inside double-quoted `.env` values.
+fn escape_env_value(value: &str) -> String {
+    value
+        // Backslash must come first; otherwise the \n replacement produces \\n which decodes back as a newline.
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('"', "\\\"")
+}
+
+/// Inverse of [`escape_env_value`]; single-pass to avoid double-decoding `\\n`.
+fn unescape_env_value(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            // Unknown escape: keep both chars verbatim so we don't lose data.
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// Upsert a key in `$LIBREFANG_HOME/.env`.
+///
+/// Creates the file if missing. Sets 0600 permissions on Unix.
+/// Also sets the key in the current process environment.
+pub fn save_env_key(key: &str, value: &str) -> Result<(), String> {
+    let path = env_file_path().ok_or("Could not determine LibreFang home directory")?;
+
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {e}"))?;
+    }
+
+    let mut entries = read_env_file(&path);
+    entries.insert(key.to_string(), value.to_string());
+    write_env_file(&path, &entries)?;
+
+    // Also set in current process.
+    // SAFETY: callers must ensure no concurrent threads are reading the process
+    // environment (i.e. call before the tokio runtime starts, or from a
+    // spawn_blocking context).
+    unsafe { std::env::set_var(key, value) };
+
+    Ok(())
+}
+
+/// Remove a key from `$LIBREFANG_HOME/.env`.
+pub fn remove_env_key(key: &str) -> Result<(), String> {
+    let path = env_file_path().ok_or("Could not determine LibreFang home directory")?;
+
+    let mut entries = read_env_file(&path);
+    entries.remove(key);
+    write_env_file(&path, &entries)?;
+
+    std::env::remove_var(key);
+
+    Ok(())
+}
+
+/// List key names (without values) from `$LIBREFANG_HOME/.env`.
+#[allow(dead_code)]
+pub fn list_env_keys() -> Vec<String> {
+    let path = match env_file_path() {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+
+    read_env_file(&path).into_keys().collect()
+}
+
+/// Check if the `.env` file exists.
+#[allow(dead_code)]
+pub fn env_file_exists() -> bool {
+    env_file_path().map(|p| p.exists()).unwrap_or(false)
+}
+
+fn read_env_file(path: &Path) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return map,
+    };
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = parse_env_line(trimmed) {
+            map.insert(key, value);
+        }
+    }
+
+    map
+}
+
+fn write_env_file(path: &Path, entries: &BTreeMap<String, String>) -> Result<(), String> {
+    let mut content =
+        String::from("# LibreFang environment — managed by `librefang config set-key`\n");
+    content.push_str("# Do not edit while the daemon is running.\n\n");
+
+    for (key, value) in entries {
+        let needs_quoting = value.contains(' ')
+            || value.contains('#')
+            || value.contains('"')
+            || value.contains('\\')
+            || value.contains('\n')
+            || value.contains('\r')
+            || value.contains('\'')
+            || value.contains('=')
+            || value.contains('$');
+        if needs_quoting {
+            let escaped = escape_env_value(value);
+            content.push_str(&format!("{key}=\"{escaped}\"\n"));
+        } else {
+            content.push_str(&format!("{key}={value}\n"));
+        }
+    }
+
+    // Atomic save: open <path>.tmp.<pid> with mode 0600 (Unix) at open
+    // time, write_all + flush + sync_all + rename(tmp, final).  Closes
+    // three #3944 holes left by the bare std::fs::write:
+    //   * Crash mid-write no longer leaves a truncated/empty .env
+    //     (the loader silently accepts that, so the API key the user
+    //     just configured vanishes on next boot).
+    //   * Default-perms TOCTOU window is gone: the file is created
+    //     0600 instead of 0644-then-tightened, so a parallel local
+    //     reader can't grab the key during the open syscall.
+    //   * Two concurrent saves no longer share the same staging path
+    //     because the tmp filename is uniquified by PID.
+    let tmp_path = path.with_extension(format!("env.tmp.{}", std::process::id()));
+    let result = (|| -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp_path)?;
+        f.write_all(content.as_bytes())?;
+        f.flush()?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp_path, path)
+    })();
+
+    if let Err(e) = result {
+        // Clean up an abandoned tmp on either write or rename failure.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Failed to write .env file: {e}"));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_env_line_simple() {
+        let (k, v) = parse_env_line("FOO=bar").unwrap();
+        assert_eq!(k, "FOO");
+        assert_eq!(v, "bar");
+    }
+
+    #[test]
+    fn test_parse_env_line_quoted() {
+        let (k, v) = parse_env_line("KEY=\"hello world\"").unwrap();
+        assert_eq!(k, "KEY");
+        assert_eq!(v, "hello world");
+    }
+
+    #[test]
+    fn test_parse_env_line_single_quoted() {
+        let (k, v) = parse_env_line("KEY='value'").unwrap();
+        assert_eq!(k, "KEY");
+        assert_eq!(v, "value");
+    }
+
+    #[test]
+    fn test_parse_env_line_spaces() {
+        let (k, v) = parse_env_line("  KEY  =  value  ").unwrap();
+        assert_eq!(k, "KEY");
+        assert_eq!(v, "value");
+    }
+
+    #[test]
+    fn test_parse_env_line_no_value() {
+        let (k, v) = parse_env_line("KEY=").unwrap();
+        assert_eq!(k, "KEY");
+        assert_eq!(v, "");
+    }
+
+    #[test]
+    fn test_parse_env_line_no_equals() {
+        assert!(parse_env_line("NOEQUALS").is_none());
+    }
+
+    #[test]
+    fn test_parse_env_line_empty_key() {
+        assert!(parse_env_line("=value").is_none());
+    }
+
+    #[test]
+    fn test_load_env_file_nonexistent() {
+        // Should not panic
+        load_env_file(&PathBuf::from("/nonexistent/.env"));
+    }
+
+    /// Regression for #3790: a value containing a literal newline must
+    /// be written as a single `KEY="..."` line (escaped) and must round
+    /// trip back to the original bytes via `parse_env_line`.
+    #[test]
+    fn write_env_file_escapes_newlines_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".env");
+        let mut entries = BTreeMap::new();
+        entries.insert(
+            "PEM_KEY".to_string(),
+            "-----BEGIN PRIVATE KEY-----\nABC\nDEF\n-----END PRIVATE KEY-----".to_string(),
+        );
+        entries.insert("PLAIN".to_string(), "simple".to_string());
+        entries.insert("BACKSLASH".to_string(), r"a\b\c".to_string());
+        entries.insert("QUOTED".to_string(), r#"has "quotes""#.to_string());
+        write_env_file(&path, &entries).unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        // Header is two comment lines + blank line; every entry must occupy
+        // exactly one line (no embedded newline leaks).
+        let key_lines: Vec<&str> = raw.lines().filter(|l| l.contains('=')).collect();
+        assert_eq!(
+            key_lines.len(),
+            entries.len(),
+            "expected one line per key; raw:\n{raw}"
+        );
+
+        // Round-trip: re-parse and ensure values match exactly.
+        let parsed = read_env_file(&path);
+        for (k, v) in &entries {
+            assert_eq!(
+                parsed.get(k).map(String::as_str),
+                Some(v.as_str()),
+                "round-trip mismatch for {k}: wrote {v:?}, read {:?}",
+                parsed.get(k)
+            );
+        }
+    }
+
+    /// Backslash MUST round-trip correctly — the escape ordering bug from
+    /// #3790 caused `\\\n` to decode as a real newline.
+    #[test]
+    fn escape_unescape_backslash_then_newline() {
+        let raw = "\\\n";
+        let escaped = escape_env_value(raw);
+        // \  →  \\, \n → \n  ⇒  \\\n
+        assert_eq!(escaped, r"\\\n");
+        assert!(!escaped.contains('\n'));
+        assert_eq!(unescape_env_value(&escaped), raw);
+    }
+
+    /// #5139: `preseed_vault_key_from` must pull `LIBREFANG_VAULT_KEY` out of
+    /// a `.env`-shaped file so `load_vault()` (which reads it straight from
+    /// `std::env`) can resolve the master key on first unlock. Before the fix
+    /// the key sat unread until `load_env_file` ran *after* `load_vault()`,
+    /// so the vault silently failed to unlock and every vault-stored secret
+    /// became unavailable.
+    #[test]
+    #[serial_test::serial]
+    fn test_preseed_vault_key_from_env_file() {
+        let key = VAULT_KEY_ENV;
+        // SAFETY: #[serial] serialises every env-mutating test in this binary.
+        unsafe { std::env::remove_var(key) };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".env");
+        std::fs::write(
+            &path,
+            format!("# comment\nUNRELATED=x\n{key}=bXktMzItYnl0ZS1iYXNlNjQta2V5\n"),
+        )
+        .unwrap();
+
+        preseed_vault_key_from(&path);
+
+        assert_eq!(
+            std::env::var(key).ok().as_deref(),
+            Some("bXktMzItYnl0ZS1iYXNlNjQta2V5"),
+            "vault key from .env must be in process env before load_vault()"
+        );
+        // Only the vault key — not unrelated entries — is pre-seeded here.
+        assert!(std::env::var("UNRELATED").is_err());
+
+        unsafe { std::env::remove_var(key) };
+    }
+
+    /// A real system env var for `LIBREFANG_VAULT_KEY` must win over the
+    /// `.env` value (documented priority: system env > vault > .env).
+    #[test]
+    #[serial_test::serial]
+    fn test_preseed_vault_key_does_not_override_system_env() {
+        let key = VAULT_KEY_ENV;
+        // SAFETY: #[serial] serialises env mutation in this binary.
+        unsafe { std::env::set_var(key, "system-wins") };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".env");
+        std::fs::write(&path, format!("{key}=from-dotenv\n")).unwrap();
+
+        preseed_vault_key_from(&path);
+
+        assert_eq!(
+            std::env::var(key).unwrap(),
+            "system-wins",
+            "system env LIBREFANG_VAULT_KEY must not be overridden by .env"
+        );
+
+        unsafe { std::env::remove_var(key) };
+    }
+
+    /// `load_env_file` must not override existing process env vars —
+    /// this is the invariant that anchors the system > file priority.
+    ///
+    /// `#[serial]` because `cargo test` runs multi-threaded by default
+    /// and `std::env::{set,remove}_var` is UB while other threads exist.
+    #[test]
+    #[serial_test::serial]
+    fn test_load_env_file_does_not_override_existing_var() {
+        let key = "LIBREFANG_DOTENV_TEST_PRIORITY_OVERRIDE";
+        // SAFETY: #[serial] serialises every env-mutating test in this
+        // binary, so no other thread reads or writes `key` here.
+        unsafe { std::env::set_var(key, "system-value") };
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".env");
+        std::fs::write(&path, format!("{key}=file-value\n")).unwrap();
+
+        load_env_file(&path);
+
+        assert_eq!(std::env::var(key).unwrap(), "system-value");
+
+        // SAFETY: same as above.
+        unsafe { std::env::remove_var(key) };
+    }
+}

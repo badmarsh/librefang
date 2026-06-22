@@ -1,0 +1,1846 @@
+//! LLM driver implementations.
+//!
+//! Contains drivers for Anthropic Claude, Google Gemini, OpenAI-compatible APIs, and more.
+//! Supports: Anthropic, Gemini, OpenAI, Groq, OpenRouter, DeepSeek, DeepInfra,
+//! Together, Mistral, Fireworks, Ollama, vLLM, Alibaba Coding Plan, and any
+//! OpenAI-compatible endpoint.
+pub mod anthropic;
+pub mod bedrock;
+pub mod chatgpt;
+pub mod claude_code;
+pub mod codewhale;
+pub mod codex_cli;
+pub mod copilot;
+pub mod fallback;
+pub mod fallback_chain;
+pub mod gemini;
+pub mod gemini_cli;
+pub mod ollama;
+pub mod openai;
+pub mod qwen_code;
+pub mod token_rotation;
+pub(crate) mod trace_headers;
+pub mod vertex_ai;
+
+use crate::llm_driver::{DriverConfig, LlmDriver, LlmError};
+use dashmap::DashMap;
+use std::sync::Arc;
+
+// ── Driver Cache ────────────────────────────────────────────────
+
+/// Thread-safe, lazy-initializing cache for LLM drivers.
+///
+/// Instead of creating a new HTTP-client-bearing driver on every agent message,
+/// `DriverCache` keeps one `Arc<dyn LlmDriver>` per unique
+/// `(provider, api_key, base_url)` tuple and returns a clone of the `Arc` on
+/// subsequent calls. This eliminates redundant TLS handshakes and connection-pool
+/// setup during startup and steady-state operation.
+pub struct DriverCache {
+    cache: DashMap<String, Arc<dyn LlmDriver>>,
+}
+
+impl Default for DriverCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DriverCache {
+    /// Create an empty driver cache.
+    pub fn new() -> Self {
+        Self {
+            cache: DashMap::new(),
+        }
+    }
+
+    /// Return a cached driver for the given config, or create (and cache) one.
+    ///
+    /// The cache key is derived from `(provider, api_key, base_url)` so that
+    /// different credentials or endpoints produce distinct drivers.
+    pub fn get_or_create(&self, config: &DriverConfig) -> Result<Arc<dyn LlmDriver>, LlmError> {
+        let key = Self::cache_key(config);
+        if let Some(driver) = self.cache.get(&key) {
+            return Ok(Arc::clone(driver.value()));
+        }
+        let driver = create_driver(config)?;
+        self.cache.insert(key, Arc::clone(&driver));
+        Ok(driver)
+    }
+
+    /// Invalidate all cached drivers (e.g. after a config hot-reload).
+    pub fn clear(&self) {
+        self.cache.clear();
+    }
+
+    /// Number of cached drivers (useful for metrics / debugging).
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Whether the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+
+    /// Build a deterministic cache key from the driver config fields that
+    /// affect which concrete driver instance is produced.
+    ///
+    /// The api_key is hashed (not stored verbatim) so secrets don't sit
+    /// in HashMap keys. Audit: drivercache-defaulthasher — switched
+    /// from `std::collections::hash_map::DefaultHasher` (64-bit, prone
+    /// to birthday collisions at ~2^32 entries, and credential-pool
+    /// deployments now ship hundreds of keys per provider across
+    /// multiple instances) to SHA-256 truncated to 128 bits of hex.
+    /// 128 bits puts the birthday-collision frontier past 2^64
+    /// entries — orders of magnitude beyond any realistic pool size
+    /// — so the cache can no longer hand back a driver instance
+    /// built for a different API key. Truncation is fine here: this
+    /// is collision avoidance over a bounded keyspace, not preimage
+    /// resistance.
+    fn cache_key(config: &DriverConfig) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(config.api_key.as_deref().unwrap_or("").as_bytes());
+        let digest = hasher.finalize();
+        // 128 bits = 32 hex chars — compact in log lines but takes
+        // birthday collisions out of the threat model.
+        let key_hash = hex::encode(&digest[..16]);
+
+        format!(
+            "{}|{}|{}|{}|{}",
+            config.provider,
+            key_hash,
+            config.base_url.as_deref().unwrap_or(""),
+            config.proxy_url.as_deref().unwrap_or(""),
+            config.request_timeout_secs.map_or(0, |s| s)
+        )
+    }
+}
+
+// ── Registry Types ───────────────────────────────────────────────
+
+/// API format determines which driver implementation to use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiFormat {
+    /// OpenAI-compatible chat completions API (used by 90%+ of providers).
+    OpenAI,
+    /// Anthropic Messages API.
+    Anthropic,
+    /// Google Gemini generateContent API.
+    Gemini,
+    /// Claude Code CLI subprocess.
+    ClaudeCode,
+    /// Qwen Code CLI subprocess.
+    QwenCode,
+    /// Gemini CLI subprocess.
+    GeminiCli,
+    /// Codex CLI subprocess.
+    CodexCli,
+    /// CodeWhale CLI subprocess.
+    CodeWhale,
+    /// ChatGPT with session token authentication.
+    ChatGpt,
+    /// GitHub Copilot with automatic token exchange.
+    Copilot,
+    /// Google Cloud Vertex AI (Gemini format with OAuth2 auth).
+    VertexAI,
+    /// Azure OpenAI (OpenAI format with `api-key` header and deployment-based URL).
+    AzureOpenAI,
+    /// AWS Bedrock Converse API (Bearer token auth via `AWS_BEARER_TOKEN_BEDROCK`).
+    Bedrock,
+    /// Native Ollama API (`/api/chat`, NDJSON streaming, first-class
+    /// `think` and `thinking` fields). Distinct from the OpenAI-compat shim
+    /// at `/v1/chat/completions` — covers real Ollama plus the long tail of
+    /// "Ollama-protocol" servers (Lemonade, certain llama.cpp wrappers,
+    /// gpt4all variants) that don't implement the OpenAI shim. See #4810.
+    Ollama,
+}
+
+/// A provider entry in the static registry.
+#[derive(Debug)]
+struct ProviderEntry {
+    /// Canonical provider name.
+    name: &'static str,
+    /// Alternative names that resolve to this provider.
+    aliases: &'static [&'static str],
+    /// Default base URL for the API.
+    base_url: &'static str,
+    /// Environment variable name for the API key.
+    api_key_env: &'static str,
+    /// Whether an API key is required (false for local providers like Ollama).
+    key_required: bool,
+    /// Which API format/driver to use.
+    api_format: ApiFormat,
+    /// Optional secondary env var for API key (e.g., GOOGLE_API_KEY for Gemini).
+    alt_api_key_env: Option<&'static str>,
+    /// Whether this provider is hidden from `known_providers()` output.
+    hidden: bool,
+}
+
+// ── Static Provider Registry ─────────────────────────────────────
+
+static PROVIDER_REGISTRY: &[ProviderEntry] = &[
+    ProviderEntry {
+        name: "anthropic",
+        aliases: &[],
+        base_url: "https://api.anthropic.com",
+        api_key_env: "ANTHROPIC_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::Anthropic,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "chatgpt",
+        aliases: &[],
+        base_url: "https://chatgpt.com/backend-api",
+        api_key_env: "CHATGPT_SESSION_TOKEN",
+        key_required: true,
+        api_format: ApiFormat::ChatGpt,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "gemini",
+        aliases: &["google"],
+        base_url: "https://generativelanguage.googleapis.com",
+        api_key_env: "GEMINI_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::Gemini,
+        alt_api_key_env: Some("GOOGLE_API_KEY"),
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "openai",
+        aliases: &["codex", "openai-codex"],
+        base_url: "https://api.openai.com/v1",
+        api_key_env: "OPENAI_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "groq",
+        aliases: &[],
+        base_url: "https://api.groq.com/openai/v1",
+        api_key_env: "GROQ_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "openrouter",
+        aliases: &[],
+        base_url: "https://openrouter.ai/api/v1",
+        api_key_env: "OPENROUTER_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "deepseek",
+        aliases: &[],
+        base_url: "https://api.deepseek.com/v1",
+        api_key_env: "DEEPSEEK_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "deepinfra",
+        aliases: &[],
+        base_url: "https://api.deepinfra.com/v1/openai",
+        api_key_env: "DEEPINFRA_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "together",
+        aliases: &[],
+        base_url: "https://api.together.xyz/v1",
+        api_key_env: "TOGETHER_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "mistral",
+        aliases: &[],
+        base_url: "https://api.mistral.ai/v1",
+        api_key_env: "MISTRAL_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "fireworks",
+        aliases: &[],
+        base_url: "https://api.fireworks.ai/inference/v1",
+        api_key_env: "FIREWORKS_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "ollama",
+        aliases: &[],
+        // Use 127.0.0.1 instead of localhost: on dual-stack hosts (e.g. macOS)
+        // localhost resolves to both ::1 and 127.0.0.1, IPv6 is tried first,
+        // and these local servers usually bind IPv4 only, causing instant
+        // connection-refused errors that don't always fall back to IPv4.
+        //
+        // No trailing `/v1`: native Ollama API (`/api/chat`, …) lives off the
+        // host root. Existing user configs that still carry `/v1` are
+        // auto-stripped at driver construction (see ollama::OllamaDriver).
+        base_url: "http://127.0.0.1:11434",
+        api_key_env: "OLLAMA_API_KEY",
+        key_required: false,
+        api_format: ApiFormat::Ollama,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "vllm",
+        aliases: &[],
+        base_url: "http://127.0.0.1:8000/v1",
+        api_key_env: "VLLM_API_KEY",
+        key_required: false,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "lmstudio",
+        aliases: &[],
+        base_url: "http://127.0.0.1:1234/v1",
+        api_key_env: "LMSTUDIO_API_KEY",
+        key_required: false,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "lemonade",
+        aliases: &[],
+        base_url: "http://127.0.0.1:8888/api/v1",
+        api_key_env: "LEMONADE_API_KEY",
+        key_required: false,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: true,
+    },
+    ProviderEntry {
+        name: "perplexity",
+        aliases: &[],
+        base_url: "https://api.perplexity.ai",
+        api_key_env: "PERPLEXITY_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "cohere",
+        aliases: &[],
+        base_url: "https://api.cohere.com/v2",
+        api_key_env: "COHERE_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "cerebras",
+        aliases: &[],
+        base_url: "https://api.cerebras.ai/v1",
+        api_key_env: "CEREBRAS_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "sambanova",
+        aliases: &[],
+        base_url: "https://api.sambanova.ai/v1",
+        api_key_env: "SAMBANOVA_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "huggingface",
+        aliases: &[],
+        base_url: "https://api-inference.huggingface.co/v1",
+        api_key_env: "HF_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "xai",
+        aliases: &[],
+        base_url: "https://api.x.ai/v1",
+        api_key_env: "XAI_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "replicate",
+        aliases: &[],
+        base_url: "https://api.replicate.com/v1",
+        api_key_env: "REPLICATE_API_TOKEN",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "github-copilot",
+        aliases: &["copilot"],
+        base_url: "https://api.githubcopilot.com",
+        api_key_env: "GITHUB_TOKEN",
+        key_required: true,
+        api_format: ApiFormat::Copilot,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "microsoft",
+        aliases: &["github-models"],
+        base_url: "https://models.inference.ai.azure.com",
+        api_key_env: "GITHUB_MODELS_TOKEN",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "claude-code",
+        aliases: &[],
+        base_url: "",
+        api_key_env: "",
+        key_required: false,
+        api_format: ApiFormat::ClaudeCode,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "qwen-code",
+        aliases: &[],
+        base_url: "",
+        api_key_env: "",
+        key_required: false,
+        api_format: ApiFormat::QwenCode,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "gemini-cli",
+        aliases: &[],
+        base_url: "",
+        api_key_env: "",
+        key_required: false,
+        api_format: ApiFormat::GeminiCli,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "codex-cli",
+        aliases: &[],
+        base_url: "",
+        api_key_env: "",
+        key_required: false,
+        api_format: ApiFormat::CodexCli,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "codewhale",
+        aliases: &[],
+        base_url: "",
+        api_key_env: "",
+        key_required: false,
+        api_format: ApiFormat::CodeWhale,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "moonshot",
+        aliases: &["kimi", "kimi2"],
+        base_url: "https://api.moonshot.ai/v1",
+        api_key_env: "MOONSHOT_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "kimi_coding",
+        aliases: &[],
+        base_url: "https://api.kimi.com/coding",
+        api_key_env: "KIMI_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::Anthropic,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "qwen",
+        aliases: &["dashscope", "model_studio"],
+        base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api_key_env: "DASHSCOPE_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "minimax",
+        aliases: &[],
+        base_url: "https://api.minimax.io/v1",
+        api_key_env: "MINIMAX_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "zhipu",
+        aliases: &["glm"],
+        base_url: "https://open.bigmodel.cn/api/paas/v4",
+        api_key_env: "ZHIPU_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "zhipu_coding",
+        aliases: &["codegeex"],
+        base_url: "https://open.bigmodel.cn/api/coding/paas/v4",
+        api_key_env: "ZHIPU_CODING_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "zai",
+        aliases: &["z.ai"],
+        base_url: "https://api.z.ai/api/paas/v4",
+        api_key_env: "ZAI_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "zai_coding",
+        aliases: &[],
+        base_url: "https://api.z.ai/api/coding/paas/v4",
+        api_key_env: "ZAI_CODING_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: true,
+    },
+    ProviderEntry {
+        name: "qianfan",
+        aliases: &["baidu"],
+        base_url: "https://qianfan.baidubce.com/v2",
+        api_key_env: "QIANFAN_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "volcengine",
+        aliases: &["doubao"],
+        base_url: "https://ark.cn-beijing.volces.com/api/v3",
+        api_key_env: "VOLCENGINE_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "volcengine_coding",
+        aliases: &[],
+        base_url: "https://ark.cn-beijing.volces.com/api/coding/v3",
+        api_key_env: "VOLCENGINE_CODING_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: true,
+    },
+    ProviderEntry {
+        name: "byteplus",
+        aliases: &[],
+        base_url: "https://ark.ap-southeast.bytepluses.com/api/v3",
+        api_key_env: "BYTEPLUS_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "byteplus_coding",
+        aliases: &[],
+        base_url: "https://ark.ap-southeast.bytepluses.com/api/coding",
+        api_key_env: "BYTEPLUS_CODING_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::Anthropic,
+        alt_api_key_env: None,
+        hidden: true,
+    },
+    ProviderEntry {
+        name: "alibaba-coding-plan",
+        aliases: &[],
+        base_url: "https://coding-intl.dashscope.aliyuncs.com/v1",
+        api_key_env: "ALIBABA_CODING_PLAN_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "azure-openai",
+        aliases: &["azure"],
+        base_url: "", // Constructed dynamically from endpoint + deployment
+        api_key_env: "AZURE_OPENAI_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::AzureOpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "vertex-ai",
+        aliases: &["vertex", "vertex_ai"],
+        base_url: "https://us-central1-aiplatform.googleapis.com",
+        api_key_env: "GOOGLE_APPLICATION_CREDENTIALS",
+        key_required: true, // Requires Google auth, but create_driver handles OAuth flows separately.
+        api_format: ApiFormat::VertexAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "nvidia-nim",
+        aliases: &["nvidia", "nim"],
+        base_url: "https://integrate.api.nvidia.com/v1",
+        api_key_env: "NVIDIA_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "novita",
+        aliases: &["novita-ai"],
+        base_url: "https://api.novita.ai/openai/v1",
+        api_key_env: "NOVITA_API_KEY",
+        key_required: true,
+        api_format: ApiFormat::OpenAI,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+    ProviderEntry {
+        name: "bedrock",
+        aliases: &["aws-bedrock"],
+        // Endpoint is built dynamically from AWS_REGION + model name by BedrockDriver.
+        base_url: "",
+        api_key_env: "AWS_BEARER_TOKEN_BEDROCK",
+        key_required: true,
+        api_format: ApiFormat::Bedrock,
+        alt_api_key_env: None,
+        hidden: false,
+    },
+];
+
+// ── Registry Lookup ──────────────────────────────────────────────
+
+/// Find a provider by name or alias.
+fn find_provider(name: &str) -> Option<&'static ProviderEntry> {
+    PROVIDER_REGISTRY
+        .iter()
+        .find(|p| p.name == name || p.aliases.contains(&name))
+}
+
+// ── Provider Defaults (registry-backed, used by tests) ───────────
+
+/// Provider metadata: base URL and env var name for the API key.
+#[cfg(test)]
+struct ProviderDefaults {
+    base_url: &'static str,
+    api_key_env: &'static str,
+    /// If true, the API key is required (error if missing).
+    key_required: bool,
+}
+
+/// Get defaults for known providers.
+#[cfg(test)]
+fn provider_defaults(provider: &str) -> Option<ProviderDefaults> {
+    find_provider(provider).map(|entry| ProviderDefaults {
+        base_url: entry.base_url,
+        api_key_env: entry.api_key_env,
+        key_required: entry.key_required,
+    })
+}
+
+// ── Driver Creation ──────────────────────────────────────────────
+
+/// Create a driver from a registry entry and configuration.
+fn create_driver_from_entry(
+    entry: &ProviderEntry,
+    config: &DriverConfig,
+) -> Result<Arc<dyn LlmDriver>, LlmError> {
+    let base_url = config
+        .base_url
+        .clone()
+        .unwrap_or_else(|| entry.base_url.to_string());
+
+    // Resolve API key: explicit config > primary env var > alt env var.
+    //
+    // Intentionally does NOT fall back to the Codex CLI credential file for
+    // the `openai` provider. CLI logins are surfaced as their own provider
+    // (`codex-cli`) so the user sees exactly what they configured; running
+    // `provider = "openai"` requires an explicit `OPENAI_API_KEY`.
+    let api_key = config
+        .api_key
+        .clone()
+        .or_else(|| std::env::var(entry.api_key_env).ok())
+        .or_else(|| entry.alt_api_key_env.and_then(|v| std::env::var(v).ok()))
+        .unwrap_or_default();
+
+    if entry.key_required && entry.api_format != ApiFormat::VertexAI && api_key.is_empty() {
+        return Err(LlmError::MissingApiKey(format!(
+            "Set {} environment variable for provider '{}'",
+            entry.api_key_env, config.provider
+        )));
+    }
+
+    let proxy_url = config.proxy_url.as_deref();
+
+    let request_timeout_secs = config.request_timeout_secs;
+
+    match entry.api_format {
+        ApiFormat::OpenAI => Ok(Arc::new(
+            openai::OpenAIDriver::with_proxy_and_timeout(
+                api_key,
+                base_url,
+                proxy_url,
+                request_timeout_secs,
+            )
+            .with_emit_caller_trace_headers(config.emit_caller_trace_headers)
+            .with_max_retries(config.max_retries),
+        )),
+        ApiFormat::Anthropic => Ok(Arc::new(
+            anthropic::AnthropicDriver::with_proxy_and_timeout(
+                api_key,
+                base_url,
+                proxy_url,
+                request_timeout_secs,
+            )
+            .with_emit_caller_trace_headers(config.emit_caller_trace_headers)
+            .with_max_retries(config.max_retries),
+        )),
+        ApiFormat::Gemini => Ok(Arc::new(
+            gemini::GeminiDriver::with_proxy_and_timeout(
+                api_key,
+                base_url,
+                proxy_url,
+                request_timeout_secs,
+            )
+            .with_emit_caller_trace_headers(config.emit_caller_trace_headers)
+            .with_max_retries(config.max_retries),
+        )),
+        ApiFormat::ClaudeCode => {
+            let mut d = claude_code::ClaudeCodeDriver::with_timeout(
+                config.base_url.clone(),
+                config.skip_permissions,
+                config.message_timeout_secs,
+            )
+            .with_emit_caller_trace_headers(config.emit_caller_trace_headers);
+            if let Some(bridge) = config.mcp_bridge.clone() {
+                d = d.with_mcp_bridge(bridge);
+            }
+            Ok(Arc::new(d))
+        }
+        ApiFormat::QwenCode => Ok(Arc::new(
+            qwen_code::QwenCodeDriver::new(config.base_url.clone(), config.skip_permissions)
+                .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        )),
+        ApiFormat::GeminiCli => Ok(Arc::new(
+            gemini_cli::GeminiCliDriver::new(config.base_url.clone(), config.skip_permissions)
+                .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        )),
+        ApiFormat::CodexCli => Ok(Arc::new(
+            codex_cli::CodexCliDriver::new(config.base_url.clone(), config.skip_permissions)
+                .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        )),
+        ApiFormat::CodeWhale => Ok(Arc::new(
+            codewhale::CodeWhaleDriver::new(config.base_url.clone(), config.skip_permissions)
+                .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        )),
+        ApiFormat::ChatGpt => Ok(Arc::new(
+            chatgpt::ChatGptDriver::with_proxy(api_key, base_url, proxy_url)
+                .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        )),
+        ApiFormat::Copilot => Ok(Arc::new(
+            copilot::CopilotDriver::new(api_key, base_url)
+                .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        )),
+        ApiFormat::VertexAI => Ok(Arc::new(
+            vertex_ai::VertexAiDriver::new(config)?
+                .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        )),
+        ApiFormat::AzureOpenAI => {
+            let azure = &config.azure_openai;
+            let endpoint = azure
+                .endpoint
+                .clone()
+                .or_else(|| config.base_url.clone())
+                .or_else(|| std::env::var("AZURE_OPENAI_ENDPOINT").ok())
+                .ok_or_else(|| LlmError::Api {
+                    status: 0,
+                    message: "Azure OpenAI requires an endpoint. Set [azure_openai] endpoint \
+                                  in config.toml, or AZURE_OPENAI_ENDPOINT env var."
+                        .to_string(),
+                    code: None,
+                })?;
+            let deployment = azure
+                .deployment
+                .clone()
+                .or_else(|| std::env::var("AZURE_OPENAI_DEPLOYMENT").ok())
+                .unwrap_or_default(); // empty deployment will use model name at request time
+            let api_version = azure
+                .api_version
+                .clone()
+                .or_else(|| std::env::var("AZURE_OPENAI_API_VERSION").ok())
+                .unwrap_or_else(|| "2024-02-01".to_string());
+            Ok(Arc::new(
+                openai::OpenAIDriver::new_azure_with_proxy(
+                    api_key,
+                    endpoint,
+                    deployment,
+                    api_version,
+                    proxy_url,
+                )
+                .with_emit_caller_trace_headers(config.emit_caller_trace_headers)
+                .with_max_retries(config.max_retries),
+            ))
+        }
+        ApiFormat::Bedrock => {
+            // Region falls back to AWS_REGION → AWS_DEFAULT_REGION → us-east-1
+            // inside the driver. Endpoint is built per-call from region+model.
+            let region = std::env::var("AWS_REGION")
+                .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+                .ok();
+            Ok(Arc::new(
+                bedrock::BedrockDriver::new_with_credentials(Some(api_key), region)?
+                    .with_emit_caller_trace_headers(config.emit_caller_trace_headers)
+                    .with_max_retries(config.max_retries),
+            ))
+        }
+        ApiFormat::Ollama => Ok(Arc::new(
+            ollama::OllamaDriver::with_proxy_and_timeout(
+                api_key,
+                base_url,
+                proxy_url,
+                request_timeout_secs,
+            )
+            .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        )),
+    }
+}
+
+/// Create an LLM driver based on provider name and configuration.
+///
+/// See `PROVIDER_REGISTRY` for the full list of built-in providers and their aliases.
+/// Any provider not in the registry can also be used by setting `base_url` directly —
+/// it will be treated as an OpenAI-compatible endpoint.
+pub fn create_driver(config: &DriverConfig) -> Result<Arc<dyn LlmDriver>, LlmError> {
+    let provider = config.provider.as_str();
+
+    // Look up in the registry first
+    if let Some(entry) = find_provider(provider) {
+        return create_driver_from_entry(entry, config);
+    }
+
+    // Unknown provider — if base_url is set, treat as custom OpenAI-compatible.
+    // For custom providers, try the convention {PROVIDER_UPPER}_API_KEY as env var
+    // when no explicit api_key was passed. This lets users just set e.g. NVIDIA_API_KEY
+    // in their environment and use provider = "nvidia" without extra config.
+    if let Some(ref base_url) = config.base_url {
+        let api_key = config.api_key.clone().unwrap_or_else(|| {
+            let env_var = format!("{}_API_KEY", provider.to_uppercase().replace('-', "_"));
+            std::env::var(&env_var).unwrap_or_default()
+        });
+        return Ok(Arc::new(
+            openai::OpenAIDriver::with_proxy_and_timeout(
+                api_key,
+                base_url.clone(),
+                config.proxy_url.as_deref(),
+                config.request_timeout_secs,
+            )
+            .with_emit_caller_trace_headers(config.emit_caller_trace_headers),
+        ));
+    }
+
+    // No base_url either — last resort: check if the user set an API key env var
+    // using the convention {PROVIDER_UPPER}_API_KEY. If found, use OpenAI-compatible
+    // driver with a default base URL derived from common patterns.
+    {
+        let env_var = format!("{}_API_KEY", provider.to_uppercase().replace('-', "_"));
+        if let Ok(api_key) = std::env::var(&env_var) {
+            if !api_key.is_empty() {
+                return Err(LlmError::Api {
+                    status: 0,
+                    message: format!(
+                        "Provider '{}' has API key ({} is set) but no base_url configured. \
+                         Add base_url to your [default_model] config or set it in [provider_urls].",
+                        provider, env_var
+                    ),
+                    code: None,
+                });
+            }
+        }
+    }
+
+    Err(LlmError::Api {
+        status: 0,
+        message: format!(
+            "Unknown provider '{}'. Supported: anthropic, chatgpt, gemini, openai, groq, openrouter, \
+             deepseek, deepinfra, together, mistral, fireworks, ollama, vllm, lmstudio, perplexity, \
+             cohere, cerebras, sambanova, huggingface, xai, replicate, github-copilot, \
+             azure-openai, vertex-ai, nvidia-nim, novita, bedrock, claude-code, qwen-code, gemini-cli, codex-cli, codewhale, \
+             qwen, minimax, zhipu, zhipu_coding, zai, moonshot, kimi_coding, \
+             qianfan, volcengine, byteplus, alibaba-coding-plan. \
+             Or set base_url for a custom OpenAI-compatible endpoint.",
+            provider
+        ),
+        code: None,
+    })
+}
+
+/// Detect the first available provider by scanning environment variables.
+///
+/// Returns `(provider, model, api_key_env)` for the first provider that has a
+/// configured API key, checked in a user-friendly priority order.
+/// Note: `model` is always `""` — callers should resolve the default model
+/// via `ModelCatalog`.
+pub fn detect_available_provider() -> Option<(&'static str, &'static str, &'static str)> {
+    // Priority order: popular cloud providers are checked first so that
+    // users with multiple keys get the most common one by default.
+    const PRIORITY: &[&str] = &[
+        "openai",
+        "anthropic",
+        "gemini",
+        "groq",
+        "deepseek",
+        "openrouter",
+        "mistral",
+        "together",
+        "fireworks",
+        "xai",
+        "perplexity",
+        "cohere",
+        "azure-openai",
+    ];
+
+    let env_set =
+        |var: &str| -> bool { std::env::var(var).ok().filter(|v| !v.is_empty()).is_some() };
+
+    // Phase 1: check priority providers in order
+    for &name in PRIORITY {
+        if let Some(p) = PROVIDER_REGISTRY.iter().find(|p| p.name == name) {
+            if p.key_required && env_set(p.api_key_env) {
+                return Some((p.name, "", p.api_key_env));
+            }
+            if let Some(alt) = p.alt_api_key_env {
+                if env_set(alt) {
+                    return Some((p.name, "", alt));
+                }
+            }
+        }
+    }
+
+    // Phase 2: check remaining registry providers not in priority list
+    for p in PROVIDER_REGISTRY {
+        if p.hidden || !p.key_required {
+            continue;
+        }
+        if PRIORITY.contains(&p.name) {
+            continue;
+        }
+        if env_set(p.api_key_env) {
+            return Some((p.name, "", p.api_key_env));
+        }
+        if let Some(alt) = p.alt_api_key_env {
+            if env_set(alt) {
+                return Some((p.name, "", alt));
+            }
+        }
+    }
+
+    // Phase 3: CLI-backed providers. No env var is involved — a CLI login
+    // is detected via binary-on-PATH or on-disk credential files. These are
+    // tried only after all API-key providers so that a user with both an
+    // API key and a CLI login gets the direct-API path (cheaper, faster).
+    //
+    // An empty `api_key_env` in the returned tuple signals to the caller
+    // that no env var lookup is needed; the CLI driver manages its own
+    // authentication (OAuth token, keychain, or subprocess login).
+    //
+    // Order matches typical install prevalence — claude-code first, then
+    // codex-cli, then Google's Gemini CLI, then Qwen's fork.
+    const CLI_PRIORITY: &[&str] = &[
+        "claude-code",
+        "codex-cli",
+        "codewhale",
+        "gemini-cli",
+        "qwen-code",
+    ];
+    for &name in CLI_PRIORITY {
+        if cli_provider_available(name) {
+            return Some((name, "", ""));
+        }
+    }
+
+    None
+}
+
+/// List all known provider names.
+///
+/// Returns canonical names from the provider registry, excluding hidden
+/// internal providers (e.g. `volcengine_coding`, `zai_coding`, `lemonade`).
+pub fn known_providers() -> Vec<&'static str> {
+    PROVIDER_REGISTRY
+        .iter()
+        .filter(|p| !p.hidden)
+        .map(|p| p.name)
+        .collect()
+}
+
+/// Look up the wire-format an arbitrary provider speaks, by canonical name
+/// or alias. Returns `None` if the name doesn't match any registered
+/// provider, in which case callers should default to `OpenAI` (the most
+/// common shape). This lets out-of-tree probes pick correct endpoint paths
+/// (`/models` vs `/v1/models`) and auth headers (`Authorization: Bearer`
+/// vs `x-api-key` + `anthropic-version`) without hardcoding per-provider
+/// branches at every call site.
+pub fn provider_api_format(name: &str) -> Option<ApiFormat> {
+    PROVIDER_REGISTRY
+        .iter()
+        .find(|p| p.name == name || p.aliases.contains(&name))
+        .map(|p| p.api_format)
+}
+
+/// Whether a provider id (or alias) maps to a coding-agent CLI driver —
+/// `claude-code`, `codex-cli`, `gemini-cli`, `qwen-code`, `codewhale`.
+///
+/// Registry-level mirror of [`crate::llm_driver::LlmDriver::is_coding_agent`]
+/// for the in-tree drivers: lets surfaces that only have a provider name (the
+/// dashboard provider list, metering labels) group coding agents apart from
+/// raw provider APIs without instantiating a driver. Returns `false` for
+/// unknown providers.
+pub fn is_coding_agent_provider(name: &str) -> bool {
+    matches!(
+        provider_api_format(name),
+        Some(
+            ApiFormat::ClaudeCode
+                | ApiFormat::QwenCode
+                | ApiFormat::GeminiCli
+                | ApiFormat::CodexCli
+                | ApiFormat::CodeWhale
+        )
+    )
+}
+
+/// `(env_var, provider_id)` pairs for every cloud provider in the registry
+/// that requires an API key. Both the canonical `api_key_env` and the
+/// optional `alt_api_key_env` (e.g. `GOOGLE_API_KEY` for `gemini`) are
+/// returned as separate entries so callers like `doctor` can probe each
+/// independently without losing the alias mapping.
+///
+/// Hidden providers (alternate-protocol variants like `*_coding`) are
+/// excluded — they share an env var with their parent and listing them
+/// would double-count.
+///
+/// This is the single source of truth so adding a new provider to
+/// `PROVIDER_REGISTRY` automatically surfaces it everywhere that
+/// enumerates cloud keys, instead of silently drifting from a hardcoded
+/// whitelist.
+pub fn cloud_provider_key_specs() -> Vec<(&'static str, &'static str)> {
+    let mut out: Vec<(&'static str, &'static str)> = Vec::new();
+    for p in PROVIDER_REGISTRY {
+        if !p.key_required || p.hidden {
+            continue;
+        }
+        out.push((p.api_key_env, p.name));
+        if let Some(alt) = p.alt_api_key_env {
+            out.push((alt, p.name));
+        }
+    }
+    out
+}
+
+/// Check if a CLI-based provider is available (binary on PATH or credentials exist).
+pub fn cli_provider_available(name: &str) -> bool {
+    match name {
+        "claude-code" => claude_code::claude_code_available(),
+        "qwen-code" => qwen_code::qwen_code_available(),
+        "gemini-cli" => gemini_cli::gemini_cli_available(),
+        "codex-cli" => codex_cli::codex_cli_available(),
+        "codewhale" => codewhale::codewhale_available(),
+        _ => false,
+    }
+}
+
+/// Check whether any of the given env vars redirect traffic away from official
+/// API hosts. Returns `true` when a proxy/non-official endpoint is detected.
+///
+/// CLI providers inherit environment variables (e.g. `ANTHROPIC_BASE_URL`)
+/// that can silently redirect all requests to a third-party proxy. When that
+/// happens the provider should not appear as "configured".
+///
+/// `env_vars` — env var names to check (first non-empty wins).
+/// `official_hosts` — substrings that identify the official API (e.g.
+/// `"api.anthropic.com"`). If the env var value contains none of them, the
+/// provider is considered proxied.
+pub fn is_proxied_via_env(env_vars: &[&str], official_hosts: &[&str]) -> bool {
+    for var in env_vars {
+        if let Ok(val) = std::env::var(var) {
+            let val = val.trim().trim_end_matches('/').to_lowercase();
+            if val.is_empty() {
+                continue;
+            }
+            return !official_hosts.iter().any(|host| val.contains(host));
+        }
+    }
+    false
+}
+
+/// Check if a provider name refers to a CLI-subprocess-based provider.
+pub fn is_cli_provider(name: &str) -> bool {
+    matches!(
+        name,
+        "claude-code" | "qwen-code" | "gemini-cli" | "codex-cli" | "codewhale"
+    )
+}
+
+/// Resolve the API key for a provider by checking the declared env vars.
+///
+/// Sources (in order): primary env var → alt env var (e.g. `GOOGLE_API_KEY`
+/// for Gemini). Does NOT read CLI credential files — CLI logins are exposed
+/// as their own provider entries (`claude-code` / `codex-cli` / `gemini-cli`
+/// / `qwen-code`) rather than silently substituting for an API provider.
+///
+/// Returns `None` if no key is found through any source.
+pub fn resolve_provider_api_key(provider: &str) -> Option<String> {
+    let entry = find_provider(provider)?;
+    let non_empty = |v: String| if v.trim().is_empty() { None } else { Some(v) };
+
+    std::env::var(entry.api_key_env)
+        .ok()
+        .and_then(non_empty)
+        .or_else(|| {
+            entry
+                .alt_api_key_env
+                .and_then(|v| std::env::var(v).ok())
+                .and_then(non_empty)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit: drivercache-defaulthasher. The cache key embeds a
+    /// hashed api_key so secrets don't sit in HashMap keys, but the
+    /// hash MUST be wide enough that birthday collisions are
+    /// infeasible. These tests pin the new SHA-256-truncated-to-128-
+    /// bit shape so a future refactor that swaps back to
+    /// DefaultHasher (or any 64-bit digest) gets caught by CI.
+    #[test]
+    fn cache_key_api_key_segment_is_128_bit_hex_not_64_bit_decimal() {
+        let cfg = DriverConfig {
+            provider: "openai".to_string(),
+            api_key: Some("sk-test".to_string()),
+            ..DriverConfig::default()
+        };
+        let key = DriverCache::cache_key(&cfg);
+        // Shape: "openai|<hex>|||0"
+        let parts: Vec<&str> = key.split('|').collect();
+        assert_eq!(parts.len(), 5, "cache key shape: {key}");
+        let hash_segment = parts[1];
+        assert_eq!(
+            hash_segment.len(),
+            32,
+            "api_key hash segment must be 32 hex chars (128 bits) — \
+             {hash_segment:?} of len {}",
+            hash_segment.len()
+        );
+        assert!(
+            hash_segment.chars().all(|c| c.is_ascii_hexdigit()),
+            "hash segment must be lowercase hex, got {hash_segment:?}"
+        );
+    }
+
+    #[test]
+    fn cache_key_distinguishes_distinct_api_keys() {
+        // Two configs that differ ONLY by api_key must produce
+        // distinct cache keys. The DefaultHasher path could in
+        // theory survive this trivial test too, but it's a sanity
+        // check that the swap didn't accidentally produce a
+        // constant.
+        let a = DriverConfig {
+            provider: "openai".to_string(),
+            api_key: Some("sk-key-a".to_string()),
+            ..DriverConfig::default()
+        };
+        let b = DriverConfig {
+            api_key: Some("sk-key-b".to_string()),
+            ..a.clone()
+        };
+        assert_ne!(DriverCache::cache_key(&a), DriverCache::cache_key(&b));
+    }
+
+    #[test]
+    fn cache_key_is_deterministic_across_calls() {
+        // The SHA-256 path must be deterministic — same input
+        // produces the same key on every call. DefaultHasher would
+        // (per HashMap rules) produce process-local but
+        // deterministic-within-process digests, so this test
+        // overlaps with the previous shape, but it also pins
+        // process-local determinism in case someone swaps in a
+        // randomised hasher later.
+        let cfg = DriverConfig {
+            provider: "openai".to_string(),
+            api_key: Some("sk-test".to_string()),
+            ..DriverConfig::default()
+        };
+        let k1 = DriverCache::cache_key(&cfg);
+        let k2 = DriverCache::cache_key(&cfg);
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn cache_key_handles_missing_api_key_without_panic() {
+        // Some providers (ollama, local) don't require an api_key.
+        // The empty-key hash path must produce a valid key.
+        let cfg = DriverConfig {
+            provider: "ollama".to_string(),
+            api_key: None,
+            ..DriverConfig::default()
+        };
+        let key = DriverCache::cache_key(&cfg);
+        assert!(key.starts_with("ollama|"));
+    }
+
+    #[test]
+    fn test_provider_defaults_groq() {
+        let d = provider_defaults("groq").unwrap();
+        assert_eq!(d.base_url, "https://api.groq.com/openai/v1");
+        assert_eq!(d.api_key_env, "GROQ_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_openrouter() {
+        let d = provider_defaults("openrouter").unwrap();
+        assert_eq!(d.base_url, "https://openrouter.ai/api/v1");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_ollama() {
+        let d = provider_defaults("ollama").unwrap();
+        assert!(!d.key_required);
+    }
+
+    #[test]
+    fn test_unknown_provider_returns_none() {
+        assert!(provider_defaults("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_custom_provider_with_base_url() {
+        let config = DriverConfig {
+            provider: "my-custom-llm".to_string(),
+            api_key: Some("test".to_string()),
+            base_url: Some("http://localhost:9999/v1".to_string()),
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let driver = create_driver(&config);
+        assert!(driver.is_ok());
+    }
+
+    #[test]
+    fn test_unknown_provider_no_url_errors() {
+        let config = DriverConfig {
+            provider: "nonexistent".to_string(),
+            api_key: None,
+            base_url: None,
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let driver = create_driver(&config);
+        assert!(driver.is_err());
+    }
+
+    #[test]
+    fn test_provider_defaults_gemini() {
+        let d = provider_defaults("gemini").unwrap();
+        assert_eq!(d.base_url, "https://generativelanguage.googleapis.com");
+        assert_eq!(d.api_key_env, "GEMINI_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_google_alias() {
+        let d = provider_defaults("google").unwrap();
+        assert_eq!(d.base_url, "https://generativelanguage.googleapis.com");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_known_providers_list() {
+        let providers = known_providers();
+        assert!(providers.contains(&"groq"));
+        assert!(providers.contains(&"openrouter"));
+        assert!(providers.contains(&"anthropic"));
+        assert!(providers.contains(&"gemini"));
+        // New providers
+        assert!(providers.contains(&"perplexity"));
+        assert!(providers.contains(&"cohere"));
+        assert!(providers.contains(&"cerebras"));
+        assert!(providers.contains(&"sambanova"));
+        assert!(providers.contains(&"huggingface"));
+        assert!(providers.contains(&"xai"));
+        assert!(providers.contains(&"replicate"));
+        assert!(providers.contains(&"chatgpt"));
+        assert!(providers.contains(&"github-copilot"));
+        assert!(providers.contains(&"moonshot"));
+        assert!(providers.contains(&"qwen"));
+        assert!(providers.contains(&"minimax"));
+        assert!(providers.contains(&"zhipu"));
+        assert!(providers.contains(&"zhipu_coding"));
+        assert!(providers.contains(&"zai"));
+        assert!(providers.contains(&"kimi_coding"));
+        assert!(providers.contains(&"qianfan"));
+        assert!(providers.contains(&"volcengine"));
+        assert!(providers.contains(&"byteplus"));
+        assert!(providers.contains(&"alibaba-coding-plan"));
+        assert!(providers.contains(&"deepinfra"));
+        assert!(providers.contains(&"claude-code"));
+        assert!(providers.contains(&"qwen-code"));
+        assert!(providers.contains(&"gemini-cli"));
+        assert!(providers.contains(&"codex-cli"));
+        assert!(providers.contains(&"codewhale"));
+        assert!(providers.contains(&"azure-openai"));
+        assert!(providers.contains(&"vertex-ai"));
+        assert!(providers.contains(&"nvidia-nim"));
+        assert!(providers.contains(&"novita"));
+        assert!(providers.contains(&"bedrock"));
+        assert!(providers.contains(&"microsoft"));
+        assert_eq!(providers.len(), 44);
+    }
+
+    #[test]
+    fn is_coding_agent_provider_classifies_cli_drivers() {
+        for p in [
+            "claude-code",
+            "codex-cli",
+            "gemini-cli",
+            "qwen-code",
+            "codewhale",
+        ] {
+            assert!(
+                super::is_coding_agent_provider(p),
+                "{p} should be a coding agent"
+            );
+        }
+        for p in ["openai", "anthropic", "gemini", "ollama", "deepseek"] {
+            assert!(
+                !super::is_coding_agent_provider(p),
+                "{p} should NOT be a coding agent"
+            );
+        }
+        assert!(!super::is_coding_agent_provider("nonexistent-xyz"));
+    }
+
+    /// `microsoft` (GitHub Models / Azure AI Inference) must declare its own
+    /// env var rather than reusing `GITHUB_TOKEN`, since that token is also
+    /// accepted by the IDE-side `github-copilot` provider — sharing the env
+    /// var made one credential silently activate two distinct products.
+    #[test]
+    fn test_microsoft_provider_split_from_github_copilot() {
+        let microsoft = find_provider("microsoft").expect("microsoft entry missing");
+        assert_eq!(microsoft.api_key_env, "GITHUB_MODELS_TOKEN");
+        assert_eq!(microsoft.base_url, "https://models.inference.ai.azure.com");
+        let copilot = find_provider("github-copilot").expect("github-copilot entry missing");
+        assert_eq!(
+            copilot.api_key_env, "GITHUB_TOKEN",
+            "github-copilot keeps the original env (IDE-side convention)",
+        );
+    }
+
+    /// `zai` (api.z.ai, international) and `zhipu` (open.bigmodel.cn, China)
+    /// target the same Zhipu account system but are surfaced as distinct
+    /// providers in the dashboard, so they need distinct env vars to avoid
+    /// auto-activating both off a single credential.
+    #[test]
+    fn test_zai_provider_split_from_zhipu() {
+        let zai = find_provider("zai").expect("zai entry missing");
+        assert_eq!(zai.api_key_env, "ZAI_API_KEY");
+        assert_eq!(zai.base_url, "https://api.z.ai/api/paas/v4");
+        let zhipu = find_provider("zhipu").expect("zhipu entry missing");
+        assert_eq!(
+            zhipu.api_key_env, "ZHIPU_API_KEY",
+            "zhipu keeps the original env (more-established name)",
+        );
+    }
+
+    #[test]
+    fn test_provider_defaults_perplexity() {
+        let d = provider_defaults("perplexity").unwrap();
+        assert_eq!(d.base_url, "https://api.perplexity.ai");
+        assert_eq!(d.api_key_env, "PERPLEXITY_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_xai() {
+        let d = provider_defaults("xai").unwrap();
+        assert_eq!(d.base_url, "https://api.x.ai/v1");
+        assert_eq!(d.api_key_env, "XAI_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_alibaba_coding_plan() {
+        let d = provider_defaults("alibaba-coding-plan").unwrap();
+        assert_eq!(d.base_url, "https://coding-intl.dashscope.aliyuncs.com/v1");
+        assert_eq!(d.api_key_env, "ALIBABA_CODING_PLAN_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_cohere() {
+        let d = provider_defaults("cohere").unwrap();
+        assert_eq!(d.base_url, "https://api.cohere.com/v2");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_cerebras() {
+        let d = provider_defaults("cerebras").unwrap();
+        assert_eq!(d.base_url, "https://api.cerebras.ai/v1");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_huggingface() {
+        let d = provider_defaults("huggingface").unwrap();
+        assert_eq!(d.base_url, "https://api-inference.huggingface.co/v1");
+        assert_eq!(d.api_key_env, "HF_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_novita() {
+        let d = provider_defaults("novita").unwrap();
+        assert_eq!(d.base_url, "https://api.novita.ai/openai/v1");
+        assert_eq!(d.api_key_env, "NOVITA_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_novita_ai_alias() {
+        let d = provider_defaults("novita-ai").unwrap();
+        assert_eq!(d.base_url, "https://api.novita.ai/openai/v1");
+        assert_eq!(d.api_key_env, "NOVITA_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_provider_defaults_bedrock() {
+        let d = provider_defaults("bedrock").unwrap();
+        assert_eq!(d.api_key_env, "AWS_BEARER_TOKEN_BEDROCK");
+        assert!(d.key_required);
+        // base_url is built dynamically per-call from AWS_REGION + model.
+        assert_eq!(d.base_url, "");
+    }
+
+    #[test]
+    fn test_provider_defaults_aws_bedrock_alias() {
+        let d = provider_defaults("aws-bedrock").unwrap();
+        assert_eq!(d.api_key_env, "AWS_BEARER_TOKEN_BEDROCK");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_bedrock_driver_with_explicit_api_key() {
+        // Explicit api_key bypasses the AWS_BEARER_TOKEN_BEDROCK env lookup so
+        // the test is hermetic regardless of the host environment.
+        let config = DriverConfig {
+            provider: "bedrock".to_string(),
+            api_key: Some("test-bedrock-bearer-token".to_string()),
+            base_url: None,
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let driver = create_driver(&config);
+        assert!(
+            driver.is_ok(),
+            "Bedrock with explicit api_key should construct successfully"
+        );
+    }
+
+    #[test]
+    fn test_custom_provider_convention_env_var() {
+        // Set NVIDIA_API_KEY env var, then create a custom "nvidia" provider with base_url.
+        // The driver should pick up the key automatically via convention.
+        let unique_key = "test-nvidia-key-12345";
+        // SAFETY: unique env var name; test cleans up with remove_var at the end.
+        unsafe { std::env::set_var("NVIDIA_API_KEY", unique_key) };
+        let config = DriverConfig {
+            provider: "nvidia".to_string(),
+            api_key: None, // not explicitly passed
+            base_url: Some("https://integrate.api.nvidia.com/v1".to_string()),
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let driver = create_driver(&config);
+        assert!(
+            driver.is_ok(),
+            "Custom provider with env var convention should succeed"
+        );
+        // SAFETY: same as set_var above.
+        unsafe { std::env::remove_var("NVIDIA_API_KEY") };
+    }
+
+    #[test]
+    fn test_custom_provider_no_key_no_url_errors() {
+        // Custom provider with neither API key nor base_url should error.
+        // Use a synthetic provider name to avoid env-var races with other tests
+        // that set NVIDIA_API_KEY (e.g. test_custom_provider_convention_env_var).
+        let config = DriverConfig {
+            provider: "nonexistent-provider-for-test".to_string(),
+            api_key: None,
+            base_url: None,
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let driver = create_driver(&config);
+        assert!(driver.is_err());
+    }
+
+    #[test]
+    fn test_custom_provider_key_no_url_helpful_error() {
+        // Unknown custom provider with key set (via env) but no base_url should give helpful
+        // error. Use a synthetic provider name that is not in the registry so the test is
+        // not broken when well-known providers are added (e.g. "nvidia" is now a registry alias).
+        let provider_name = "my-custom-llm-provider";
+        let env_var = "MY_CUSTOM_LLM_PROVIDER_API_KEY";
+        let unique_key = "test-custom-key-67890";
+        // SAFETY: unique env var name; test cleans up with remove_var at the end.
+        unsafe { std::env::set_var(env_var, unique_key) };
+        let config = DriverConfig {
+            provider: provider_name.to_string(),
+            api_key: None,
+            base_url: None,
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let result = create_driver(&config);
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("base_url"),
+            "Error should mention base_url: {}",
+            err
+        );
+        // SAFETY: same as set_var above.
+        unsafe { std::env::remove_var(env_var) };
+    }
+
+    #[test]
+    fn test_provider_defaults_kimi_coding() {
+        let d = provider_defaults("kimi_coding").unwrap();
+        assert_eq!(d.base_url, "https://api.kimi.com/coding");
+        assert_eq!(d.api_key_env, "KIMI_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_custom_provider_explicit_key_with_url() {
+        // When api_key is explicitly passed, it should be used regardless of env var.
+        let config = DriverConfig {
+            provider: "my-custom-provider".to_string(),
+            api_key: Some("explicit-key".to_string()),
+            base_url: Some("https://api.example.com/v1".to_string()),
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let driver = create_driver(&config);
+        assert!(driver.is_ok());
+    }
+
+    #[test]
+    fn test_vertex_ai_uses_kernel_vertex_config() {
+        let config = DriverConfig {
+            provider: "vertex-ai".to_string(),
+            api_key: None,
+            base_url: None,
+            vertex_ai: librefang_types::config::VertexAiConfig {
+                project_id: Some("config-project".to_string()),
+                region: Some("europe-west4".to_string()),
+                credentials_path: Some(
+                    serde_json::json!({
+                        "type": "service_account",
+                        "project_id": "json-project",
+                    })
+                    .to_string(),
+                ),
+            },
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+
+        let driver = create_driver(&config);
+        assert!(
+            driver.is_ok(),
+            "Vertex AI driver should initialize from [vertex_ai] config without env vars"
+        );
+    }
+
+    #[test]
+    fn test_azure_openai_provider_lookup() {
+        let d = provider_defaults("azure-openai").unwrap();
+        assert_eq!(d.api_key_env, "AZURE_OPENAI_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_azure_openai_alias() {
+        let d = provider_defaults("azure").unwrap();
+        assert_eq!(d.api_key_env, "AZURE_OPENAI_API_KEY");
+        assert!(d.key_required);
+    }
+
+    #[test]
+    fn test_azure_openai_driver_creation() {
+        let config = DriverConfig {
+            provider: "azure-openai".to_string(),
+            api_key: Some("test-azure-key".to_string()),
+            base_url: None,
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig {
+                endpoint: Some("https://my-resource.openai.azure.com".to_string()),
+                deployment: Some("gpt-4o".to_string()),
+                api_version: Some("2024-02-01".to_string()),
+            },
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let driver = create_driver(&config);
+        assert!(
+            driver.is_ok(),
+            "Azure OpenAI driver should create successfully with config"
+        );
+    }
+
+    #[test]
+    fn test_azure_openai_missing_endpoint_errors() {
+        let config = DriverConfig {
+            provider: "azure-openai".to_string(),
+            api_key: Some("test-azure-key".to_string()),
+            base_url: None,
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        // Clear any env var that might interfere
+        std::env::remove_var("AZURE_OPENAI_ENDPOINT");
+        let driver = create_driver(&config);
+        assert!(
+            driver.is_err(),
+            "Azure OpenAI should error without endpoint"
+        );
+        let err = driver.err().unwrap().to_string();
+        assert!(
+            err.contains("endpoint"),
+            "Error should mention endpoint: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_driver_cache_returns_same_arc() {
+        let cache = DriverCache::new();
+        let config = DriverConfig {
+            provider: "ollama".to_string(),
+            api_key: None,
+            base_url: Some("http://localhost:11434/v1".to_string()),
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let d1 = cache.get_or_create(&config).unwrap();
+        let d2 = cache.get_or_create(&config).unwrap();
+        assert!(Arc::ptr_eq(&d1, &d2), "Cache should return the same Arc");
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[test]
+    fn test_driver_cache_different_keys_produce_different_drivers() {
+        let cache = DriverCache::new();
+        let config_a = DriverConfig {
+            provider: "ollama".to_string(),
+            api_key: Some("key-a".to_string()),
+            base_url: Some("http://localhost:11434/v1".to_string()),
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let config_b = DriverConfig {
+            provider: "ollama".to_string(),
+            api_key: Some("key-b".to_string()),
+            base_url: Some("http://localhost:11434/v1".to_string()),
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        let d_a = cache.get_or_create(&config_a).unwrap();
+        let d_b = cache.get_or_create(&config_b).unwrap();
+        assert!(
+            !Arc::ptr_eq(&d_a, &d_b),
+            "Different keys should produce different drivers"
+        );
+        assert_eq!(cache.len(), 2);
+    }
+
+    #[test]
+    fn test_driver_cache_clear() {
+        let cache = DriverCache::new();
+        let config = DriverConfig {
+            provider: "ollama".to_string(),
+            api_key: None,
+            base_url: Some("http://localhost:11434/v1".to_string()),
+            vertex_ai: librefang_types::config::VertexAiConfig::default(),
+            azure_openai: librefang_types::config::AzureOpenAiConfig::default(),
+            skip_permissions: true,
+            message_timeout_secs: 300,
+            mcp_bridge: None,
+            proxy_url: None,
+            request_timeout_secs: None,
+            emit_caller_trace_headers: true,
+            max_retries: 3,
+        };
+        cache.get_or_create(&config).unwrap();
+        assert_eq!(cache.len(), 1);
+        cache.clear();
+        assert!(cache.is_empty());
+    }
+}

@@ -1,50 +1,97 @@
-# Environment and secrets
+# Build
+/target
+crates/librefang-api/static/react/
+/target-isolated
+/target-*
+**/*.rs.bk
+*.pdb
+dist
+sdk/**/target
+sdk/rust/Cargo.lock
+# Default `rustc foo.rs` output when run without `-o` — never a tracked artifact.
+/rust_out
+
+# Mobile generated artifacts
+crates/librefang-desktop/gen/apple/Externals/
+crates/librefang-desktop/gen/apple/build/
+crates/librefang-desktop/gen/android/.gradle/
+crates/librefang-desktop/gen/android/build/
+crates/librefang-desktop/gen/android/app/build/
+crates/librefang-desktop/gen/android/local.properties
+
+# Cloudflare Wrangler
+.wrangler/
+.serena
+.vite
+
+# Environment & secrets
 .env
+.env.*
+!.env.example
 secrets.env
-*.env
-secrets/
+secrets.env.*
 
-# Backup files
-*.bak
-*.backup
-config.toml.bak
+# Database
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 
-# Runtime state files (change on every restart — do not commit)
-daemon.json
-hand_state.json
-workspaces/
+# User config (may contain API keys)
+config.toml
 
-# TLS / certificate files
-*.key
+# Certificates & keys
 *.pem
+*.key
+*.cert
 *.p12
 *.pfx
-*.crt
-*.cer
-*.csr
 
-# Logs, pids
-*.log
-*.pid
+# Runtime artifacts
+collector_hand_state.json
+collector_knowledge_base.json
+predictions_database.json
+prediction_report_*.md
+BUILD_LOG.md
+message_journal.jsonl
 
-# Nginx temp directories
-nginx_body/
-nginx_fastcgi/
-nginx_proxy/
-nginx_scgi/
-nginx_uwsgi/
+# Local working notes / design plans (ultrareview, brainstorm scratch)
+.plans/
 
-# Data directories
-data/
-!data/source_lists/
+# Node.js (packages/)
+node_modules/
 
-# Python artifacts
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-
-# OS artifacts
+# OS
 .DS_Store
 Thumbs.db
+
+# Nix
+result
+.direnv/
+
+# IDE & tools
+.idea/
+.vscode/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/forbid-main-worktree.sh
+!.claude/hooks/session-start-worktree-check.sh
+!.claude/hooks/guard-bash-safety.sh
+!.claude/hooks/lib/
+.claude/hooks/lib/*
+!.claude/hooks/lib/check-bash-rules.py
+!.claude/prompts/
+!.claude/prompts/*.md
+.codex
+.omc/
+.qwen/
+*.swp
+*.swo
+*~
+.gitnexus
+
+# graphify knowledge-graph output (local-only, regenerable).
+graphify-out/

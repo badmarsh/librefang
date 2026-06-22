@@ -1,0 +1,255 @@
+@import "tailwindcss";
+
+/* tailwindcss v4 doesn't expose `darkMode: 'class'` from JS config;
+ * declare the equivalent variant in CSS. Matches the previous behaviour
+ * of `<html class="dark">` toggling all `dark:` utilities. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Project palette + fonts that were in tailwind.config.js previously.
+ * v4 reads design tokens from CSS custom properties under `@theme`. */
+@theme {
+  --color-cyan-400: #22d3ee;
+  --color-cyan-500: #06b6d4;
+  --color-cyan-600: #0891b2;
+  --color-amber-400: #fbbf24;
+  --color-amber-500: #f59e0b;
+  --color-surface: var(--bg-surface);
+  --color-surface-100: var(--bg-surface-100);
+  --color-surface-200: var(--bg-surface-200);
+  --color-surface-300: var(--bg-surface-300);
+
+  --font-sans: 'Inter', 'Noto Sans SC', 'Noto Sans TC', 'Noto Sans JP',
+    'Noto Sans KR', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+@layer base {
+  :root {
+    --bg-surface: #f8fafc;
+    --bg-surface-100: #f1f5f9;
+    --bg-surface-200: #e2e8f0;
+    --bg-surface-300: #cbd5e1;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --border: rgba(0, 0, 0, 0.1);
+    --cyan-accent: #0891b2;
+  }
+
+  .dark {
+    --bg-surface: #070b14;
+    --bg-surface-100: #0c1222;
+    --bg-surface-200: #111827;
+    --bg-surface-300: #1a2235;
+    --text-primary: #e2e8f0;
+    --text-secondary: #94a3b8;
+    --text-muted: #6b7280;
+    --border: rgba(255, 255, 255, 0.05);
+    --cyan-accent: #06b6d4;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: 'Inter', 'Noto Sans SC', 'Noto Sans TC', 'Noto Sans JP', 'Noto Sans KR', system-ui, sans-serif;
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  button {
+    cursor: pointer;
+    border: none;
+    background: none;
+    font-family: inherit;
+  }
+
+  pre, code {
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+  }
+
+  ::selection {
+    background: rgba(6, 182, 212, 0.3);
+    color: var(--text-primary);
+  }
+}
+
+/* Grid background pattern */
+.grid-bg {
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+/* Glow effects */
+:root .glow-cyan {
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.08), 0 0 40px rgba(6, 182, 212, 0.03);
+}
+
+.dark .glow-cyan {
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.15), 0 0 60px rgba(6, 182, 212, 0.05);
+}
+
+.glow-line {
+  background: linear-gradient(90deg, transparent, var(--cyan-accent), transparent);
+  height: 1px;
+  opacity: 0.3;
+}
+
+/* Hide scrollbar for carousel */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { scrollbar-width: none; -ms-overflow-style: none; }
+
+/* Line clamp */
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Terminal cursor blink */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-surface-300);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan-accent);
+}
+
+/* Touch scrolling */
+.touch-pan-x {
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+}
+
+:focus-visible {
+  outline: 1px solid #06b6d4;
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Skeleton loading before React hydrates */
+#root:empty::before {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 100vh;
+  background: var(--bg-surface);
+}
+
+/* Mobile touch targets */
+@media (max-width: 768px) {
+  nav button,
+  nav a {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+}
+
+/* Prevent horizontal overflow */
+html {
+  overflow-x: hidden;
+}
+
+/* Respect the user's OS setting — disable all animations and transitions
+ * (including framer-motion's, which fall through to CSS) for visitors who
+ * opt in to reduced motion. `!important` is justified here: framer-motion
+ * sets inline style transforms that would otherwise win the cascade. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visible focus ring for keyboard navigation — focus-visible only, so
+ * mouse clicks don't get a ring but Tab traversal does. */
+:focus-visible {
+  outline: 2px solid rgb(6 182 212 / 0.65);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* TOML manifest highlighting. Token classes emitted by lib/toml-highlight.tsx.
+ * Colors chosen to read well on both light and dark surface-100 backgrounds. */
+.toml-highlight .tk-header  { color: #06b6d4; font-weight: 700; }
+.toml-highlight .tk-key     { color: #a78bfa; }
+.toml-highlight .tk-str     { color: #34d399; }
+.toml-highlight .tk-num     { color: #f59e0b; }
+.toml-highlight .tk-bool    { color: #f87171; font-weight: 600; }
+.toml-highlight .tk-comment { color: #94a3b8; font-style: italic; }
+.toml-highlight .tk-punct   { color: inherit; }
+
+/* View-transition tuning for the theme toggle. Chromium crossfades by default
+ * but the snapshot can flash-flicker; slow it down slightly. */
+@supports (view-transition-name: none) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.25s;
+  }
+}
+
+/* High-contrast mode support — users with prefers-contrast: more need
+ * stronger divides and text. Bump border opacity (default muted blacks sit
+ * near WCAG AA threshold) and darken dim text so secondary copy reads. */
+@media (prefers-contrast: more) {
+  .border-black\/10,
+  .border-black\/5 {
+    border-color: rgb(0 0 0 / 0.35) !important;
+  }
+  .dark .border-white\/10,
+  .dark .border-white\/5 {
+    border-color: rgb(255 255 255 / 0.45) !important;
+  }
+  .text-gray-400,
+  .text-gray-500 {
+    color: rgb(55 65 81) !important; /* gray-700 */
+  }
+  .dark .text-gray-400,
+  .dark .text-gray-500 {
+    color: rgb(209 213 219) !important; /* gray-300 */
+  }
+}

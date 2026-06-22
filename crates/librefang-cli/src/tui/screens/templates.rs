@@ -1,0 +1,431 @@
+//! Templates screen: browse agent templates and spawn with one click.
+
+use crate::tui::{theme, widgets};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{ListItem, ListState, Paragraph};
+use ratatui::Frame;
+
+// ── Data types ──────────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+pub struct TemplateInfo {
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Clone)]
+pub struct ProviderAuth {
+    pub name: String,
+    pub configured: bool,
+}
+
+// ── Built-in templates ──────────────────────────────────────────────────────
+
+// NOTE: These static template names are used to dynamically derive i18n keys (e.g. tui-templates-name-*).
+// Do not rename or edit these strings without updating the corresponding Fluent translation keys.
+const BUILTIN_TEMPLATES: &[(&str, &str, &str, &str, &str)] = &[
+    (
+        "General Assistant",
+        "Versatile AI assistant for everyday tasks",
+        "General",
+        "default",
+        "default",
+    ),
+    (
+        "Code Helper",
+        "Programming assistant with code review and debugging",
+        "Development",
+        "default",
+        "default",
+    ),
+    (
+        "Researcher",
+        "Deep research and analysis with web search",
+        "Research",
+        "default",
+        "default",
+    ),
+    (
+        "Writer",
+        "Creative and technical writing assistant",
+        "Writing",
+        "default",
+        "default",
+    ),
+    (
+        "Data Analyst",
+        "Data analysis, visualization, and SQL queries",
+        "Development",
+        "default",
+        "default",
+    ),
+    (
+        "DevOps Engineer",
+        "Infrastructure, CI/CD, and deployment assistance",
+        "Development",
+        "default",
+        "default",
+    ),
+    (
+        "Customer Support",
+        "Professional customer service agent",
+        "Business",
+        "default",
+        "default",
+    ),
+    (
+        "Tutor",
+        "Patient educational assistant for learning any subject",
+        "General",
+        "default",
+        "default",
+    ),
+    (
+        "API Designer",
+        "REST/GraphQL API design and documentation",
+        "Development",
+        "default",
+        "default",
+    ),
+    (
+        "Meeting Notes",
+        "Meeting transcription, summary, and action items",
+        "Business",
+        "default",
+        "default",
+    ),
+];
+
+// ── Categories ──────────────────────────────────────────────────────────────
+
+const CATEGORIES: &[&str] = &[
+    "All",
+    "General",
+    "Development",
+    "Research",
+    "Writing",
+    "Business",
+];
+
+// ── State ───────────────────────────────────────────────────────────────────
+
+pub struct TemplatesState {
+    pub templates: Vec<TemplateInfo>,
+    pub providers: Vec<ProviderAuth>,
+    pub category_filter: usize,
+    pub filtered: Vec<usize>,
+    pub list_state: ListState,
+    pub loading: bool,
+    pub tick: usize,
+    pub status_msg: String,
+}
+
+pub enum TemplatesAction {
+    Continue,
+    Refresh,
+    SpawnTemplate(String),
+}
+
+impl TemplatesState {
+    pub fn new() -> Self {
+        let templates: Vec<TemplateInfo> = BUILTIN_TEMPLATES
+            .iter()
+            .map(|(name, desc, cat, prov, model)| TemplateInfo {
+                name: name.to_string(),
+                description: desc.to_string(),
+                category: cat.to_string(),
+                provider: prov.to_string(),
+                model: model.to_string(),
+            })
+            .collect();
+        let filtered: Vec<usize> = (0..templates.len()).collect();
+        let mut state = Self {
+            templates,
+            providers: Vec::new(),
+            category_filter: 0,
+            filtered,
+            list_state: ListState::default(),
+            loading: false,
+            tick: 0,
+            status_msg: String::new(),
+        };
+        state.list_state.select(Some(0));
+        state
+    }
+
+    pub fn tick(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    fn refilter(&mut self) {
+        let cat = CATEGORIES[self.category_filter];
+        if cat == "All" {
+            self.filtered = (0..self.templates.len()).collect();
+        } else {
+            self.filtered = self
+                .templates
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.category == cat)
+                .map(|(i, _)| i)
+                .collect();
+        }
+        if !self.filtered.is_empty() {
+            self.list_state.select(Some(0));
+        } else {
+            self.list_state.select(None);
+        }
+    }
+
+    fn provider_configured(&self, provider: &str) -> bool {
+        self.providers
+            .iter()
+            .any(|p| p.name == provider && p.configured)
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> TemplatesAction {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return TemplatesAction::Continue;
+        }
+
+        let total = self.filtered.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if total > 0 => {
+                let i = self.list_state.selected().unwrap_or(0);
+                let next = if i == 0 { total - 1 } else { i - 1 };
+                self.list_state.select(Some(next));
+            }
+            KeyCode::Down | KeyCode::Char('j') if total > 0 => {
+                let i = self.list_state.selected().unwrap_or(0);
+                let next = (i + 1) % total;
+                self.list_state.select(Some(next));
+            }
+            KeyCode::Enter => {
+                if let Some(sel) = self.list_state.selected() {
+                    if let Some(&idx) = self.filtered.get(sel) {
+                        let t = &self.templates[idx];
+                        if !self.provider_configured(&t.provider) && !self.providers.is_empty() {
+                            self.status_msg = crate::i18n::t_args(
+                                "tui-templates-provider-not-configured",
+                                &[("provider", &t.provider)],
+                            );
+                            return TemplatesAction::Continue;
+                        }
+                        return TemplatesAction::SpawnTemplate(t.name.clone());
+                    }
+                }
+            }
+            KeyCode::Char('f') => {
+                self.category_filter = (self.category_filter + 1) % CATEGORIES.len();
+                self.refilter();
+            }
+            KeyCode::Char('r') => return TemplatesAction::Refresh,
+            _ => {}
+        }
+        TemplatesAction::Continue
+    }
+}
+
+// ── Drawing ─────────────────────────────────────────────────────────────────
+
+pub fn draw(f: &mut Frame, area: Rect, state: &mut TemplatesState) {
+    let inner = widgets::render_screen_block(
+        f,
+        area,
+        &format!("{} {}", "\u{25a2}", crate::i18n::t("tui-templates-title")),
+    );
+
+    let chunks = Layout::vertical([
+        Constraint::Length(2), // header + category filter
+        Constraint::Min(3),    // list
+        Constraint::Length(3), // detail preview
+        Constraint::Length(1), // hints
+    ])
+    .split(inner);
+
+    // ── Category filter + header ──
+    let active_cat = CATEGORIES[state.category_filter];
+    let mut cat_spans: Vec<Span> = vec![Span::raw("  ")];
+    for (i, &c) in CATEGORIES.iter().enumerate() {
+        if i > 0 {
+            cat_spans.push(Span::styled(
+                " \u{2502} ",
+                Style::default().fg(theme::BORDER),
+            ));
+        }
+        let localized_cat = match c {
+            "All" => crate::i18n::t("tui-templates-cat-all"),
+            "General" => crate::i18n::t("tui-templates-cat-general"),
+            "Development" => crate::i18n::t("tui-templates-cat-development"),
+            "Research" => crate::i18n::t("tui-templates-cat-research"),
+            "Writing" => crate::i18n::t("tui-templates-cat-writing"),
+            "Business" => crate::i18n::t("tui-templates-cat-business"),
+            other => other.to_string(),
+        };
+        if c == active_cat {
+            cat_spans.push(Span::styled(
+                format!(" {} {} ", "\u{25cf}", localized_cat),
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            cat_spans.push(Span::styled(
+                format!(" {} {} ", "\u{25cb}", localized_cat),
+                theme::dim_style(),
+            ));
+        }
+    }
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::from(cat_spans),
+            Line::from(vec![Span::styled(
+                format!(
+                    "  {:<22} {:<14} {:<16} {}",
+                    crate::i18n::t("tui-templates-header-template"),
+                    crate::i18n::t("tui-templates-header-category"),
+                    crate::i18n::t("tui-templates-header-provider-model"),
+                    crate::i18n::t("tui-templates-header-description")
+                ),
+                theme::table_header(),
+            )]),
+        ]),
+        chunks[0],
+    );
+
+    // ── List ──
+    if state.loading {
+        f.render_widget(
+            widgets::spinner(state.tick, &crate::i18n::t("tui-templates-loading")),
+            chunks[1],
+        );
+    } else if state.filtered.is_empty() {
+        f.render_widget(
+            widgets::empty_state(&crate::i18n::t("tui-templates-empty")),
+            chunks[1],
+        );
+    } else {
+        let items: Vec<ListItem> = state
+            .filtered
+            .iter()
+            .map(|&idx| {
+                let t = &state.templates[idx];
+                let configured = state.provider_configured(&t.provider);
+                let auth_badge = if state.providers.is_empty() {
+                    Span::raw("")
+                } else if configured {
+                    Span::styled(" \u{25cf}", Style::default().fg(theme::GREEN))
+                } else {
+                    Span::styled(" \u{25cb}", Style::default().fg(theme::RED))
+                };
+                let prov_model = format!("{}/{}", t.provider, widgets::truncate(&t.model, 12));
+                let localized_name = localize_template_name(&t.name);
+                let localized_desc = localize_template_desc(&t.name, &t.description);
+                let localized_cat = match t.category.as_str() {
+                    "General" => crate::i18n::t("tui-templates-cat-general"),
+                    "Development" => crate::i18n::t("tui-templates-cat-development"),
+                    "Research" => crate::i18n::t("tui-templates-cat-research"),
+                    "Writing" => crate::i18n::t("tui-templates-cat-writing"),
+                    "Business" => crate::i18n::t("tui-templates-cat-business"),
+                    other => other.to_string(),
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("  {:<22}", widgets::truncate(&localized_name, 21)),
+                        Style::default().fg(theme::CYAN),
+                    ),
+                    Span::styled(
+                        format!(" {:<14}", &localized_cat),
+                        Style::default().fg(theme::YELLOW),
+                    ),
+                    Span::styled(
+                        format!(" {:<16}", widgets::truncate(&prov_model, 15)),
+                        Style::default().fg(theme::BLUE),
+                    ),
+                    auth_badge,
+                    Span::styled(
+                        format!("  {}", widgets::truncate(&localized_desc, 28)),
+                        theme::dim_style(),
+                    ),
+                ]))
+            })
+            .collect();
+
+        let list = widgets::themed_list(items);
+        f.render_stateful_widget(list, chunks[1], &mut state.list_state);
+    }
+
+    // ── Detail preview ──
+    if let Some(sel) = state.list_state.selected() {
+        if let Some(&idx) = state.filtered.get(sel) {
+            let t = &state.templates[idx];
+            let localized_name = localize_template_name(&t.name);
+            let localized_desc = localize_template_desc(&t.name, &t.description);
+            f.render_widget(
+                Paragraph::new(vec![
+                    Line::from(vec![Span::styled(
+                        format!("  {} ", localized_name),
+                        Style::default()
+                            .fg(theme::CYAN)
+                            .add_modifier(Modifier::BOLD),
+                    )]),
+                    Line::from(vec![
+                        Span::styled("  ", Style::default()),
+                        Span::styled(&localized_desc, theme::dim_style()),
+                    ]),
+                    Line::from(vec![Span::styled(
+                        crate::i18n::t_args(
+                            "tui-templates-detail-provider",
+                            &[("provider", &t.provider), ("model", &t.model)],
+                        ),
+                        Style::default().fg(theme::BLUE),
+                    )]),
+                ]),
+                chunks[2],
+            );
+        }
+    }
+
+    // ── Hints / status ──
+    if !state.status_msg.is_empty() {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                format!("  {}", state.status_msg),
+                Style::default().fg(theme::YELLOW),
+            )])),
+            chunks[3],
+        );
+    } else {
+        f.render_widget(
+            widgets::hint_bar(&crate::i18n::t("tui-templates-hints")),
+            chunks[3],
+        );
+    }
+}
+
+fn localize_template_name(name: &str) -> String {
+    let key = format!(
+        "tui-templates-name-{}",
+        name.to_lowercase().replace(' ', "-")
+    );
+    crate::i18n::t(&key)
+}
+
+fn localize_template_desc(name: &str, default_desc: &str) -> String {
+    let key = format!(
+        "tui-templates-desc-{}",
+        name.to_lowercase().replace(' ', "-")
+    );
+    let localized = crate::i18n::t(&key);
+    if localized == key {
+        default_desc.to_string()
+    } else {
+        localized
+    }
+}

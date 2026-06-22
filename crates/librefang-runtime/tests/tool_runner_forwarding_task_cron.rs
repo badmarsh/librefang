@@ -1,0 +1,837 @@
+use async_trait::async_trait;
+use librefang_kernel_handle::prelude::*;
+use librefang_runtime::tool_runner::{execute_tool_raw, ToolExecContext};
+use serde_json::json;
+use std::sync::{Arc, Mutex};
+
+type TaskPostCalls = Arc<Mutex<Vec<Option<String>>>>;
+type CronCreateCalls = Arc<Mutex<Vec<(String, serde_json::Value)>>>;
+type CronListCalls = Arc<Mutex<Vec<String>>>;
+type CronCancelCalls = Arc<Mutex<Vec<String>>>;
+type CronSetEnabledCalls = Arc<Mutex<Vec<(String, bool)>>>;
+type TaskGetCalls = Arc<Mutex<Vec<String>>>;
+
+struct CapturedCalls {
+    task_post: TaskPostCalls,
+    cron_create: CronCreateCalls,
+    cron_list: CronListCalls,
+    cron_cancel: CronCancelCalls,
+    cron_set_enabled: CronSetEnabledCalls,
+    task_get: TaskGetCalls,
+}
+
+struct CapturingKernel {
+    task_post_calls: TaskPostCalls,
+    cron_create_calls: CronCreateCalls,
+    cron_list_calls: CronListCalls,
+    cron_cancel_calls: CronCancelCalls,
+    cron_set_enabled_calls: CronSetEnabledCalls,
+    task_get_calls: TaskGetCalls,
+    // When set, task_get returns Some(this) regardless of id; otherwise None.
+    task_get_response: Mutex<Option<serde_json::Value>>,
+    // When set, cron_list returns this slice of "owned" jobs; otherwise an
+    // empty Vec.
+    cron_list_response: Mutex<Vec<serde_json::Value>>,
+}
+
+impl CapturingKernel {
+    fn new() -> (Self, CapturedCalls) {
+        let task_post = Arc::new(Mutex::new(Vec::new()));
+        let cron_create = Arc::new(Mutex::new(Vec::new()));
+        let cron_list = Arc::new(Mutex::new(Vec::new()));
+        let cron_cancel = Arc::new(Mutex::new(Vec::new()));
+        let cron_set_enabled = Arc::new(Mutex::new(Vec::new()));
+        let task_get = Arc::new(Mutex::new(Vec::new()));
+        let kernel = Self {
+            task_post_calls: Arc::clone(&task_post),
+            cron_create_calls: Arc::clone(&cron_create),
+            cron_list_calls: Arc::clone(&cron_list),
+            cron_cancel_calls: Arc::clone(&cron_cancel),
+            cron_set_enabled_calls: Arc::clone(&cron_set_enabled),
+            task_get_calls: Arc::clone(&task_get),
+            task_get_response: Mutex::new(None),
+            cron_list_response: Mutex::new(Vec::new()),
+        };
+        (
+            kernel,
+            CapturedCalls {
+                task_post,
+                cron_create,
+                cron_list,
+                cron_cancel,
+                cron_set_enabled,
+                task_get,
+            },
+        )
+    }
+
+    fn set_task_get_response(&self, value: Option<serde_json::Value>) {
+        *self.task_get_response.lock().unwrap() = value;
+    }
+
+    fn set_cron_list_response(&self, jobs: Vec<serde_json::Value>) {
+        *self.cron_list_response.lock().unwrap() = jobs;
+    }
+}
+
+#[async_trait]
+impl AgentControl for CapturingKernel {
+    async fn spawn_agent(
+        &self,
+        _: &str,
+        _: Option<&str>,
+    ) -> Result<(String, String), librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    async fn send_to_agent(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<String, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    fn list_agents(&self) -> Vec<AgentInfo> {
+        vec![]
+    }
+    fn kill_agent(&self, _: &str) -> Result<(), librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    fn find_agents(&self, _: &str) -> Vec<AgentInfo> {
+        vec![]
+    }
+}
+
+impl MemoryAccess for CapturingKernel {
+    fn memory_store(
+        &self,
+        _: &str,
+        _: serde_json::Value,
+        _: Option<&str>,
+        _: Option<&str>,
+    ) -> Result<(), librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    fn memory_recall(
+        &self,
+        _: &str,
+        _: Option<&str>,
+        _: Option<&str>,
+    ) -> Result<Option<serde_json::Value>, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    fn memory_list(
+        &self,
+        _: Option<&str>,
+        _: Option<&str>,
+    ) -> Result<Vec<String>, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+}
+
+impl WikiAccess for CapturingKernel {}
+
+#[async_trait]
+impl TaskQueue for CapturingKernel {
+    async fn task_post(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        created_by: Option<&str>,
+    ) -> Result<String, librefang_kernel_handle::KernelOpError> {
+        self.task_post_calls
+            .lock()
+            .unwrap()
+            .push(created_by.map(|s| s.to_string()));
+        Ok("task-id-1".to_string())
+    }
+    async fn task_claim(
+        &self,
+        _: &str,
+    ) -> Result<Option<serde_json::Value>, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    async fn task_complete(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<(), librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    async fn task_list(
+        &self,
+        _: Option<&str>,
+    ) -> Result<Vec<serde_json::Value>, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    async fn task_delete(&self, _: &str) -> Result<bool, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    async fn task_retry(&self, _: &str) -> Result<bool, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    async fn task_get(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<serde_json::Value>, librefang_kernel_handle::KernelOpError> {
+        self.task_get_calls
+            .lock()
+            .unwrap()
+            .push(task_id.to_string());
+        Ok(self.task_get_response.lock().unwrap().clone())
+    }
+    async fn task_update_status(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<bool, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+}
+
+#[async_trait]
+impl EventBus for CapturingKernel {
+    async fn publish_event(
+        &self,
+        _: &str,
+        _: serde_json::Value,
+    ) -> Result<(), librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+}
+
+#[async_trait]
+impl KnowledgeGraph for CapturingKernel {
+    async fn knowledge_add_entity(
+        &self,
+        _: &librefang_types::memory::Entity,
+    ) -> Result<String, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    async fn knowledge_add_relation(
+        &self,
+        _: &librefang_types::memory::Relation,
+    ) -> Result<String, librefang_kernel_handle::KernelOpError> {
+        Err("not implemented".into())
+    }
+    async fn knowledge_query(
+        &self,
+        _: librefang_types::memory::GraphPattern,
+    ) -> Result<Vec<librefang_types::memory::GraphMatch>, librefang_kernel_handle::KernelOpError>
+    {
+        Err("not implemented".into())
+    }
+}
+
+#[async_trait]
+impl CronControl for CapturingKernel {
+    async fn cron_create(
+        &self,
+        agent_id: &str,
+        job_json: serde_json::Value,
+    ) -> Result<String, librefang_kernel_handle::KernelOpError> {
+        self.cron_create_calls
+            .lock()
+            .unwrap()
+            .push((agent_id.to_string(), job_json));
+        Ok("cron-id-1".to_string())
+    }
+
+    async fn cron_list(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<serde_json::Value>, librefang_kernel_handle::KernelOpError> {
+        self.cron_list_calls
+            .lock()
+            .unwrap()
+            .push(agent_id.to_string());
+        Ok(self.cron_list_response.lock().unwrap().clone())
+    }
+
+    async fn cron_cancel(
+        &self,
+        job_id: &str,
+    ) -> Result<(), librefang_kernel_handle::KernelOpError> {
+        self.cron_cancel_calls
+            .lock()
+            .unwrap()
+            .push(job_id.to_string());
+        Ok(())
+    }
+
+    async fn cron_set_enabled(
+        &self,
+        job_id: &str,
+        enabled: bool,
+    ) -> Result<(), librefang_kernel_handle::KernelOpError> {
+        self.cron_set_enabled_calls
+            .lock()
+            .unwrap()
+            .push((job_id.to_string(), enabled));
+        Ok(())
+    }
+}
+
+impl ApprovalGate for CapturingKernel {}
+impl HandsControl for CapturingKernel {}
+impl A2ARegistry for CapturingKernel {}
+impl ChannelSender for CapturingKernel {}
+impl PromptStore for CapturingKernel {}
+impl WorkflowRunner for CapturingKernel {}
+impl GoalControl for CapturingKernel {}
+impl ToolPolicy for CapturingKernel {}
+impl librefang_kernel_handle::CatalogQuery for CapturingKernel {}
+impl librefang_kernel_handle::ApiAuth for CapturingKernel {
+    fn auth_snapshot(&self) -> librefang_kernel_handle::ApiAuthSnapshot {
+        librefang_kernel_handle::ApiAuthSnapshot::default()
+    }
+}
+impl librefang_kernel_handle::SessionWriter for CapturingKernel {
+    fn inject_attachment_blocks(
+        &self,
+        _agent_id: librefang_types::agent::AgentId,
+        _session_id: librefang_types::agent::SessionId,
+        _blocks: Vec<librefang_types::message::ContentBlock>,
+    ) {
+    }
+}
+
+impl librefang_kernel_handle::AcpFsBridge for CapturingKernel {}
+impl librefang_kernel_handle::AcpTerminalBridge for CapturingKernel {}
+
+fn make_ctx<'a>(
+    kernel: &'a Arc<dyn KernelHandle>,
+    sender_id: Option<&'a str>,
+    caller_agent_id: Option<&'a str>,
+) -> ToolExecContext<'a> {
+    ToolExecContext {
+        kernel: Some(kernel),
+        allowed_tools: None,
+        available_tools: None,
+        caller_agent_id,
+        skill_registry: None,
+        allowed_skills: None,
+        mcp_connections: None,
+        web_ctx: None,
+        browser_ctx: None,
+        allowed_env_vars: None,
+        workspace_root: None,
+        media_engine: None,
+        media_drivers: None,
+        exec_policy: None,
+        tts_engine: None,
+        docker_config: None,
+        process_manager: None,
+        process_registry: None,
+        sender_id,
+        channel: None,
+        chat_id: None,
+        session_id: None,
+        spill_threshold_bytes: 0,
+        max_artifact_bytes: 0,
+        checkpoint_manager: None,
+        interrupt: None,
+        dangerous_command_checker: None,
+    }
+}
+
+#[tokio::test]
+async fn test_task_post_forwards_caller_as_created_by() {
+    let (kernel, calls) = CapturingKernel::new();
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let input = json!({"title": "Do something", "description": "Details here"});
+    let result = execute_tool_raw("t1", "task_post", &input, &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "task_post should succeed: {}",
+        result.content
+    );
+    let task_calls = calls.task_post.lock().unwrap();
+    assert_eq!(task_calls.len(), 1);
+    assert_eq!(task_calls[0], Some("agent-1".to_string()));
+}
+
+#[tokio::test]
+async fn test_task_post_forwards_none_created_by() {
+    let (kernel, calls) = CapturingKernel::new();
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, None);
+    let input = json!({"title": "Do something", "description": "Details here"});
+    let result = execute_tool_raw("t2", "task_post", &input, &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "task_post should succeed: {}",
+        result.content
+    );
+    let task_calls = calls.task_post.lock().unwrap();
+    assert_eq!(task_calls.len(), 1);
+    assert_eq!(task_calls[0], None);
+}
+
+#[tokio::test]
+async fn test_cron_create_injects_sender_peer_id() {
+    let (kernel, calls) = CapturingKernel::new();
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, Some("peer-xyz"), Some("agent-1"));
+    let input = json!({"schedule": "0 * * * *", "payload": "tick"});
+    let result = execute_tool_raw("t3", "cron_create", &input, &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "cron_create should succeed: {}",
+        result.content
+    );
+    let cron_calls = calls.cron_create.lock().unwrap();
+    assert_eq!(cron_calls.len(), 1);
+    let job_json = &cron_calls[0].1;
+    assert_eq!(job_json["peer_id"], "peer-xyz");
+}
+
+#[tokio::test]
+async fn test_cron_create_overrides_explicit_peer_id_with_sender() {
+    let (kernel, calls) = CapturingKernel::new();
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, Some("peer-xyz"), Some("agent-1"));
+    let input = json!({"schedule": "0 * * * *", "payload": "tick", "peer_id": "existing"});
+    let result = execute_tool_raw("t4", "cron_create", &input, &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "cron_create should succeed: {}",
+        result.content
+    );
+    let cron_calls = calls.cron_create.lock().unwrap();
+    assert_eq!(cron_calls.len(), 1);
+    let job_json = &cron_calls[0].1;
+    assert_eq!(job_json["peer_id"], "peer-xyz");
+}
+
+#[tokio::test]
+async fn test_cron_create_forwards_caller_as_agent_id() {
+    let (kernel, calls) = CapturingKernel::new();
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, Some("peer-xyz"), Some("agent-1"));
+    let input = json!({"schedule": "0 * * * *", "payload": "tick"});
+    let result = execute_tool_raw("t5", "cron_create", &input, &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "cron_create should succeed: {}",
+        result.content
+    );
+    let cron_calls = calls.cron_create.lock().unwrap();
+    assert_eq!(cron_calls.len(), 1);
+    assert_eq!(cron_calls[0].0, "agent-1");
+}
+
+#[tokio::test]
+async fn test_task_status_projects_six_canonical_fields() {
+    let (kernel, calls) = CapturingKernel::new();
+    // task_get returns the full row shape that librefang-memory's
+    // substrate emits (id/description/created_by/result/claimed_at/
+    // retry_count are present); task_status must project to exactly the
+    // six fields the comms_task_status MCP bridge tool returns.
+    kernel.set_task_get_response(Some(json!({
+        "id": "task-42",
+        "title": "Investigate flaky test",
+        "description": "long form description",
+        "status": "completed",
+        "assigned_to": "worker-1",
+        "created_by": "agent-1",
+        "created_at": "2026-05-04T00:00:00Z",
+        "completed_at": "2026-05-04T00:05:00Z",
+        "result": "fixed by retrying",
+        "claimed_at": null,
+        "retry_count": 0,
+    })));
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let input = json!({"task_id": "task-42"});
+    let result = execute_tool_raw("ts1", "task_status", &input, &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "task_status should succeed: {}",
+        result.content
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&result.content).expect("task_status returns JSON");
+    let obj = parsed.as_object().expect("object");
+    let keys: std::collections::BTreeSet<&str> = obj.keys().map(|s| s.as_str()).collect();
+    let expected: std::collections::BTreeSet<&str> = [
+        "status",
+        "result",
+        "title",
+        "assigned_to",
+        "created_at",
+        "completed_at",
+    ]
+    .into_iter()
+    .collect();
+    assert_eq!(keys, expected, "exactly the six canonical fields");
+    assert_eq!(parsed["status"], "completed");
+    assert_eq!(parsed["result"], "fixed by retrying");
+    assert_eq!(parsed["title"], "Investigate flaky test");
+    assert_eq!(parsed["assigned_to"], "worker-1");
+    assert_eq!(parsed["created_at"], "2026-05-04T00:00:00Z");
+    assert_eq!(parsed["completed_at"], "2026-05-04T00:05:00Z");
+
+    let getters = calls.task_get.lock().unwrap();
+    assert_eq!(getters.len(), 1);
+    assert_eq!(getters[0], "task-42");
+}
+
+#[tokio::test]
+async fn test_task_status_not_found_returns_message() {
+    let (kernel, calls) = CapturingKernel::new();
+    // No response set -> task_get returns None.
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let input = json!({"task_id": "task-missing"});
+    let result = execute_tool_raw("ts2", "task_status", &input, &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "task_status should not error on missing task: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("not found"),
+        "expected not-found message, got: {}",
+        result.content
+    );
+    let getters = calls.task_get.lock().unwrap();
+    assert_eq!(getters.len(), 1);
+    assert_eq!(getters[0], "task-missing");
+}
+
+#[tokio::test]
+async fn test_task_status_missing_task_id_errors() {
+    let (kernel, _calls) = CapturingKernel::new();
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let input = json!({});
+    let result = execute_tool_raw("ts3", "task_status", &input, &ctx).await;
+
+    assert!(
+        result.is_error,
+        "task_status without task_id should error: {}",
+        result.content
+    );
+}
+
+// ============================================================================
+// cron_list / cron_cancel error-path coverage (#3576 first-slice migration).
+// `cron_create` happy paths are above; these tests round-trip the typed
+// `ToolError` variants the migrated submodule now returns, through the
+// stringifying dispatch boundary, so the user-facing wire string stays an
+// asserted contract while the typed shape is exercised end-to-end.
+// ============================================================================
+
+#[tokio::test]
+async fn test_cron_list_returns_serialized_jobs() {
+    let (kernel, calls) = CapturingKernel::new();
+    kernel.set_cron_list_response(vec![
+        json!({"id": "cron-1", "schedule": "0 * * * *"}),
+        json!({"id": "cron-2", "schedule": "*/5 * * * *"}),
+    ]);
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw("c1", "cron_list", &json!({}), &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "cron_list should succeed: {}",
+        result.content
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&result.content).expect("cron_list returns pretty JSON");
+    assert_eq!(parsed.as_array().unwrap().len(), 2);
+    assert_eq!(parsed[0]["id"], "cron-1");
+    let list_calls = calls.cron_list.lock().unwrap();
+    assert_eq!(list_calls.len(), 1);
+    assert_eq!(list_calls[0], "agent-1");
+}
+
+#[tokio::test]
+async fn test_cron_cancel_disables_and_does_not_hard_delete() {
+    // #6159: the agent-facing "cron_cancel" tool must pause the job via
+    // `cron_set_enabled(false)`, NOT hard-delete it via `cron_cancel`. The job
+    // therefore still exists (with enabled=false) after the agent invokes it,
+    // and `KernelHandle::cron_cancel` (the destructive deletion path) is never
+    // reached.
+    let (kernel, calls) = CapturingKernel::new();
+    kernel.set_cron_list_response(vec![json!({"id": "cron-99"})]);
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw("c2", "cron_cancel", &json!({"job_id": "cron-99"}), &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "cron_cancel should succeed when caller owns the job: {}",
+        result.content
+    );
+    // Disables, not deletes.
+    let set_enabled_calls = calls.cron_set_enabled.lock().unwrap();
+    assert_eq!(set_enabled_calls.len(), 1);
+    assert_eq!(set_enabled_calls[0], ("cron-99".to_string(), false));
+    // The destructive deletion path is never touched.
+    assert!(
+        calls.cron_cancel.lock().unwrap().is_empty(),
+        "cron_cancel tool must NOT hard-delete via KernelHandle::cron_cancel"
+    );
+    assert!(
+        result.content.contains("disabled") || result.content.contains("paused"),
+        "user-facing message should say the job was paused/disabled, got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn test_cron_enable_resumes_owned_job() {
+    // The agent can re-enable a paused job, so the pause is reversible.
+    let (kernel, calls) = CapturingKernel::new();
+    kernel.set_cron_list_response(vec![json!({"id": "cron-99"})]);
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw("ce1", "cron_enable", &json!({"job_id": "cron-99"}), &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "cron_enable should succeed when caller owns the job: {}",
+        result.content
+    );
+    let set_enabled_calls = calls.cron_set_enabled.lock().unwrap();
+    assert_eq!(set_enabled_calls.len(), 1);
+    assert_eq!(set_enabled_calls[0], ("cron-99".to_string(), true));
+}
+
+#[tokio::test]
+async fn test_cron_enable_unowned_job_renders_as_not_found() {
+    let (kernel, calls) = CapturingKernel::new();
+    kernel.set_cron_list_response(vec![json!({"id": "cron-mine"})]);
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result =
+        execute_tool_raw("ce2", "cron_enable", &json!({"job_id": "cron-other"}), &ctx).await;
+
+    assert!(
+        result.is_error,
+        "cron_enable on unowned job must error: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Cron job 'cron-other' not found"),
+        "expected NotFound display, got: {}",
+        result.content
+    );
+    assert!(
+        calls.cron_set_enabled.lock().unwrap().is_empty(),
+        "cron_enable must NOT reach the kernel when the caller doesn't own the job"
+    );
+}
+
+#[tokio::test]
+async fn test_cron_cancel_unowned_job_renders_as_not_found() {
+    // Owned list does not contain the requested job_id — must surface as
+    // the `ToolError::NotFound` Display, *not* an "Internal error". The
+    // dispatch boundary stringifies; the contract this test pins is what
+    // the LLM (and operator logs) see on the wire.
+    let (kernel, calls) = CapturingKernel::new();
+    kernel.set_cron_list_response(vec![json!({"id": "cron-mine"})]);
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw(
+        "c3",
+        "cron_cancel",
+        &json!({"job_id": "cron-other-agents"}),
+        &ctx,
+    )
+    .await;
+
+    assert!(
+        result.is_error,
+        "cron_cancel on unowned job must error: {}",
+        result.content
+    );
+    assert!(
+        result
+            .content
+            .contains("Cron job 'cron-other-agents' not found"),
+        "expected NotFound display, got: {}",
+        result.content
+    );
+    assert!(
+        cancel_was_never_called(&calls),
+        "cron_cancel must NOT reach the kernel when the caller doesn't own the job"
+    );
+    assert!(
+        calls.cron_set_enabled.lock().unwrap().is_empty(),
+        "cron_cancel must NOT toggle a job the caller doesn't own"
+    );
+}
+
+#[tokio::test]
+async fn test_cron_cancel_missing_job_id_renders_as_missing_parameter() {
+    // The dispatcher routes a JSON-typed Missing-parameter through the
+    // boundary; the rendered wire string is what the LLM sees and re-tries
+    // against, so we pin the exact Display.
+    let (kernel, _calls) = CapturingKernel::new();
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw("c4", "cron_cancel", &json!({}), &ctx).await;
+
+    assert!(
+        result.is_error,
+        "cron_cancel without job_id must error: {}",
+        result.content
+    );
+    assert!(
+        result
+            .content
+            .contains("Missing required parameter 'job_id'"),
+        "expected MissingParameter display, got: {}",
+        result.content
+    );
+}
+
+fn cancel_was_never_called(calls: &CapturedCalls) -> bool {
+    calls.cron_cancel.lock().unwrap().is_empty()
+}
+
+// schedule_delete ownership coverage (#3576 second-slice migration, extended
+// by #6159). The natural-language `schedule_delete` enforces the same
+// tool-layer ownership guard as `cron_cancel`. Since #6159 it pauses via
+// `cron_set_enabled(false)` instead of hard-deleting, so the config survives
+// and a human can recover it; these pin both the ownership guard and the
+// disable-not-delete behaviour.
+
+#[tokio::test]
+async fn test_schedule_delete_disables_and_does_not_hard_delete() {
+    // #6159: the agent-facing "schedule_delete" tool pauses the job via
+    // `cron_set_enabled(false)`, NOT hard-delete via `cron_cancel`. The job
+    // still exists (enabled=false) afterwards, and the destructive deletion
+    // path is never reached.
+    let (kernel, calls) = CapturingKernel::new();
+    kernel.set_cron_list_response(vec![json!({"id": "sched-99"})]);
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw("s1", "schedule_delete", &json!({"id": "sched-99"}), &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "schedule_delete should succeed when caller owns the job: {}",
+        result.content
+    );
+    let set_enabled_calls = calls.cron_set_enabled.lock().unwrap();
+    assert_eq!(set_enabled_calls.len(), 1);
+    assert_eq!(set_enabled_calls[0], ("sched-99".to_string(), false));
+    assert!(
+        calls.cron_cancel.lock().unwrap().is_empty(),
+        "schedule_delete tool must NOT hard-delete via KernelHandle::cron_cancel"
+    );
+    assert!(
+        result.content.contains("disabled") || result.content.contains("paused"),
+        "user-facing message should say the schedule was paused/disabled, got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn test_schedule_resume_resumes_owned_job() {
+    let (kernel, calls) = CapturingKernel::new();
+    kernel.set_cron_list_response(vec![json!({"id": "sched-99"})]);
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw("sr1", "schedule_resume", &json!({"id": "sched-99"}), &ctx).await;
+
+    assert!(
+        !result.is_error,
+        "schedule_resume should succeed when caller owns the job: {}",
+        result.content
+    );
+    let set_enabled_calls = calls.cron_set_enabled.lock().unwrap();
+    assert_eq!(set_enabled_calls.len(), 1);
+    assert_eq!(set_enabled_calls[0], ("sched-99".to_string(), true));
+}
+
+#[tokio::test]
+async fn test_schedule_delete_unowned_job_renders_as_not_found() {
+    // Regression: before #3576's second slice, schedule_delete called
+    // cron_cancel directly with no ownership check, so any agent could delete
+    // another agent's job by UUID. It must now collapse unowned/missing into
+    // NotFound and never reach the kernel.
+    let (kernel, calls) = CapturingKernel::new();
+    kernel.set_cron_list_response(vec![json!({"id": "sched-mine"})]);
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw(
+        "s2",
+        "schedule_delete",
+        &json!({"id": "sched-other-agents"}),
+        &ctx,
+    )
+    .await;
+
+    assert!(
+        result.is_error,
+        "schedule_delete on unowned job must error: {}",
+        result.content
+    );
+    assert!(
+        result
+            .content
+            .contains("Schedule 'sched-other-agents' not found"),
+        "expected NotFound display, got: {}",
+        result.content
+    );
+    assert!(
+        cancel_was_never_called(&calls),
+        "schedule_delete must NOT reach the kernel when the caller doesn't own the job"
+    );
+    assert!(
+        calls.cron_set_enabled.lock().unwrap().is_empty(),
+        "schedule_delete must NOT toggle a job the caller doesn't own"
+    );
+}
+
+#[tokio::test]
+async fn test_schedule_delete_missing_id_renders_as_missing_parameter() {
+    let (kernel, _calls) = CapturingKernel::new();
+    let kernel: Arc<dyn KernelHandle> = Arc::new(kernel);
+
+    let ctx = make_ctx(&kernel, None, Some("agent-1"));
+    let result = execute_tool_raw("s3", "schedule_delete", &json!({}), &ctx).await;
+
+    assert!(
+        result.is_error,
+        "schedule_delete without id must error: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("Missing required parameter 'id'"),
+        "expected MissingParameter display, got: {}",
+        result.content
+    );
+}

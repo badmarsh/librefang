@@ -1,0 +1,42 @@
+[package]
+name = "librefang-llm-drivers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Concrete LLM provider drivers (anthropic, openai, gemini, …) implementing the librefang-llm-driver trait"
+readme = "README.md"
+
+[dependencies]
+librefang-types = { path = "../librefang-types" }
+librefang-llm-driver = { path = "../librefang-llm-driver" }
+librefang-http = { path = "../librefang-http" }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry-http = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+metrics = { workspace = true }
+futures = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+base64 = { workspace = true }
+dashmap = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+zeroize = { workspace = true }
+dirs = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+serial_test = "3"
+tempfile = { workspace = true }
+wiremock = "0.6"
+opentelemetry_sdk = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

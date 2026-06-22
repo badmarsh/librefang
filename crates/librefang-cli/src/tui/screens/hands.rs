@@ -1,0 +1,427 @@
+//! Hands screen: marketplace of curated autonomous capability packages + active instances.
+
+use crate::tui::theme;
+use crate::tui::widgets;
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{ListItem, ListState, Paragraph};
+use ratatui::Frame;
+
+// ── Data types ──────────────────────────────────────────────────────────────
+
+#[derive(Clone, Default)]
+pub struct HandInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub icon: String,
+    pub requirements_met: bool,
+}
+
+#[derive(Clone, Default)]
+#[allow(dead_code)]
+pub struct HandInstanceInfo {
+    pub instance_id: String,
+    pub hand_id: String,
+    pub status: String,
+    pub agent_name: String,
+    pub agent_id: String,
+    pub activated_at: String,
+}
+
+// ── State ───────────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HandsSub {
+    Marketplace,
+    Active,
+}
+
+pub struct HandsState {
+    pub sub: HandsSub,
+    pub definitions: Vec<HandInfo>,
+    pub instances: Vec<HandInstanceInfo>,
+    pub marketplace_list: ListState,
+    pub active_list: ListState,
+    pub loading: bool,
+    pub tick: usize,
+    pub confirm_deactivate: bool,
+    pub status_msg: String,
+}
+
+pub enum HandsAction {
+    Continue,
+    RefreshDefinitions,
+    RefreshActive,
+    ActivateHand(String),
+    DeactivateHand(String),
+    PauseHand(String),
+    ResumeHand(String),
+}
+
+impl HandsState {
+    pub fn new() -> Self {
+        Self {
+            sub: HandsSub::Marketplace,
+            definitions: Vec::new(),
+            instances: Vec::new(),
+            marketplace_list: ListState::default(),
+            active_list: ListState::default(),
+            loading: false,
+            tick: 0,
+            confirm_deactivate: false,
+            status_msg: String::new(),
+        }
+    }
+
+    pub fn tick(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> HandsAction {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            return HandsAction::Continue;
+        }
+
+        // Sub-tab switching (1/2)
+        match key.code {
+            KeyCode::Char('1') => {
+                self.sub = HandsSub::Marketplace;
+                return HandsAction::RefreshDefinitions;
+            }
+            KeyCode::Char('2') => {
+                self.sub = HandsSub::Active;
+                return HandsAction::RefreshActive;
+            }
+            _ => {}
+        }
+
+        match self.sub {
+            HandsSub::Marketplace => self.handle_marketplace(key),
+            HandsSub::Active => self.handle_active(key),
+        }
+    }
+
+    fn handle_marketplace(&mut self, key: KeyEvent) -> HandsAction {
+        let total = self.definitions.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if total > 0 => {
+                let i = self.marketplace_list.selected().unwrap_or(0);
+                let next = if i == 0 { total - 1 } else { i - 1 };
+                self.marketplace_list.select(Some(next));
+            }
+            KeyCode::Down | KeyCode::Char('j') if total > 0 => {
+                let i = self.marketplace_list.selected().unwrap_or(0);
+                let next = (i + 1) % total;
+                self.marketplace_list.select(Some(next));
+            }
+            KeyCode::Enter | KeyCode::Char('a') => {
+                if let Some(sel) = self.marketplace_list.selected() {
+                    if sel < self.definitions.len() {
+                        return HandsAction::ActivateHand(self.definitions[sel].id.clone());
+                    }
+                }
+            }
+            KeyCode::Char('r') => return HandsAction::RefreshDefinitions,
+            _ => {}
+        }
+        HandsAction::Continue
+    }
+
+    fn handle_active(&mut self, key: KeyEvent) -> HandsAction {
+        if self.confirm_deactivate {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.confirm_deactivate = false;
+                    if let Some(sel) = self.active_list.selected() {
+                        if sel < self.instances.len() {
+                            return HandsAction::DeactivateHand(
+                                self.instances[sel].instance_id.clone(),
+                            );
+                        }
+                    }
+                }
+                _ => self.confirm_deactivate = false,
+            }
+            return HandsAction::Continue;
+        }
+
+        let total = self.instances.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') if total > 0 => {
+                let i = self.active_list.selected().unwrap_or(0);
+                let next = if i == 0 { total - 1 } else { i - 1 };
+                self.active_list.select(Some(next));
+            }
+            KeyCode::Down | KeyCode::Char('j') if total > 0 => {
+                let i = self.active_list.selected().unwrap_or(0);
+                let next = (i + 1) % total;
+                self.active_list.select(Some(next));
+            }
+            KeyCode::Char('d') | KeyCode::Delete if self.active_list.selected().is_some() => {
+                self.confirm_deactivate = true;
+            }
+            KeyCode::Char('p') => {
+                if let Some(sel) = self.active_list.selected() {
+                    if sel < self.instances.len() {
+                        let inst = &self.instances[sel];
+                        if inst.status == "Active" {
+                            return HandsAction::PauseHand(inst.instance_id.clone());
+                        } else if inst.status == "Paused" {
+                            return HandsAction::ResumeHand(inst.instance_id.clone());
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('r') => return HandsAction::RefreshActive,
+            _ => {}
+        }
+        HandsAction::Continue
+    }
+}
+
+// ── Drawing ─────────────────────────────────────────────────────────────────
+
+pub fn draw(f: &mut Frame, area: Rect, state: &mut HandsState) {
+    let inner = widgets::render_screen_block(
+        f,
+        area,
+        &format!("{} {}", "\u{270b}", crate::i18n::t("tui-hands-title")),
+    );
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1), // sub-tab bar
+        Constraint::Length(1), // separator
+        Constraint::Min(3),    // content
+    ])
+    .split(inner);
+
+    // Sub-tab bar
+    draw_sub_tabs(f, chunks[0], state.sub);
+
+    f.render_widget(widgets::separator(chunks[1].width), chunks[1]);
+
+    match state.sub {
+        HandsSub::Marketplace => draw_marketplace(f, chunks[2], state),
+        HandsSub::Active => draw_active(f, chunks[2], state),
+    }
+}
+
+fn draw_sub_tabs(f: &mut Frame, area: Rect, active: HandsSub) {
+    let tabs = [
+        (
+            HandsSub::Marketplace,
+            crate::i18n::t("tui-hands-tab-marketplace"),
+        ),
+        (HandsSub::Active, crate::i18n::t("tui-hands-tab-active")),
+    ];
+    let mut spans = vec![Span::raw("  ")];
+    for (i, (sub, label)) in tabs.iter().enumerate() {
+        let style = if *sub == active {
+            theme::tab_active()
+        } else {
+            theme::tab_inactive()
+        };
+        spans.push(Span::styled(
+            format!(" {} {} {} ", i + 1, "\u{25cf}", label),
+            style,
+        ));
+        spans.push(Span::raw("  "));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_marketplace(f: &mut Frame, area: Rect, state: &mut HandsState) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1), // header
+        Constraint::Length(1), // separator
+        Constraint::Min(3),    // list
+        Constraint::Length(1), // hints
+    ])
+    .split(area);
+
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            format!(
+                "  {:<4} {:<16} {:<14} {:<8} {}",
+                "",
+                crate::i18n::t("tui-hands-header-name"),
+                crate::i18n::t("tui-hands-header-category"),
+                crate::i18n::t("tui-hands-header-status"),
+                crate::i18n::t("tui-hands-header-description")
+            ),
+            theme::table_header(),
+        )])),
+        chunks[0],
+    );
+
+    f.render_widget(widgets::separator(chunks[1].width), chunks[1]);
+
+    if state.loading {
+        f.render_widget(
+            widgets::spinner(state.tick, &crate::i18n::t("tui-hands-loading")),
+            chunks[2],
+        );
+    } else if state.definitions.is_empty() {
+        f.render_widget(
+            widgets::empty_state(&crate::i18n::t("tui-hands-empty-marketplace")),
+            chunks[2],
+        );
+    } else {
+        let items: Vec<ListItem> = state
+            .definitions
+            .iter()
+            .map(|h| {
+                let ready_badge = if h.requirements_met {
+                    Span::styled(
+                        format!(
+                            "{} {} ",
+                            "\u{25cf}",
+                            crate::i18n::t("tui-hands-status-ready")
+                        ),
+                        Style::default().fg(theme::GREEN),
+                    )
+                } else {
+                    Span::styled(
+                        format!(
+                            "{} {} ",
+                            "\u{25cb}",
+                            crate::i18n::t("tui-hands-status-setup")
+                        ),
+                        Style::default().fg(theme::YELLOW),
+                    )
+                };
+                let category_style = match h.category.as_str() {
+                    "Content" => Style::default().fg(theme::PURPLE),
+                    "Security" => Style::default().fg(theme::RED),
+                    "Development" => Style::default().fg(theme::BLUE),
+                    "Productivity" => Style::default().fg(theme::GREEN),
+                    _ => Style::default().fg(theme::CYAN),
+                };
+                let category_label = match h.category.as_str() {
+                    "Content" => crate::i18n::t("tui-hands-category-content"),
+                    "Security" => crate::i18n::t("tui-hands-category-security"),
+                    "Development" => crate::i18n::t("tui-hands-category-development"),
+                    "Productivity" => crate::i18n::t("tui-hands-category-productivity"),
+                    other => other.to_string(),
+                };
+                ListItem::new(Line::from(vec![
+                    Span::raw(format!("  {:<4}", &h.icon)),
+                    Span::styled(
+                        format!("{:<16}", widgets::truncate(&h.name, 15)),
+                        Style::default().fg(theme::CYAN),
+                    ),
+                    Span::styled(
+                        format!("{:<14}", widgets::truncate(&category_label, 13)),
+                        category_style,
+                    ),
+                    ready_badge,
+                    Span::styled(
+                        format!(" {}", widgets::truncate(&h.description, 40)),
+                        Style::default().fg(theme::TEXT_SECONDARY),
+                    ),
+                ]))
+            })
+            .collect();
+
+        let list = widgets::themed_list(items);
+        f.render_stateful_widget(list, chunks[2], &mut state.marketplace_list);
+    }
+
+    f.render_widget(
+        widgets::status_or_hint(
+            &state.status_msg,
+            &crate::i18n::t("tui-hands-hints-marketplace"),
+        ),
+        chunks[3],
+    );
+}
+
+fn draw_active(f: &mut Frame, area: Rect, state: &mut HandsState) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1), // header
+        Constraint::Length(1), // separator
+        Constraint::Min(3),    // list
+        Constraint::Length(1), // hints
+    ])
+    .split(area);
+
+    f.render_widget(
+        Paragraph::new(Line::from(vec![Span::styled(
+            format!(
+                "  {:<16} {:<12} {:<20} {}",
+                crate::i18n::t("tui-hands-header-agent"),
+                crate::i18n::t("tui-hands-header-status"),
+                crate::i18n::t("tui-hands-header-hand"),
+                crate::i18n::t("tui-hands-header-since")
+            ),
+            theme::table_header(),
+        )])),
+        chunks[0],
+    );
+
+    f.render_widget(widgets::separator(chunks[1].width), chunks[1]);
+
+    if state.loading {
+        f.render_widget(
+            widgets::spinner(state.tick, &crate::i18n::t("tui-hands-loading-active")),
+            chunks[2],
+        );
+    } else if state.instances.is_empty() {
+        f.render_widget(
+            widgets::empty_state(&crate::i18n::t("tui-hands-empty-active")),
+            chunks[2],
+        );
+    } else {
+        let items: Vec<ListItem> = state
+            .instances
+            .iter()
+            .map(|i| {
+                let (status_icon, status_style) = match i.status.as_str() {
+                    "Active" => ("\u{25cf}", Style::default().fg(theme::GREEN)),
+                    "Paused" => ("\u{25cb}", Style::default().fg(theme::YELLOW)),
+                    _ => ("\u{25cb}", Style::default().fg(theme::RED)),
+                };
+                let status_label = match i.status.as_str() {
+                    "Active" => crate::i18n::t("tui-hands-status-active"),
+                    "Paused" => crate::i18n::t("tui-hands-status-paused"),
+                    _ => crate::i18n::t("tui-hands-status-unknown"),
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("  {:<16}", widgets::truncate(&i.agent_name, 15)),
+                        Style::default().fg(theme::CYAN),
+                    ),
+                    Span::styled(
+                        format!("{} {:<10}", status_icon, status_label),
+                        status_style,
+                    ),
+                    Span::styled(
+                        format!("{:<20}", widgets::truncate(&i.hand_id, 19)),
+                        Style::default().fg(theme::TEXT_SECONDARY),
+                    ),
+                    Span::styled(
+                        widgets::truncate(&i.activated_at, 19),
+                        Style::default().fg(theme::TEXT_SECONDARY),
+                    ),
+                ]))
+            })
+            .collect();
+
+        let list = widgets::themed_list(items);
+        f.render_stateful_widget(list, chunks[2], &mut state.active_list);
+    }
+
+    f.render_widget(
+        widgets::confirm_or_status_or_hint(
+            state.confirm_deactivate,
+            &crate::i18n::t("tui-hands-confirm-deactivate"),
+            &state.status_msg,
+            &crate::i18n::t("tui-hands-hints-active"),
+        ),
+        chunks[3],
+    );
+}

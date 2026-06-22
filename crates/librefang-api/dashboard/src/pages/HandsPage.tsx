@@ -1,0 +1,2026 @@
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { UseQueryResult } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "@tanstack/react-router";
+import { AnimatePresence, motion } from "motion/react";
+import { tabContent } from "../lib/motion";
+import { router } from "../router";
+import {
+  type HandDefinitionItem,
+  type HandInstanceItem,
+  type HandStatsResponse,
+  type HandSettingsResponse,
+  type CronJobItem,
+} from "../lib/http/client";
+import { Badge } from "../components/ui/Badge";
+import { useUIStore } from "../lib/store";
+import { Input } from "../components/ui/Input";
+import {
+  Hand,
+  Search,
+  Power,
+  PowerOff,
+  Pause as PauseIcon,
+  Loader2,
+  X,
+  CheckCircle2,
+  XCircle,
+  Wrench,
+  Activity,
+  MessageCircle,
+  AlertCircle,
+  FileText,
+  Plus,
+  GitBranch,
+  RotateCcw,
+  Save,
+  Bot,
+} from "lucide-react";
+import { PageHeader } from "../components/ui/PageHeader";
+import { Skeleton } from "../components/ui/Skeleton";
+import { EmptyState } from "../components/ui/EmptyState";
+import { truncateId } from "../lib/string";
+import {
+  useHands,
+  useActiveHands,
+  useHandDetail,
+  useHandSettings as useHandSettingsQuery,
+  useHandStats,
+  useHandStatsBatch,
+  useHandManifestToml,
+} from "../lib/queries/hands";
+import { StaggerList } from "../components/ui/StaggerList";
+
+const TomlViewer = lazy(() => import("../components/TomlViewer").then(m => ({ default: m.TomlViewer })));
+
+import {
+  useActivateHand,
+  useDeactivateHand,
+  usePauseHand,
+  useResumeHand,
+  useUninstallHand,
+  useSetHandSecret,
+  useUpdateHandSettings,
+} from "../lib/mutations/hands";
+import { usePatchAgent, useUpdateAgentTools } from "../lib/mutations/agents";
+import { useAgentDetail, useAgentTools } from "../lib/queries/agents";
+import { useFullConfig } from "../lib/queries/config";
+import { useSetConfigValue } from "../lib/mutations/config";
+import { useCreateSchedule, useUpdateSchedule, useDeleteSchedule } from "../lib/mutations/schedules";
+import { ScheduleModal } from "../components/ui/ScheduleModal";
+import { DrawerPanel } from "../components/ui/DrawerPanel";
+import { useCronJobs } from "../lib/queries/runtime";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+
+
+
+/* ── Inline metrics for active hand cards ─────────────────── */
+
+function HandMetricsInline({ metrics }: { metrics?: Record<string, { value?: unknown; format?: string }> }) {
+  if (!metrics || Object.keys(metrics).length === 0) return null;
+
+  // Only show entries that have actual values (not "-" or empty)
+  const entries = Object.entries(metrics).filter(([, m]) => m.value != null && String(m.value) !== "-" && String(m.value) !== "").slice(0, 3);
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
+      {entries.map(([label, m]) => (
+        <span key={label} className="text-[9px] text-text-dim/70 font-mono">
+          <span className="text-text-dim/40">{label}:</span>{" "}
+          <span className="text-brand/80">{String(m.value)}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* ── Detail side panel ───────────────────────────────────── */
+
+function HandDetailPanel({
+  hand,
+  instance,
+  isActive,
+  onClose,
+  onActivate,
+  onDeactivate,
+  onPause,
+  onResume,
+  onChat,
+  onUninstall,
+  isPending,
+}: {
+  hand: HandDefinitionItem;
+  instance: HandInstanceItem | undefined;
+  isActive: boolean;
+  onClose: () => void;
+  onActivate: (id: string) => void;
+  onDeactivate: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
+  onUninstall?: (id: string) => void;
+  onChat: (instanceId: string, handName: string) => void;
+  isPending: boolean;
+}) {
+  const { t } = useTranslation();
+  const isPaused = instance?.status === "paused";
+
+  const [showManifest, setShowManifest] = useState(false);
+  const manifestQuery = useHandManifestToml(hand.id, showManifest);
+
+  const settingsQuery = useHandSettingsQuery(hand.id);
+
+  const statsQuery = useHandStats(instance?.instance_id ?? "");
+
+  const settings: HandSettingsResponse = settingsQuery.data ?? {};
+  const stats: HandStatsResponse = statsQuery.data ?? {};
+
+  // Primary metric keys to pull out for the hero strip (best-effort — falls back to any available)
+  const metricEntries = stats.metrics
+    ? Object.entries(stats.metrics)
+        .filter(([, m]) => m.value != null && String(m.value) !== "-" && String(m.value) !== "")
+        .slice(0, 4)
+    : [];
+
+  const heroIconClass = isActive
+    ? isPaused
+      ? "bg-warning/15 text-warning"
+      : "bg-success/15 text-success"
+    : hand.requirements_met
+      ? "bg-brand/10 text-brand"
+      : "bg-warning/10 text-warning";
+
+  return (
+    <>
+      <DrawerPanel isOpen onClose={onClose} size="2xl" hideCloseButton>
+        {/* Hero header — sticky inside the drawer's single scroll container
+            so identity + close stay reachable on long detail content. */}
+        <div className="px-6 py-5 border-b border-border-subtle sticky top-0 bg-surface z-10">
+          <div className="flex items-start gap-4">
+            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${heroIconClass}`}>
+              <Hand className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <h2 className="text-lg font-black tracking-tight truncate">{hand.name || hand.id}</h2>
+                {isActive && !isPaused && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse shrink-0" />
+                )}
+                {isActive && isPaused && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" />
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {isActive ? (
+                  isPaused
+                    ? <Badge variant="warning" dot>{t("hands.paused")}</Badge>
+                    : <Badge variant="success" dot>{t("hands.active_label")}</Badge>
+                ) : hand.requirements_met ? (
+                  <Badge variant="default">{t("hands.ready")}</Badge>
+                ) : (
+                  <Badge variant="warning">{t("hands.missing_req")}</Badge>
+                )}
+                {hand.category && (
+                  <Badge variant="info">{t(`hands.cat_${hand.category}`, { defaultValue: hand.category })}</Badge>
+                )}
+                {instance?.instance_id && (
+                  <span className="text-[10px] text-text-dim/50 font-mono">
+                    {truncateId(instance.instance_id, 12)}
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl text-text-dim/60 hover:text-text hover:bg-main transition-colors shrink-0"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Body — Modal already wraps children in a single overflow-y-auto,
+            so this section just supplies padding/spacing without its own
+            scroll container (nested scroll inside a drawer is annoying). */}
+        <div className="px-6 py-5 space-y-5">
+            {/* Description */}
+            {hand.description && (
+              <p className="text-sm text-text-dim leading-relaxed">{hand.description}</p>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setShowManifest(true)}
+              className="text-[11px] font-bold text-text-dim hover:text-brand inline-flex items-center gap-1"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              {t("hands.view_manifest")}
+            </button>
+
+            {/* Primary action bar */}
+            <div className="flex items-center gap-2">
+              {isActive && instance ? (
+                <>
+                  <button
+                    onClick={() => onChat(instance.instance_id, hand.name || hand.id)}
+                    disabled={isPaused}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-brand hover:brightness-110 shadow-md shadow-brand/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    {t("chat.title")}
+                  </button>
+                  {isPaused ? (
+                    <button
+                      onClick={() => onResume(instance.instance_id)}
+                      disabled={isPending}
+                      className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold text-success bg-success/10 hover:bg-success/20 transition-colors disabled:opacity-40"
+                    >
+                      {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
+                      {t("hands.resume")}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => onPause(instance.instance_id)}
+                      disabled={isPending}
+                      className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold text-text-dim bg-main hover:bg-main/70 transition-colors disabled:opacity-40"
+                    >
+                      {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <PauseIcon className="w-4 h-4" />}
+                      {t("hands.pause")}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => onDeactivate(instance.instance_id)}
+                    disabled={isPending}
+                    className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold text-error bg-error/10 hover:bg-error/20 transition-colors disabled:opacity-40"
+                  >
+                    {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <PowerOff className="w-4 h-4" />}
+                    {t("hands.deactivate")}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => onActivate(hand.id)}
+                    disabled={isPending || !hand.requirements_met}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-brand hover:brightness-110 shadow-md shadow-brand/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:bg-main disabled:text-text-dim"
+                  >
+                    {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
+                    {!hand.requirements_met ? t("hands.missing_req") : t("hands.activate")}
+                  </button>
+                  {hand.is_custom && onUninstall && (
+                    <button
+                      onClick={() => onUninstall(hand.id)}
+                      disabled={isPending}
+                      title={t("hands.uninstall", { defaultValue: "Uninstall this hand" })}
+                      className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-sm font-bold text-error bg-error/10 hover:bg-error/20 transition-colors disabled:opacity-40"
+                    >
+                      {isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
+                      {t("hands.uninstall", { defaultValue: "Uninstall" })}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Live metrics strip — only when active with data */}
+            {isActive && metricEntries.length > 0 && (
+              <div className={`grid gap-2 ${metricEntries.length >= 4 ? "grid-cols-4" : metricEntries.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+                {metricEntries.map(([label, m]) => (
+                  <div key={label} className="p-3 rounded-xl bg-main/50 border border-border-subtle/50">
+                    <p className="text-[9px] uppercase tracking-wider font-bold text-text-dim/50 truncate mb-1">{label}</p>
+                    <p className="text-base font-black text-brand tabular-nums truncate">{String(m.value)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Detail sections */}
+            <DetailTabs
+              key={hand.id}
+              hand={hand}
+              instance={instance}
+              isActive={isActive}
+              settings={settings}
+              settingsQuery={settingsQuery}
+            />
+        </div>
+      </DrawerPanel>
+      <Suspense fallback={null}>
+        <TomlViewer
+          isOpen={showManifest}
+          onClose={() => setShowManifest(false)}
+          title={t("hands.manifest_title", { name: hand.name || hand.id })}
+          toml={manifestQuery.data}
+          downloadName={`${hand.id}.HAND.toml`}
+          error={
+            manifestQuery.error
+              ? (manifestQuery.error as Error).message ?? t("hands.manifest_error")
+              : null
+          }
+        />
+      </Suspense>
+    </>
+  );
+}
+
+/* ── Collapsible section helper ──────────────────────────── */
+
+/* ── Detail tabs content ─────────────────────────────────── */
+
+function RequirementsForm({ handId, requirements }: { handId: string; requirements: HandDefinitionItem["requirements"] }) {
+  const { t } = useTranslation();
+  const addToast = useUIStore((s) => s.addToast);
+  const setSecret = useSetHandSecret();
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const r of requirements ?? []) {
+      if (r.key && r.current_value) init[r.key] = r.current_value;
+    }
+    return init;
+  });
+  const [saving, setSaving] = useState<string | null>(null);
+
+  if (!requirements || requirements.length === 0) return null;
+
+  const handleSave = async (key: string) => {
+    const val = values[key]?.trim();
+    if (!val) return;
+    setSaving(key);
+    try {
+      await setSecret.mutateAsync({ handId, key, value: val });
+      addToast(t("common.success"), "success");
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : t("common.error"), "error");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {requirements.map((r) => (
+        <div key={r.key} className="rounded-xl border border-border-subtle bg-main/30 p-3">
+          <div className="flex items-center gap-2 mb-2">
+            {r.satisfied
+              ? <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+              : <XCircle className="w-4 h-4 text-error shrink-0" />}
+            <span className="text-xs font-bold">{r.label || r.key}</span>
+            {r.optional && (
+              <span className="text-[10px] text-text-dim/50 font-bold uppercase tracking-wide">optional</span>
+            )}
+          </div>
+          {r.key && (
+            <div className="flex gap-2">
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder={r.satisfied ? "••••••••" : r.key}
+                value={values[r.key!] ?? ""}
+                onChange={(e) => { setValues(prev => ({ ...prev, [r.key!]: e.target.value })); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSave(r.key!); } }}
+                className={`flex-1 px-3 py-2 rounded-lg border text-xs font-mono outline-none focus:border-brand placeholder:text-text-dim/30 transition-colors ${
+                  r.satisfied ? "border-success/30 bg-success/5 focus:border-success/60" : "border-border-subtle bg-surface"
+                }`}
+              />
+              <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleSave(r.key!); }}
+                disabled={!values[r.key!]?.trim() || saving === r.key}
+                className="px-3 py-2 rounded-lg text-xs font-bold text-white bg-brand hover:brightness-110 shadow-sm shadow-brand/20 transition-all disabled:opacity-40 disabled:shadow-none"
+              >
+                {saving === r.key ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : t("common.save")}
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Agent config (system prompt + tools) editor ─────────── */
+
+type WorkspaceAgent = {
+  role: string;
+  name: string;
+  description?: string;
+  coordinator?: boolean;
+  provider: string;
+  model: string;
+  steps?: string[];
+  system_prompt?: string;
+  capabilities_tools?: string[];
+};
+
+function HandAgentConfigTab({
+  workspaceAgents,
+  instance,
+  isActive,
+}: {
+  workspaceAgents: WorkspaceAgent[];
+  instance: HandInstanceItem | undefined;
+  isActive: boolean;
+}) {
+  const { t } = useTranslation();
+  const [selectedRole, setSelectedRole] = useState<string>(
+    () => workspaceAgents[0]?.role ?? "",
+  );
+
+  const selected =
+    workspaceAgents.find((a) => a.role === selectedRole) ?? workspaceAgents[0];
+
+  // multi-agent hands expose a role→id map; single-agent hands fall back to the instance-level id.
+  const agentId = isActive
+    ? instance?.agent_ids?.[selected?.role ?? ""] ?? instance?.agent_id
+    : undefined;
+
+  if (!selected) {
+    return <p className="text-xs text-text-dim/50 py-4 text-center">{t("hands.settings_empty")}</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {!isActive && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-[11px] text-warning">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>{t("hands.agent_config_activate_first")}</span>
+        </div>
+      )}
+
+      {workspaceAgents.length > 1 && (
+        <div>
+          <label htmlFor="hand-agent-role" className="text-[10px] font-bold text-text-dim uppercase tracking-wide block mb-1">
+            {t("hands.agent_select")}
+          </label>
+          <select
+            id="hand-agent-role"
+            value={selected.role}
+            onChange={(e) => setSelectedRole(e.target.value)}
+            className="w-full rounded-lg border border-border-subtle bg-surface px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:border-brand"
+          >
+            {workspaceAgents.map((a) => (
+              <option key={a.role} value={a.role}>
+                {a.name || a.role}
+                {a.coordinator ? " · coordinator" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <HandAgentEditor
+        key={selected.role}
+        agent={selected}
+        agentId={agentId}
+        canEdit={isActive}
+      />
+    </div>
+  );
+}
+
+function HandAgentEditor({
+  agent,
+  agentId,
+  canEdit,
+}: {
+  agent: WorkspaceAgent;
+  agentId: string | undefined;
+  canEdit: boolean;
+}) {
+  const { t } = useTranslation();
+  const addToast = useUIStore((s) => s.addToast);
+
+  // Manifest baseline (HAND.toml) — the "restore default" target.
+  const defaultPrompt = agent.system_prompt ?? "";
+  const defaultTools = useMemo(() => agent.capabilities_tools ?? [], [agent.capabilities_tools]);
+
+  const agentDetailQuery = useAgentDetail(agentId ?? "", { enabled: !!agentId });
+  const agentToolsQuery = useAgentTools(agentId ?? "", { enabled: !!agentId });
+  const livePrompt = agentDetailQuery.data?.system_prompt;
+  const liveTools = agentToolsQuery.data?.capabilities_tools;
+
+  const currentPrompt = livePrompt ?? defaultPrompt;
+  const currentTools = useMemo<string[]>(
+    () => liveTools ?? defaultTools,
+    [liveTools, defaultTools],
+  );
+
+  const [prompt, setPrompt] = useState(currentPrompt);
+  const [tools, setTools] = useState<string[]>(currentTools);
+  const [newTool, setNewTool] = useState("");
+
+  useEffect(() => { setPrompt(currentPrompt); }, [currentPrompt]);
+  useEffect(() => { setTools(currentTools); }, [currentTools]);
+
+  const patchAgent = usePatchAgent();
+  const updateTools = useUpdateAgentTools();
+
+  const editable = canEdit && !!agentId;
+  const promptDirty = prompt !== currentPrompt;
+  // Dirty = draft differs from the live/current value (what's saved).
+  const toolsDirty = useMemo(
+    () => tools.length !== currentTools.length || tools.some((tt, i) => tt !== currentTools[i]),
+    [tools, currentTools],
+  );
+  // Whether the draft already matches the manifest default (disables reset).
+  const promptIsDefault = prompt === defaultPrompt;
+  const toolsAreDefault = useMemo(
+    () => tools.length === defaultTools.length && tools.every((tt, i) => tt === defaultTools[i]),
+    [tools, defaultTools],
+  );
+
+  const savePrompt = () => {
+    if (!agentId) {
+      addToast(t("hands.edit_agent_unavailable"), "error");
+      return;
+    }
+    patchAgent.mutate(
+      { agentId, body: { system_prompt: prompt } },
+      {
+        onSuccess: () => addToast(t("hands.saved"), "success"),
+        onError: (e: Error) => addToast(e.message || t("common.error"), "error"),
+      },
+    );
+  };
+
+  const saveTools = (next: string[]) => {
+    if (!agentId) {
+      addToast(t("hands.edit_agent_unavailable"), "error");
+      return;
+    }
+    updateTools.mutate(
+      { agentId, payload: { capabilities_tools: next } },
+      {
+        onSuccess: () => addToast(t("hands.saved"), "success"),
+        onError: (e: Error) => addToast(e.message || t("common.error"), "error"),
+      },
+    );
+  };
+
+  const addTool = () => {
+    const tool = newTool.trim();
+    if (!tool || tools.includes(tool)) {
+      setNewTool("");
+      return;
+    }
+    setTools((prev) => [...prev, tool]);
+    setNewTool("");
+  };
+
+  const removeTool = (tool: string) => {
+    setTools((prev) => prev.filter((x) => x !== tool));
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* System prompt (#6151) */}
+      <div className="rounded-xl border border-border-subtle bg-main/30 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <label htmlFor={`hand-agent-prompt-${agent.role}`} className="flex items-center gap-1.5 text-xs font-bold">
+            <Bot className="w-3.5 h-3.5 text-text-dim/60" />
+            {t("hands.system_prompt")}
+          </label>
+          <button
+            type="button"
+            disabled={!editable || promptIsDefault}
+            onClick={() => setPrompt(defaultPrompt)}
+            title={t("hands.reset_default_title")}
+            className="inline-flex items-center gap-1 text-[10px] font-bold text-text-dim hover:text-brand disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <RotateCcw className="w-3 h-3" />
+            {t("hands.reset_default")}
+          </button>
+        </div>
+        <textarea
+          id={`hand-agent-prompt-${agent.role}`}
+          value={prompt}
+          disabled={!editable || patchAgent.isPending}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder={t("hands.system_prompt_placeholder")}
+          rows={8}
+          className="w-full rounded-lg border border-border-subtle bg-surface px-3 py-2 text-xs font-mono leading-relaxed resize-y disabled:opacity-50 focus:outline-none focus:border-brand"
+        />
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={!editable || !promptDirty || patchAgent.isPending}
+            onClick={savePrompt}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-brand/90 transition-colors"
+          >
+            {patchAgent.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+            {t("hands.save")}
+          </button>
+        </div>
+      </div>
+
+      {/* Tools (#6152) */}
+      <div className="rounded-xl border border-border-subtle bg-main/30 p-3 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-xs font-bold">
+            <Wrench className="w-3.5 h-3.5 text-text-dim/60" />
+            {t("hands.agent_tools")}
+          </span>
+          <button
+            type="button"
+            disabled={!editable || toolsAreDefault}
+            onClick={() => setTools(defaultTools)}
+            title={t("hands.reset_default_title")}
+            className="inline-flex items-center gap-1 text-[10px] font-bold text-text-dim hover:text-brand disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            <RotateCcw className="w-3 h-3" />
+            {t("hands.reset_default")}
+          </button>
+        </div>
+
+        {tools.length === 0 ? (
+          <p className="text-[11px] text-text-dim/50 py-1">{t("hands.agent_tools_empty")}</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {tools.map((tool) => (
+              <span
+                key={tool}
+                className="inline-flex items-center gap-1 text-[11px] font-mono text-text-dim px-2 py-1 rounded-lg bg-surface border border-border-subtle/60"
+              >
+                {tool === "*" ? t("hands.agent_tools_wildcard") : tool}
+                {editable && (
+                  <button
+                    type="button"
+                    onClick={() => removeTool(tool)}
+                    aria-label={`${t("common.delete", { defaultValue: "Remove" })} ${tool}`}
+                    className="text-text-dim/40 hover:text-error transition-colors"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={newTool}
+            disabled={!editable}
+            onChange={(e) => setNewTool(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTool(); } }}
+            placeholder={t("hands.agent_tools_add_placeholder")}
+            className="flex-1 rounded-lg border border-border-subtle bg-surface px-3 py-1.5 text-xs font-mono disabled:opacity-50 focus:outline-none focus:border-brand placeholder:text-text-dim/30"
+          />
+          <button
+            type="button"
+            disabled={!editable || !newTool.trim()}
+            onClick={addTool}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-border-subtle text-xs font-bold text-text-dim hover:text-brand hover:border-brand/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Plus className="w-3 h-3" />
+            {t("hands.agent_tools_add")}
+          </button>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={!editable || !toolsDirty || updateTools.isPending}
+            onClick={() => saveTools(tools)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-brand/90 transition-colors"
+          >
+            {updateTools.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+            {t("hands.save")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailTabs({ hand, instance, isActive, settings, settingsQuery }: {
+  hand: HandDefinitionItem; instance: HandInstanceItem | undefined; isActive: boolean;
+  settings: HandSettingsResponse;
+  settingsQuery: UseQueryResult<HandSettingsResponse, Error>;
+}) {
+  const { t } = useTranslation();
+
+  // Fetch hand detail with agents list
+  const detailQuery = useHandDetail(hand.id);
+  const detail = detailQuery.data as Record<string, unknown> | undefined;
+  const workspaceAgents = (detail?.agents as WorkspaceAgent[] | undefined) ?? [];
+
+  // Fetch cron jobs for this hand's agent
+  const agentId = instance?.agent_id;
+  const cronJobsQuery = useCronJobs(isActive ? agentId : undefined);
+  const cronJobs = cronJobsQuery.data ?? [];
+
+  type Tab = "agents" | "agent_config" | "settings" | "requirements" | "tools" | "schedules";
+  const tabs: { id: Tab; label: string; count?: number; show: boolean }[] = [
+    { id: "agents", label: t("nav.agents"), count: workspaceAgents.length, show: workspaceAgents.length > 0 },
+    // shown when agents are declared; write ops are gated inside the editor (active hand required).
+    { id: "agent_config", label: t("hands.agent_config"), count: workspaceAgents.length, show: workspaceAgents.length > 0 },
+    { id: "schedules", label: t("hands.tab_schedules"), count: cronJobs.length, show: isActive && !!agentId },
+    { id: "settings", label: t("hands.settings"), count: settings.settings?.length, show: true },
+    { id: "requirements", label: t("hands.requirements"), count: hand.requirements?.length, show: !!(hand.requirements && hand.requirements.length > 0) },
+    { id: "tools", label: t("hands.tools"), count: hand.tools?.length, show: !!(hand.tools && hand.tools.length > 0) },
+  ];
+  const visibleTabs = tabs.filter(t => t.show);
+  const [activeTab, setActiveTab] = useState<Tab>(visibleTabs[0]?.id ?? "settings");
+
+  return (
+    <div>
+      {/* Tab bar — all children are text-only so height is determined purely by padding + line-height */}
+      <div role="tablist" aria-label="Hand details" className="flex border-b border-border-subtle mb-4 overflow-x-auto scrollbar-thin">
+        {visibleTabs.map(tab => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              id={`hands-tab-${tab.id}`}
+              role="tab"
+              aria-selected={isActive}
+              aria-controls={`hands-panel-${tab.id}`}
+              tabIndex={isActive ? 0 : -1}
+              onClick={() => setActiveTab(tab.id)}
+              className={`shrink-0 flex items-baseline gap-1.5 px-3 py-3 -mb-px border-b-2 text-xs font-bold leading-none whitespace-nowrap transition-colors ${
+                isActive
+                  ? "border-brand text-brand"
+                  : "border-transparent text-text-dim/60 hover:text-text"
+              }`}
+            >
+              <span>{tab.label}</span>
+              {tab.count !== undefined && tab.count > 0 && (
+                <span className={`text-[10px] font-black tabular-nums ${isActive ? "text-brand/70" : "text-text-dim/40"}`}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab content */}
+      <div id={`hands-panel-${activeTab}`} role="tabpanel" aria-labelledby={`hands-tab-${activeTab}`}>
+        <AnimatePresence mode="wait">
+        <motion.div key={activeTab} variants={tabContent} initial="initial" animate="animate" exit="exit">
+
+        {activeTab === "agents" && (
+          <div className="space-y-2">
+            {workspaceAgents.map((a) => (
+              <div key={a.role} className="rounded-xl border border-border-subtle bg-main/40 overflow-hidden">
+                <div className="flex items-center gap-3 p-3">
+                  <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-black shrink-0 ${
+                    a.coordinator ? "bg-brand/15 text-brand" : "bg-surface text-text-dim/60"
+                  }`}>
+                    {a.role.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-extrabold truncate">{a.role}</p>
+                      {a.coordinator && <Badge variant="brand">coordinator</Badge>}
+                    </div>
+                    <p className="text-[10px] text-text-dim/60 font-mono truncate mt-0.5">{a.model}</p>
+                  </div>
+                  <Badge variant="info">{a.provider}</Badge>
+                </div>
+                {a.description && (
+                  <p className="px-3 pb-2 text-[11px] text-text-dim/70 leading-relaxed line-clamp-2">{a.description}</p>
+                )}
+                {a.steps && a.steps.length > 0 && (
+                  <div className="px-3 pb-3 flex flex-wrap gap-1">
+                    {a.steps.map((s, i) => (
+                      <span key={i} className="text-[10px] px-2 py-0.5 rounded-md bg-brand/5 text-brand/80 font-semibold border border-brand/10">{s}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "agent_config" && (
+          <HandAgentConfigTab
+            workspaceAgents={workspaceAgents}
+            instance={instance}
+            isActive={isActive}
+          />
+        )}
+
+        {activeTab === "settings" && (
+          <HandSettingsEditor
+            handId={hand.id}
+            settings={settings}
+            isLoading={settingsQuery.isLoading}
+            isActive={isActive}
+          />
+        )}
+
+        {activeTab === "requirements" && hand.requirements && (
+          <RequirementsForm handId={hand.id} requirements={hand.requirements} />
+        )}
+
+        {activeTab === "tools" && hand.tools && (
+          <div className="flex flex-wrap gap-1.5">
+            {hand.tools.map((tool) => (
+              <span key={tool} className="text-[11px] font-mono text-text-dim px-2.5 py-1 rounded-lg bg-main/60 border border-border-subtle/60">
+                {tool}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {activeTab === "schedules" && agentId && (
+          <HandSchedulesTab
+            cronJobs={cronJobs}
+            isLoading={cronJobsQuery.isLoading}
+            onRefresh={() => cronJobsQuery.refetch()}
+            agentId={agentId}
+            handName={hand.name || hand.id}
+          />
+        )}
+        </motion.div>
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+/* ── Settings tab content for a hand — editable form ─────── */
+
+function HandSettingsEditor({
+  handId,
+  settings,
+  isLoading,
+  isActive,
+}: {
+  handId: string;
+  settings: HandSettingsResponse;
+  isLoading: boolean;
+  isActive: boolean;
+}) {
+  const { t } = useTranslation();
+
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveOk, setSaveOk] = useState(false);
+  const saveOkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setDraft({});
+    setSaveOk(false);
+    setSaveError(null);
+    return () => {
+      if (saveOkTimerRef.current) clearTimeout(saveOkTimerRef.current);
+    };
+  }, [settings]);
+
+  const saveMutation = useUpdateHandSettings();
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-text-dim/60 text-xs py-4">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("common.loading")}
+      </div>
+    );
+  }
+
+  if (!settings.settings || settings.settings.length === 0) {
+    return <p className="text-xs text-text-dim/50 py-4 text-center">{t("hands.settings_empty")}</p>;
+  }
+
+  const dirty = Object.keys(draft).length > 0;
+  const canEdit = isActive;
+
+  const valueFor = (key: string): string => {
+    if (key in draft) return draft[key];
+    const cur = settings.current_values?.[key];
+    if (cur !== undefined && cur !== null) return String(cur);
+    return "";
+  };
+
+  const handleSave = () => {
+    // Seed from saved values so a partial draft doesn't wipe unedited keys.
+    const payload: Record<string, unknown> = { ...(settings.current_values ?? {}) };
+    for (const [k, v] of Object.entries(draft)) {
+      payload[k] = v;
+    }
+    saveMutation.mutate(
+      { handId, config: payload },
+      {
+        onSuccess: () => {
+          setSaveOk(true);
+          setSaveError(null);
+          setDraft({});
+          if (saveOkTimerRef.current) clearTimeout(saveOkTimerRef.current);
+          saveOkTimerRef.current = setTimeout(() => setSaveOk(false), 2500);
+        },
+        onError: (err: Error) => {
+          setSaveError(err.message || String(err));
+          setSaveOk(false);
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      {!canEdit && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-[11px] text-warning">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span>{t("hands.settings_activate_first", { defaultValue: "Activate this hand first to edit its settings." })}</span>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-border-subtle bg-main/30 divide-y divide-border-subtle/50">
+        {settings.settings.map((s) => {
+          const key = s.key ?? "";
+          const current = valueFor(key);
+          const hasOptions = s.options && s.options.length > 0;
+          const rawDefault = s.default !== undefined ? String(s.default) : "";
+          const isOverridden = settings.current_values?.[key] !== undefined;
+
+          return (
+            <div key={key} className="px-3 py-3 space-y-1.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <label htmlFor={`setting-${key}`} className="text-xs font-bold block truncate">
+                    {s.label || key}
+                  </label>
+                  {s.label && s.key !== s.label && (
+                    <span className="text-[10px] text-text-dim/40 font-mono block">{key}</span>
+                  )}
+                  {s.description && (
+                    <p className="text-[11px] text-text-dim/70 mt-0.5">{s.description}</p>
+                  )}
+                </div>
+                {!isOverridden && rawDefault && (
+                  <span className="text-[10px] font-mono shrink-0 px-1.5 py-0.5 rounded text-text-dim/50 bg-surface">
+                    {t("hands.settings_default", { defaultValue: "default" })}: {rawDefault}
+                  </span>
+                )}
+              </div>
+
+              {hasOptions ? (
+                <select
+                  id={`setting-${key}`}
+                  value={current}
+                  disabled={!canEdit || saveMutation.isPending}
+                  onChange={(e) => setDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                  className="w-full rounded-lg border border-border-subtle bg-surface px-2.5 py-1.5 text-xs font-mono disabled:opacity-50 focus:outline-none focus:border-brand"
+                >
+                  {!current && <option value="">—</option>}
+                  {s.options!.map((opt) => (
+                    <option key={opt.value} value={opt.value ?? ""} disabled={opt.available === false}>
+                      {opt.label || opt.value}
+                      {opt.available === false ? " (unavailable)" : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  id={`setting-${key}`}
+                  value={current}
+                  disabled={!canEdit || saveMutation.isPending}
+                  placeholder={rawDefault || undefined}
+                  onChange={(e) => setDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                  className="text-xs font-mono"
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center gap-2 pt-1">
+        <button
+          type="button"
+          disabled={!canEdit || !dirty || saveMutation.isPending}
+          onClick={handleSave}
+          className="px-3 py-1.5 rounded-lg bg-brand text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-brand/90 transition-colors flex items-center gap-1.5"
+        >
+          {saveMutation.isPending && <Loader2 className="w-3 h-3 animate-spin" />}
+          {t("hands.settings_save", { defaultValue: "Save settings" })}
+        </button>
+        {dirty && !saveMutation.isPending && (
+          <button
+            type="button"
+            onClick={() => { setDraft({}); setSaveError(null); }}
+            className="px-3 py-1.5 rounded-lg border border-border-subtle text-xs text-text-dim hover:bg-main/50 transition-colors"
+          >
+            {t("common.cancel", { defaultValue: "Cancel" })}
+          </button>
+        )}
+        {saveOk && (
+          <span className="flex items-center gap-1 text-[11px] text-success">
+            <CheckCircle2 className="w-3 h-3" /> {t("hands.settings_saved", { defaultValue: "Saved" })}
+          </span>
+        )}
+        {saveError && (
+          <span className="flex items-center gap-1 text-[11px] text-error">
+            <XCircle className="w-3 h-3" /> {saveError}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Schedules tab content for a hand ─────────────────────── */
+
+function HandSchedulesTab({ cronJobs, isLoading, onRefresh, agentId, handName }: {
+  cronJobs: CronJobItem[];
+  isLoading: boolean;
+  onRefresh: () => void;
+  agentId: string;
+  handName: string;
+}) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const addToast = useUIStore((s) => s.addToast);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const toggleSchedule = useUpdateSchedule();
+  const deleteScheduleMut = useDeleteSchedule();
+  const createScheduleMut = useCreateSchedule();
+  const [showCreate, setShowCreate] = useState(false);
+  const [showCronPicker, setShowCronPicker] = useState(false);
+  const [name, setName] = useState("");
+  const [message, setMessage] = useState("");
+  const [cron, setCron] = useState("0 9 * * *");
+  const [cronTz, setCronTz] = useState<string | undefined>(undefined);
+
+  const resetForm = () => {
+    setShowCreate(false);
+    setName("");
+    setMessage("");
+    setCron("0 9 * * *");
+    setCronTz(undefined);
+  };
+
+  const handleToggle = async (job: CronJobItem) => {
+    if (!job.id) return;
+    try {
+      await toggleSchedule.mutateAsync({ id: job.id, data: { enabled: !job.enabled } });
+      onRefresh();
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : t("common.error"), "error");
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      return;
+    }
+    setConfirmDeleteId(null);
+    try {
+      await deleteScheduleMut.mutateAsync(id);
+      onRefresh();
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : t("common.error"), "error");
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!name.trim() || !message.trim()) return;
+    try {
+      await createScheduleMut.mutateAsync({
+        name: name.trim(),
+        cron,
+        tz: cronTz,
+        message: message.trim(),
+        enabled: true,
+        agent_id: agentId,
+      });
+      resetForm();
+      addToast(t("hands.schedule_created", { defaultValue: "Schedule created" }), "success");
+    } catch (err: unknown) {
+      addToast(err instanceof Error ? err.message : t("common.error"), "error");
+    }
+  };
+
+  const inputCls = "w-full rounded-lg border border-border-subtle bg-main px-3 py-2 text-sm outline-none focus:border-brand transition-colors";
+
+  if (isLoading) {
+    return <div className="flex items-center gap-2 text-text-dim/60 text-xs py-4"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("common.loading")}</div>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {!showCreate ? (
+        <button
+          onClick={() => setShowCreate(true)}
+          className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl border border-dashed border-border-subtle text-xs font-bold text-text-dim hover:text-brand hover:border-brand/40 transition-colors"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          {t("hands.new_schedule", { defaultValue: "New schedule" })}
+        </button>
+      ) : (
+        <form
+          onSubmit={(e) => { e.preventDefault(); void handleCreate(); }}
+          className="rounded-xl border border-brand/30 bg-brand/[0.02] p-3 space-y-2.5"
+        >
+          <div>
+            <label className="text-[10px] font-bold text-text-dim uppercase">{t("scheduler.job_name", { defaultValue: "Name" })}</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t("hands.schedule_name_placeholder", { defaultValue: "e.g. Daily status check" })}
+              className={inputCls}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-text-dim uppercase">{t("scheduler.target_agent", { defaultValue: "Target Agent" })}</label>
+            <div className="px-3 py-2 rounded-lg border border-border-subtle bg-main text-sm text-text-dim">
+              {handName}
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-text-dim uppercase">{t("scheduler.message", { defaultValue: "Message" })}</label>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              placeholder={t("hands.schedule_message_placeholder", { defaultValue: "What should the hand do when this fires?" })}
+              rows={2}
+              className={`${inputCls} resize-none`}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-text-dim uppercase">{t("scheduler.cron_exp", { defaultValue: "Schedule" })}</label>
+            <button
+              type="button"
+              onClick={() => setShowCronPicker(true)}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-border-subtle bg-main hover:border-brand transition-colors text-left"
+            >
+              <code className="text-xs font-mono text-text-dim">
+                {cron}{cronTz && cronTz !== "UTC" ? ` · ${cronTz}` : ""}
+              </code>
+              <span className="text-[10px] text-brand">{t("scheduler.pick_schedule", { defaultValue: "Pick schedule" })}</span>
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={!name.trim() || !message.trim() || createScheduleMut.isPending}
+              className="flex-1 px-3 py-1.5 rounded-lg bg-brand text-white text-xs font-bold hover:bg-brand/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {createScheduleMut.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" /> : t("common.create", { defaultValue: "Create" })}
+            </button>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="px-3 py-1.5 rounded-lg bg-main text-text-dim text-xs font-bold hover:text-text-main transition-colors"
+            >
+              {t("common.cancel")}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {cronJobs.length === 0 ? (
+        <p className="text-xs text-text-dim/50 py-4 text-center">{t("scheduler.no_schedules", { defaultValue: "No scheduled tasks" })}</p>
+      ) : (
+        cronJobs.map((job) => {
+          const isEnabled = job.enabled !== false;
+          const scheduleObj = typeof job.schedule === "object" && job.schedule !== null
+            ? job.schedule as { expr?: string; every_secs?: number }
+            : null;
+          const schedule = typeof job.schedule === "string"
+            ? job.schedule
+            : scheduleObj?.expr ?? (scheduleObj?.every_secs != null ? `every ${scheduleObj.every_secs}s` : "-");
+
+          return (
+            <div key={job.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${isEnabled ? "border-border-subtle bg-main/30" : "border-border-subtle/50 bg-main/10 opacity-60"}`}>
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isEnabled ? "bg-brand/10 text-brand" : "bg-main text-text-dim/40"}`}>
+                <Activity className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold truncate">{job.name || "Unnamed"}</p>
+                <p className="text-[10px] font-mono text-text-dim/60 truncate">{schedule}</p>
+                {/*
+                  Cross-link to the full SchedulerPage editor instead of
+                  reimplementing DeliveryTargetsEditor inline. Keeps this
+                  widget compact and the editor lives in exactly one place.
+                */}
+                <button
+                  type="button"
+                  onClick={() => navigate({ to: "/scheduler" })}
+                  className="text-[10px] text-brand hover:underline mt-0.5"
+                >
+                  {t("hands.configure_delivery_targets", {
+                    defaultValue: "Configure delivery targets →",
+                  })}
+                </button>
+              </div>
+              <button
+                onClick={() => handleToggle(job)}
+                className={`px-2 py-0.5 rounded-md text-[10px] font-black tracking-wide transition-colors ${isEnabled ? "bg-success/15 text-success hover:bg-success/25" : "bg-main text-text-dim/50 hover:text-text-dim"}`}
+              >
+                {isEnabled ? "ON" : "OFF"}
+              </button>
+              {confirmDeleteId === job.id ? (
+                <div className="flex items-center gap-1">
+                  <button onClick={() => handleDelete(job.id!)} className="px-2 py-1 rounded-md bg-error text-white text-[10px] font-bold">{t("common.confirm")}</button>
+                  <button onClick={() => setConfirmDeleteId(null)} className="px-2 py-1 rounded-md bg-main text-text-dim text-[10px] font-bold">{t("common.cancel")}</button>
+                </div>
+              ) : (
+                <button onClick={() => handleDelete(job.id!)} className="p-1.5 rounded-lg text-text-dim/40 hover:text-error hover:bg-error/10 transition-colors" title="Delete schedule">
+                  <XCircle className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          );
+        })
+      )}
+
+      {showCronPicker && (
+        <ScheduleModal
+          isOpen={true}
+          title={t("scheduler.pick_schedule", { defaultValue: "Pick schedule" })}
+          subtitle={handName}
+          initialCron={cron}
+          initialTz={cronTz}
+          onSave={(c, tz) => {
+            setCron(c);
+            setCronTz(tz);
+            setShowCronPicker(false);
+          }}
+          onClose={() => setShowCronPicker(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Active hand card (horizontal strip) ─────────────────── */
+
+const ActiveHandChip = React.memo(function ActiveHandChip({
+  hand,
+  instance,
+  onChat,
+  onDeactivate,
+  onDetail,
+  isPending,
+  metrics,
+}: {
+  hand: HandDefinitionItem;
+  instance: HandInstanceItem;
+  onChat: (instanceId: string, handName: string) => void;
+  onDeactivate: (id: string) => void;
+  onDetail: (hand: HandDefinitionItem) => void;
+  isPending: boolean;
+  metrics?: Record<string, { value?: unknown; format?: string }>;
+}) {
+  const { t } = useTranslation();
+  const isPaused = instance.status === "paused";
+  const isDegraded = !isPaused && hand.degraded === true;
+  const warnState = isPaused || isDegraded;
+
+  return (
+    <div
+      className={`group relative flex flex-col gap-2 p-3 rounded-2xl border cursor-pointer transition-colors shrink-0 w-[320px] sm:w-[360px] ${
+        warnState
+          ? "border-warning/40 bg-warning/[0.06] hover:border-warning/60"
+          : "border-success/40 bg-success/[0.06] hover:border-success/60"
+      }`}
+      onClick={() => onDetail(hand)}
+    >
+      {/* Header row */}
+      <div className="flex items-center gap-2.5">
+        <div
+          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+            warnState ? "bg-warning/20 text-warning" : "bg-success/20 text-success"
+          }`}
+        >
+          <Hand className="w-4 h-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span
+              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                isPaused ? "bg-warning" : isDegraded ? "bg-warning animate-pulse" : "bg-success animate-pulse"
+              }`}
+            />
+            <h4 className="text-xs font-extrabold truncate">{hand.name || hand.id}</h4>
+          </div>
+          <p className={`text-[10px] font-medium ${warnState ? "text-warning/80" : "text-text-dim/50"}`}>
+            {isPaused ? t("hands.paused") : isDegraded ? t("hands.degraded") : t("hands.active_label")}
+          </p>
+        </div>
+      </div>
+
+      {/* Metrics */}
+      {metrics && Object.keys(metrics).length > 0 && <HandMetricsInline metrics={metrics} />}
+
+      {/* Actions — always visible */}
+      <div className="flex items-center gap-1.5 pt-2 border-t border-border-subtle/40" onClick={(e) => e.stopPropagation()}>
+        {!isPaused && (
+          <button
+            onClick={() => onChat(instance.instance_id, hand.name || hand.id)}
+            className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-brand bg-brand/10 hover:bg-brand/20 transition-colors"
+          >
+            <MessageCircle className="w-3 h-3" />
+            {t("chat.title")}
+          </button>
+        )}
+        <button
+          onClick={() => onDeactivate(instance.instance_id)}
+          disabled={isPending}
+          className="flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold text-text-dim hover:text-error hover:bg-error/10 transition-colors disabled:opacity-40"
+          title={t("hands.deactivate")}
+        >
+          {isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <PowerOff className="w-3 h-3" />}
+        </button>
+      </div>
+    </div>
+  );
+});
+
+/* ── Grid skeleton matching HandCard layout ──────────────── */
+
+function HandCardGridSkeleton() {
+  return (
+    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="flex flex-col rounded-2xl border border-border-subtle bg-surface">
+          <div className="flex items-start gap-3 p-4 pb-3">
+            <Skeleton className="w-10 h-10 rounded-xl shrink-0" />
+            <div className="min-w-0 flex-1 space-y-2">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-2.5 w-16" />
+            </div>
+          </div>
+          <div className="px-4 pb-3 space-y-1.5">
+            <Skeleton className="h-3 w-full" />
+            <Skeleton className="h-3 w-5/6" />
+          </div>
+          <div className="px-4 pb-3 flex items-center gap-3">
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-3 w-12" />
+          </div>
+          <div className="px-3 py-2.5 border-t border-border-subtle/50">
+            <Skeleton className="h-7 w-full rounded-lg" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Hand card (grid item) ───────────────────────────────── */
+
+const HandCard = React.memo(function HandCard({
+  hand,
+  instance,
+  isActive,
+  metrics,
+  onActivate,
+  onDeactivate,
+  onDetail,
+  onChat,
+  isPending,
+}: {
+  hand: HandDefinitionItem;
+  instance: HandInstanceItem | undefined;
+  isActive: boolean;
+  metrics?: Record<string, { value?: unknown; format?: string }>;
+  onActivate: (id: string) => void;
+  onDeactivate: (id: string) => void;
+  onDetail: (hand: HandDefinitionItem) => void;
+  onChat: (instanceId: string, handName: string) => void;
+  isPending: boolean;
+}) {
+  const { t } = useTranslation();
+  const isPaused = instance?.status === "paused";
+  const isDegraded = isActive && !isPaused && hand.degraded === true;
+  const blocked = !isActive && !hand.requirements_met;
+
+  // State-driven styling: color-coded border, background, and icon tint.
+  // Degraded promotes to warning tint even though the hand is technically running.
+  const stateClasses = isActive
+    ? isPaused || isDegraded
+      ? "border-warning/40 bg-warning/[0.04] hover:border-warning/60 hover:shadow-sm"
+      : "border-success/40 bg-success/[0.04] hover:border-success/60 hover:shadow-sm"
+    : blocked
+      ? "border-border-subtle bg-surface opacity-80 hover:border-warning/30"
+      : "border-border-subtle bg-surface hover:border-brand/40 hover:shadow-md";
+
+  const iconClasses = isActive
+    ? isPaused || isDegraded
+      ? "bg-warning/15 text-warning"
+      : "bg-success/15 text-success"
+    : blocked
+      ? "bg-warning/10 text-warning/70"
+      : "bg-brand/10 text-brand";
+
+  return (
+    <div
+      className={`group relative flex flex-col rounded-2xl border transition-all cursor-pointer ${stateClasses}`}
+      onClick={() => onDetail(hand)}
+      role="button"
+      aria-label={hand.name || hand.id}
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onDetail(hand); } }}
+    >
+      {/* Header: icon + name + status */}
+      <div className="flex items-start gap-3 p-4 pb-3">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${iconClasses}`}>
+          <Hand className="w-4 h-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-extrabold truncate">{hand.name || hand.id}</h3>
+            {isActive && !isPaused && !isDegraded && (
+              <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse shrink-0" aria-label="running" />
+            )}
+            {isActive && isDegraded && (
+              <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse shrink-0" aria-label="degraded" />
+            )}
+            {isActive && isPaused && (
+              <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" aria-label="paused" />
+            )}
+          </div>
+          {hand.category && (
+            <span className="text-[10px] uppercase tracking-wider font-bold text-text-dim/50 mt-0.5 inline-block">
+              {t(`hands.cat_${hand.category}`, { defaultValue: hand.category })}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Description */}
+      <div className="px-4 pb-3 min-h-[40px]">
+        {hand.description ? (
+          <p className="text-xs text-text-dim/80 leading-relaxed line-clamp-2">{hand.description}</p>
+        ) : (
+          <p className="text-xs text-text-dim/30 italic">{t("hands.subtitle")}</p>
+        )}
+      </div>
+
+      {/* Active: degraded hint + live metrics  |  Inactive: tools + status badges */}
+      <div className="px-4 pb-3">
+        {isActive && metrics && Object.keys(metrics).length > 0 ? (
+          <>
+            {isDegraded && (
+              <div className="flex items-center gap-1 text-[10px] font-bold text-warning mb-1.5">
+                <AlertCircle className="w-3 h-3" />
+                {t("hands.degraded")}
+              </div>
+            )}
+            <HandMetricsInline metrics={metrics} />
+          </>
+        ) : (
+          <div className="flex items-center gap-3 text-[10px] text-text-dim/60 font-medium">
+            {hand.tools && hand.tools.length > 0 && (
+              <span className="flex items-center gap-1">
+                <Wrench className="w-3 h-3" />
+                {hand.tools.length} {t("hands.tools").toLowerCase()}
+              </span>
+            )}
+            {isDegraded && (
+              <span className="flex items-center gap-1 text-warning">
+                <AlertCircle className="w-3 h-3" />
+                {t("hands.degraded")}
+              </span>
+            )}
+            {blocked && (
+              <span className="flex items-center gap-1 text-warning">
+                <AlertCircle className="w-3 h-3" />
+                {t("hands.missing_req")}
+              </span>
+            )}
+            {!blocked && !isActive && hand.requirements_met && (
+              <span className="flex items-center gap-1 text-success/70">
+                <CheckCircle2 className="w-3 h-3" />
+                {t("hands.ready")}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Actions — always visible */}
+      <div
+        className="flex items-center gap-1.5 px-3 py-2.5 border-t border-border-subtle/50"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {isActive && instance ? (
+          <>
+            {!isPaused && (
+              <button
+                onClick={() => onChat(instance.instance_id, hand.name || hand.id)}
+                className="flex-1 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-brand bg-brand/10 hover:bg-brand/20 transition-colors"
+              >
+                <MessageCircle className="w-3.5 h-3.5" />
+                {t("chat.title")}
+              </button>
+            )}
+            <button
+              onClick={() => onDeactivate(instance.instance_id)}
+              disabled={isPending}
+              className="flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold text-text-dim hover:text-error hover:bg-error/10 transition-colors disabled:opacity-40"
+              title={t("hands.deactivate")}
+            >
+              {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PowerOff className="w-3.5 h-3.5" />}
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => onActivate(hand.id)}
+            disabled={isPending || blocked}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors ${
+              blocked
+                ? "text-text-dim/40 bg-main/50 cursor-not-allowed"
+                : "text-brand bg-brand/10 hover:bg-brand/20"
+            } disabled:opacity-40`}
+            title={blocked ? t("hands.missing_req") : t("hands.activate")}
+          >
+            {isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
+            {t("hands.activate")}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+});
+
+/* ── Main page ────────────────────────────────────────────── */
+
+/** Codeberg base URL stored in `registry.registry_host` when that source is picked. */
+const CODEBERG_HOST = "https://codeberg.org";
+
+function RegistrySourceSelector() {
+  const { t } = useTranslation();
+  const addToast = useUIStore((s) => s.addToast);
+  const configQuery = useFullConfig();
+  const setConfig = useSetConfigValue({
+    onSuccess: (res) => {
+      // The value persisted, but a failed live reload means the change is
+      // NOT in effect yet — surface that as an error, mirroring ConfigPage,
+      // rather than a misleading success toast.
+      if (res.reload_error) {
+        addToast(res.reload_error, "error");
+        return;
+      }
+      addToast(
+        res.restart_required
+          ? t("hands.registry_source_updated_restart")
+          : t("hands.registry_source_updated"),
+        "success",
+      );
+    },
+    onError: (err) => addToast(err.message, "error"),
+  });
+
+  const registry = (configQuery.data as
+    | { registry?: { registry_host?: string | null } }
+    | undefined)?.registry;
+  const host = (registry?.registry_host ?? "").trim();
+  // Normalize for comparison: strip trailing slashes and lowercase, matching how
+  // registry_sync treats the host (it folds an unset or github.com host to the
+  // GitHub default and trims trailing slashes). An unset host or an explicit
+  // github.com both mean GitHub; codeberg.org (any case / trailing slash) means
+  // Codeberg; anything else is a custom forge.
+  const normalized = host.replace(/\/+$/, "").toLowerCase();
+  const current: "github" | "codeberg" | "custom" =
+    normalized === "" || normalized === "https://github.com"
+      ? "github"
+      : normalized === CODEBERG_HOST
+        ? "codeberg"
+        : "custom";
+
+  const options = [
+    { value: "github", label: t("hands.registry_source_github") },
+    { value: "codeberg", label: t("hands.registry_source_codeberg") },
+    // Custom host shown (enabled — a disabled <option> can't be a controlled select's value); re-selecting it is a no-op.
+    ...(current === "custom"
+      ? [{ value: "custom", label: t("hands.registry_source_custom", { host }) }]
+      : []),
+  ];
+
+  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const next = e.target.value;
+    if (next === current || next === "custom") return;
+    setConfig.mutate({
+      path: "registry.registry_host",
+      value: next === "codeberg" ? CODEBERG_HOST : null,
+    });
+  };
+
+  // Disable while the config is loading/refetching, errored, or a write is in
+  // flight. Including isFetching covers the post-write invalidation window so
+  // the controlled <select> cannot snap back to the stale value before the
+  // refetch resolves; isError prevents a stray click from overwriting the real
+  // config with `null` when we could not read the current value.
+  const busy =
+    configQuery.isLoading ||
+    configQuery.isFetching ||
+    configQuery.isError ||
+    setConfig.isPending;
+
+  return (
+    <div className="flex items-center gap-2">
+      <GitBranch className="h-3.5 w-3.5 text-text-dim" aria-hidden />
+      <label
+        htmlFor="hands-registry-source"
+        className="text-[11px] font-bold uppercase tracking-wider text-text-dim"
+      >
+        {t("hands.registry_source")}
+      </label>
+      <select
+        id="hands-registry-source"
+        value={current}
+        onChange={handleChange}
+        disabled={busy}
+        title={t("hands.registry_source_desc")}
+        className="rounded-lg border border-border-subtle bg-surface px-2.5 py-1.5 text-xs font-semibold text-text-main focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {setConfig.isPending && (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-text-dim" aria-hidden />
+      )}
+    </div>
+  );
+}
+
+export function HandsPage() {
+  const { t } = useTranslation();
+  const addToast = useUIStore((s) => s.addToast);
+  const [pendingHandId, setPendingHandId] = useState<string | null>(null);
+  const [pendingInstanceId, setPendingInstanceId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [detailHand, setDetailHand] = useState<HandDefinitionItem | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    tone?: "destructive";
+  } | null>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    router.preloadRoute({ to: "/chat", search: { agentId: undefined } }).catch(() => {});
+  }, []);
+
+  const handsQuery = useHands();
+  const activeQuery = useActiveHands();
+  const activateMutation = useActivateHand();
+  const deactivateMutation = useDeactivateHand();
+  const pauseMutation = usePauseHand();
+  const resumeMutation = useResumeHand();
+  const uninstallMutation = useUninstallHand();
+
+  const hands = handsQuery.data ?? [];
+  const instances = activeQuery.data ?? [];
+
+  const handleChat = useCallback((instanceId: string, handName?: string) => {
+    const inst = instances.find((i) => i.instance_id === instanceId);
+    navigate({ to: "/chat", search: { agentId: inst?.agent_id || instanceId, handName } });
+  }, [instances, navigate]);
+
+  const activeInstanceIds = useMemo(() => instances.map(i => i.instance_id).filter(Boolean), [instances]);
+  const allStatsQuery = useHandStatsBatch(activeInstanceIds);
+  const statsByInstance = allStatsQuery.data ?? {};
+
+  const activeHandIds = useMemo(
+    () => new Set(instances.map((i) => i.hand_id).filter(Boolean)),
+    [instances],
+  );
+
+  const instanceByHandId = useMemo(() => {
+    const map = new Map<string, HandInstanceItem>();
+    for (const i of instances) {
+      if (i.hand_id) map.set(i.hand_id, i);
+    }
+    return map;
+  }, [instances]);
+
+  // Extract unique categories
+  const categories = useMemo(() => {
+    const cats = new Set<string>();
+    for (const h of hands) {
+      if (h.category) cats.add(h.category);
+    }
+    return Array.from(cats).sort();
+  }, [hands]);
+
+  // Memoized category counts
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const h of hands) {
+      if (h.category) counts[h.category] = (counts[h.category] ?? 0) + 1;
+    }
+    return counts;
+  }, [hands]);
+
+  // Active hands paired with their definitions — used by the running strip
+  const handById = useMemo(() => {
+    const map = new Map<string, HandDefinitionItem>();
+    for (const h of hands) {
+      map.set(h.id, h);
+    }
+    return map;
+  }, [hands]);
+
+  const activeHandPairs = useMemo(
+    () =>
+      instances
+        .map((inst) => ({
+          instance: inst,
+          hand: handById.get(inst.hand_id ?? ""),
+        }))
+        .filter((x): x is { instance: HandInstanceItem; hand: HandDefinitionItem } => x.hand != null),
+    [instances, handById],
+  );
+
+  // Filtered hands for the catalog grid — all hands pass, active sort first
+  const filtered = useMemo(() => {
+    return hands
+      .filter((h) => {
+        if (selectedCategory !== "all" && h.category !== selectedCategory) return false;
+        if (search) {
+          const q = search.toLowerCase();
+          return (
+            (h.name || "").toLowerCase().includes(q) ||
+            (h.id || "").toLowerCase().includes(q) ||
+            (h.description || "").toLowerCase().includes(q)
+          );
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const aActive = activeHandIds.has(a.id) ? 0 : 1;
+        const bActive = activeHandIds.has(b.id) ? 0 : 1;
+        if (aActive !== bActive) return aActive - bActive;
+        return (a.name || a.id).localeCompare(b.name || b.id);
+      });
+  }, [hands, search, selectedCategory, activeHandIds]);
+
+  async function handleActivate(id: string) {
+    setPendingHandId(id);
+    try {
+      await activateMutation.mutateAsync(id);
+      addToast(t("common.success"), "success");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : t("common.error");
+      addToast(msg, "error");
+    } finally {
+      setPendingHandId(null);
+    }
+  }
+
+  async function handleDeactivate(id: string) {
+    setPendingInstanceId(id);
+    try {
+      await deactivateMutation.mutateAsync(id);
+      addToast(t("common.success"), "success");
+      setDetailHand(null);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : t("common.error");
+      addToast(msg, "error");
+    } finally {
+      setPendingInstanceId(null);
+    }
+  }
+
+  function handleUninstall(handId: string) {
+    setConfirmDialog({
+      title: t("hands.uninstall", { defaultValue: "Uninstall" }),
+      message: t("hands.uninstall_confirm", {
+        defaultValue: "Uninstall this hand? Its HAND.toml and workspace files will be deleted. This cannot be undone.",
+      }),
+      tone: "destructive",
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        setPendingHandId(handId);
+        try {
+          await uninstallMutation.mutateAsync(handId);
+          addToast(t("common.success"), "success");
+          setDetailHand(null);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : t("common.error");
+          addToast(msg, "error");
+        } finally {
+          setPendingHandId(null);
+        }
+      },
+    });
+  }
+
+  async function handlePause(id: string) {
+    setPendingInstanceId(id);
+    try {
+      await pauseMutation.mutateAsync(id);
+      addToast(t("common.success"), "success");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : t("common.error");
+      addToast(msg, "error");
+    } finally {
+      setPendingInstanceId(null);
+    }
+  }
+
+  async function handleResume(id: string) {
+    setPendingInstanceId(id);
+    try {
+      await resumeMutation.mutateAsync(id);
+      addToast(t("common.success"), "success");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : t("common.error");
+      addToast(msg, "error");
+    } finally {
+      setPendingInstanceId(null);
+    }
+  }
+
+  const activeCount = activeHandIds.size;
+
+  // Always read the latest hand data from the query cache so the modal
+  // reflects changes (e.g. requirement satisfaction) after saving secrets.
+  const detailHandLatest = detailHand
+    ? hands.find((h) => h.id === detailHand.id) ?? detailHand
+    : null;
+  const detailInstance = detailHandLatest
+    ? instances.find((i) => i.hand_id === detailHandLatest.id)
+    : undefined;
+  const detailIsActive = detailHandLatest ? activeHandIds.has(detailHandLatest.id) : false;
+
+  return (
+    <div className="flex flex-col gap-5 transition-colors duration-300">
+      <PageHeader
+        badge={t("hands.orchestration")}
+        title={t("hands.title")}
+        subtitle={t("hands.subtitle")}
+        isFetching={handsQuery.isFetching}
+        onRefresh={() => {
+          handsQuery.refetch();
+          activeQuery.refetch();
+        }}
+        icon={<Hand className="h-4 w-4" />}
+        helpText={t("hands.help")}
+        actions={
+          <div className="flex items-center gap-3">
+            <RegistrySourceSelector />
+            <Badge variant="success" dot>
+              {activeCount} {t("hands.active_label")}
+            </Badge>
+            <Badge variant="default">
+              {hands.length} {t("hands.total_label")}
+            </Badge>
+          </div>
+        }
+      />
+
+      {/* Running strip — active hands with live metrics, visible actions */}
+      {activeHandPairs.length > 0 && (
+        <section className="flex flex-col gap-2.5">
+          <div className="flex items-center gap-2 px-1">
+            <div className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+              <h2 className="text-[11px] font-extrabold uppercase tracking-wider text-text-dim/80">
+                {t("hands.running_now")}
+              </h2>
+            </div>
+            <span className="text-[11px] text-text-dim/40">·</span>
+            <span className="text-[11px] font-bold text-text-dim/60">{activeHandPairs.length}</span>
+          </div>
+          <div className="flex gap-2.5 overflow-x-auto scrollbar-thin pb-1 -mx-1 px-1">
+            {activeHandPairs.map(({ hand, instance }) => (
+              <ActiveHandChip
+                key={instance.instance_id}
+                hand={hand}
+                instance={instance}
+                metrics={statsByInstance[instance.instance_id]?.metrics}
+                onChat={handleChat}
+                onDeactivate={handleDeactivate}
+                onDetail={setDetailHand}
+                isPending={pendingInstanceId === instance.instance_id}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Search + category filter */}
+      {hands.length > 0 && (
+        <div className="flex flex-col gap-2.5">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t("hands.search_placeholder")}
+            leftIcon={<Search className="h-4 w-4" />}
+          />
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin">
+            <button
+              onClick={() => setSelectedCategory("all")}
+              className={`px-3 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors ${
+                selectedCategory === "all"
+                  ? "bg-brand/15 text-brand border border-brand/30"
+                  : "text-text-dim/70 hover:text-text hover:bg-main border border-transparent"
+              }`}
+            >
+              {t("providers.filter_all")}
+              <span className="ml-1 opacity-50">({hands.length})</span>
+            </button>
+            {categories.map((cat) => {
+              const count = categoryCounts[cat] ?? 0;
+              return (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedCategory(selectedCategory === cat ? "all" : cat)}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition-colors ${
+                    selectedCategory === cat
+                      ? "bg-brand/15 text-brand border border-brand/30"
+                      : "text-text-dim/70 hover:text-text hover:bg-main border border-transparent"
+                  }`}
+                >
+                  {t(`hands.cat_${cat}`, { defaultValue: cat })}
+                  <span className="ml-1 opacity-50">({count})</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* All hands grid */}
+      {handsQuery.isLoading ? (
+        <HandCardGridSkeleton />
+      ) : hands.length === 0 ? (
+        <EmptyState
+          icon={<Hand className="w-7 h-7" />}
+          title={t("common.no_data")}
+          description={t("hands.subtitle")}
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon={<Search className="w-7 h-7" />}
+          title={t("agents.no_matching")}
+          description={t("hands.no_matching_hint")}
+          action={
+            (search || selectedCategory !== "all") && (
+              <button
+                onClick={() => { setSearch(""); setSelectedCategory("all"); }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-brand bg-brand/10 hover:bg-brand/20 transition-colors"
+              >
+                {t("hands.clear_filters")}
+              </button>
+            )
+          }
+        />
+      ) : (
+        <StaggerList className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 3xl:grid-cols-6">
+          {filtered.map((h) => {
+            const isActive = activeHandIds.has(h.id);
+            const instance = instanceByHandId.get(h.id);
+            return (
+              <HandCard
+                key={h.id}
+                hand={h}
+                instance={instance}
+                isActive={isActive}
+                metrics={instance ? statsByInstance[instance.instance_id]?.metrics : undefined}
+                onActivate={handleActivate}
+                onDeactivate={(id) => handleDeactivate(id)}
+                onDetail={setDetailHand}
+                onChat={handleChat}
+                isPending={pendingHandId === h.id || (instance ? pendingInstanceId === instance.instance_id : false)}
+              />
+            );
+          })}
+        </StaggerList>
+      )}
+
+      {/* Detail side panel */}
+      {detailHandLatest && (
+        <HandDetailPanel
+          key={detailHandLatest.id}
+          hand={detailHandLatest}
+          instance={detailInstance}
+          isActive={detailIsActive}
+          onClose={() => setDetailHand(null)}
+          onActivate={handleActivate}
+          onDeactivate={handleDeactivate}
+          onPause={handlePause}
+          onResume={handleResume}
+          onChat={handleChat}
+          onUninstall={handleUninstall}
+          isPending={pendingHandId === detailHandLatest.id || (!!detailInstance && pendingInstanceId === detailInstance.instance_id)}
+        />
+      )}
+
+      <ConfirmDialog
+        isOpen={confirmDialog !== null}
+        title={confirmDialog?.title ?? ""}
+        message={confirmDialog?.message ?? ""}
+        tone={confirmDialog?.tone}
+        onConfirm={() => confirmDialog?.onConfirm()}
+        onClose={() => setConfirmDialog(null)}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,2017 @@
+import { useMutation } from "@tanstack/react-query";
+import { formatTime, formatDateTime } from "../lib/datetime";
+import { formatCompact } from "../lib/format";
+import { memo, useId, useMemo, useState, useCallback, useEffect, useReducer } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import type { ApiActionResponse, ProviderItem } from "../api";
+import { isProviderAvailable } from "../lib/status";
+import { useCredentialPools, useProviders, useProviderStatus } from "../lib/queries/providers";
+import type { CredentialPoolStatus, CredentialPoolKeySnapshot } from "../api";
+import { useModels, useModelOverrides } from "../lib/queries/models";
+import { useUpdateModelOverrides } from "../lib/mutations/models";
+import { useTestProvider, useSetProviderKey, useDeleteProviderKey, useEnableProvider, useSetProviderUrl, useSetDefaultProvider, useCreateRegistryContent } from "../lib/mutations/providers";
+import { PageHeader } from "../components/ui/PageHeader";
+import { CardSkeleton } from "../components/ui/Skeleton";
+import { EmptyState } from "../components/ui/EmptyState";
+import { Card } from "../components/ui/Card";
+import { Button } from "../components/ui/Button";
+import { Badge, type BadgeVariant } from "../components/ui/Badge";
+import { Input } from "../components/ui/Input";
+import { Select } from "../components/ui/Select";
+import { Modal } from "../components/ui/Modal";
+import { DrawerPanel } from "../components/ui/DrawerPanel";
+import { useUIStore } from "../lib/store";
+import { useCreateShortcut } from "../lib/useCreateShortcut";
+import {
+  Server, Zap, Clock, Key, Globe, CheckCircle2, XCircle, Loader2, AlertCircle, Search,
+  SortAsc, SortDesc, CheckSquare, Square, ChevronRight, X, Grid3X3, List, Filter,
+  Activity, Cpu, Cloud, Bot, Globe2, Sparkles, Plus, Star, Pencil, Trash2,
+  Check, ChevronLeft, RotateCcw, Gauge
+} from "lucide-react";
+
+function getErrorMessage(e: unknown): string | null {
+  if (e instanceof Error) {
+    return e.message.trim() || null;
+  }
+
+  if (typeof e === "string") {
+    return e.trim() || null;
+  }
+
+  return null;
+}
+
+function getActionResultError(result: ApiActionResponse & { error_message?: string }, fallback: string): string {
+  return String(result.error_message || result.error || fallback);
+}
+
+const providerIcons: Record<string, React.ReactNode> = {
+  openai: <Sparkles className="w-5 h-5" />,
+  anthropic: <Cpu className="w-5 h-5" />,
+  google: <Globe2 className="w-5 h-5" />,
+  azure: <Cloud className="w-5 h-5" />,
+  aws: <Cloud className="w-5 h-5" />,
+  ollama: <Cpu className="w-5 h-5" />,
+  groq: <Sparkles className="w-5 h-5" />,
+  deepseek: <Bot className="w-5 h-5" />,
+  mistral: <Cpu className="w-5 h-5" />,
+  cohere: <Cpu className="w-5 h-5" />,
+  fireworks: <Sparkles className="w-5 h-5" />,
+  voyage: <Bot className="w-5 h-5" />,
+  together: <Globe className="w-5 h-5" />,
+};
+
+function getProviderIcon(id: string): React.ReactNode {
+  const key = id.toLowerCase().split("-")[0];
+  return providerIcons[key] || <Cpu className="w-5 h-5" />;
+}
+
+function isCliProvider(provider: Pick<ProviderItem, "auth_status" | "base_url" | "key_required">): boolean {
+  return provider.auth_status === "configured_cli" || provider.auth_status === "cli_not_installed" || (!provider.base_url && !provider.key_required);
+}
+
+function getLatencyColor(ms?: number) {
+  if (ms == null) return "text-text-dim";
+  if (ms < 200) return "text-success";
+  if (ms < 500) return "text-warning";
+  return "text-error";
+}
+
+function getAuthBadge(status?: string): { variant: BadgeVariant; label: string } {
+  switch (status) {
+    case "configured":
+    case "validated_key":
+      return { variant: "success", label: "KEY" };
+    case "configured_cli":
+      return { variant: "default", label: "CLI" };
+    case "auto_detected":
+      return { variant: "warning", label: "AUTO" };
+    case "not_required":
+      return { variant: "success", label: "LOCAL" };
+    case "invalid_key":
+      return { variant: "error", label: "INVALID" };
+    case "cli_not_installed":
+      return { variant: "error", label: "CLI N/A" };
+    case "missing":
+    default:
+      return { variant: "warning", label: "SETUP" };
+  }
+}
+
+type SortField = "name" | "models" | "latency";
+type SortOrder = "asc" | "desc";
+type ViewMode = "grid" | "list";
+type FilterStatus = "all" | "reachable" | "unreachable";
+
+// ── SetDefaultModelSection — model picker + "set as default" in config modal ──
+
+function SetDefaultModelSection({ providerId, currentDefault, onSetDefault }: {
+  providerId: string;
+  currentDefault?: string;
+  onSetDefault: (id: string, model?: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [selectedModel, setSelectedModel] = useState("");
+  const [setting, setSetting] = useState(false);
+  const isDefault = currentDefault === providerId;
+
+  const modelsQuery = useModels({ provider: providerId, available: true });
+
+  const models = modelsQuery.data?.models || [];
+
+  const handleSetDefault = async () => {
+    setSetting(true);
+    try {
+      await onSetDefault(providerId, selectedModel || undefined);
+    } finally {
+      setSetting(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-border-subtle pt-3 mt-1 space-y-2">
+      <label className="text-[10px] font-bold text-text-dim uppercase">{t("providers.set_as_default")}</label>
+      {modelsQuery.isLoading ? (
+        <div className="w-full h-10 rounded-xl bg-bg-subtle animate-pulse" />
+      ) : models.length > 0 ? (
+        <select
+          value={selectedModel}
+          onChange={e => setSelectedModel(e.target.value)}
+          className="w-full rounded-xl border border-border-subtle bg-main px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/20"
+        >
+          <option value="">{t("providers.auto_select_model")}</option>
+          {models.map(m => (
+            <option key={m.id} value={m.id}>{m.display_name || m.id}</option>
+          ))}
+        </select>
+      ) : (
+        <input
+          type="text"
+          value={selectedModel}
+          onChange={e => setSelectedModel(e.target.value)}
+          placeholder={t("providers.model_name_placeholder")}
+          className="w-full rounded-xl border border-border-subtle bg-main px-3 py-2 text-sm font-mono outline-none focus:border-brand focus:ring-1 focus:ring-brand/20"
+        />
+      )}
+      <Button
+        variant={isDefault ? "ghost" : "secondary"}
+        className="w-full"
+        onClick={handleSetDefault}
+        disabled={setting || isDefault}
+      >
+        {setting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Star className="w-4 h-4 mr-1" />}
+        {isDefault ? t("providers.is_default") : t("providers.set_as_default")}
+      </Button>
+    </div>
+  );
+}
+
+// Uses max_tokens override (not context_window): context_window has no persistence path in ModelOverrides and is overwritten on registry sync.
+function ProviderMaxTokensSection({ providerId, addToast }: {
+  providerId: string;
+  addToast: (msg: string, type?: "success" | "error" | "info") => void;
+}) {
+  const { t } = useTranslation();
+  const modelsQuery = useModels({ provider: providerId });
+  const models = useMemo(() => modelsQuery.data?.models ?? [], [modelsQuery.data]);
+
+  const [selectedModelId, setSelectedModelId] = useState("");
+  // Default the editor to the provider's representative (first) model so the
+  // field aligns with the card's headline value without an extra click.
+  useEffect(() => {
+    if (!selectedModelId && models.length > 0) {
+      setSelectedModelId(models[0].id);
+    }
+  }, [models, selectedModelId]);
+
+  const selectedModel = models.find(m => m.id === selectedModelId);
+  const overrideKey = selectedModelId ? `${providerId}:${selectedModelId}` : "";
+  const overridesQuery = useModelOverrides(overrideKey);
+  const updateOverrides = useUpdateModelOverrides();
+
+  // The effective value: an explicit `max_tokens` override wins, else the
+  // model's catalog `max_output_tokens`. Mirrors the backend resolution.
+  const overrideMax = overridesQuery.data?.max_tokens;
+  const catalogMax = selectedModel?.max_output_tokens;
+  const effectiveMax = overrideMax ?? catalogMax;
+
+  // Local input state, seeded from the effective value once it resolves and
+  // re-seeded when the user switches models.
+  const [input, setInput] = useState("");
+  const [seededFor, setSeededFor] = useState("");
+  useEffect(() => {
+    if (overrideKey && overrideKey !== seededFor && !overridesQuery.isLoading) {
+      setInput(effectiveMax != null ? String(effectiveMax) : "");
+      setSeededFor(overrideKey);
+    }
+  }, [overrideKey, seededFor, overridesQuery.isLoading, effectiveMax]);
+
+  const [saving, setSaving] = useState(false);
+
+  const parsed = input.trim() === "" ? null : Number(input);
+  const invalid = parsed != null && (!Number.isInteger(parsed) || parsed <= 0);
+  // The override the value would resolve to once saved: an explicit number
+  // that already equals the catalog default needs no override row, so treat
+  // it as "clear". A blank input also clears.
+  const targetOverride = parsed != null && parsed !== catalogMax ? parsed : null;
+  const dirty = targetOverride !== (overrideMax ?? null);
+
+  const handleSave = async () => {
+    if (!overrideKey || invalid) return;
+    setSaving(true);
+    try {
+      if (targetOverride == null) {
+        // Reverts to the catalog default → drop any existing override.
+        if (overrideMax != null) {
+          const next = { ...overridesQuery.data };
+          delete next.max_tokens;
+          await updateOverrides.mutateAsync({ modelKey: overrideKey, overrides: next });
+        }
+      } else {
+        await updateOverrides.mutateAsync({
+          modelKey: overrideKey,
+          overrides: { ...overridesQuery.data, max_tokens: targetOverride },
+        });
+      }
+      addToast(t("providers.max_tokens_saved"), "success");
+    } catch (e: unknown) {
+      addToast(getErrorMessage(e) || t("common.error"), "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="border-t border-border-subtle pt-3 mt-1 space-y-2">
+      <label className="text-[10px] font-bold text-text-dim uppercase">{t("providers.max_tokens")}</label>
+      {modelsQuery.isLoading ? (
+        <div className="w-full h-10 rounded-xl bg-bg-subtle animate-pulse" />
+      ) : models.length === 0 ? (
+        <p className="text-[10px] text-text-dim/60">{t("providers.no_models_for_provider")}</p>
+      ) : (
+        <>
+          {models.length > 1 && (
+            <select
+              value={selectedModelId}
+              onChange={e => { setSelectedModelId(e.target.value); setSeededFor(""); }}
+              className="w-full rounded-xl border border-border-subtle bg-main px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand/20"
+              aria-label={t("providers.max_tokens_model_label")}
+            >
+              {models.map(m => (
+                <option key={m.id} value={m.id}>{m.display_name || m.id}</option>
+              ))}
+            </select>
+          )}
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              placeholder={catalogMax != null ? String(catalogMax) : t("providers.max_tokens_placeholder")}
+              className={`flex-1 rounded-xl border bg-main px-3 py-2 text-sm font-mono outline-none focus:ring-1 ${invalid ? "border-error focus:border-error focus:ring-error/20" : "border-border-subtle focus:border-brand focus:ring-brand/20"}`}
+              aria-invalid={invalid || undefined}
+            />
+            <Button
+              variant="secondary"
+              onClick={handleSave}
+              disabled={saving || invalid || !dirty || !overrideKey}
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : t("common.save")}
+            </Button>
+          </div>
+          {invalid && (
+            <p className="text-[10px] text-error">{t("providers.max_tokens_invalid")}</p>
+          )}
+          <p className="text-[10px] text-text-dim/60 leading-snug">
+            {overrideMax != null
+              ? t("providers.max_tokens_hint_override", { value: catalogMax != null ? catalogMax.toLocaleString() : "-" })
+              : t("providers.max_tokens_hint_default")}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── useProviderConfig hook ────────────────────────────────────────
+
+interface ProviderConfigState {
+  provider: ProviderItem | null;
+  keyInput: string;
+  urlInput: string;
+  proxyInput: string;
+  hasStoredKey: boolean;
+  saving: boolean;
+  error: string | null;
+  testing: boolean;
+  testResult: { ok: boolean; message: string } | null;
+}
+
+function useProviderConfig(
+  testMutation: ReturnType<typeof useMutation<ApiActionResponse, unknown, string>>,
+  setKeyMutation: ReturnType<typeof useMutation<unknown, unknown, { id: string; key: string }>>,
+  deleteKeyMutation: ReturnType<typeof useMutation<unknown, unknown, string>>,
+  setUrlMutation: ReturnType<typeof useMutation<unknown, unknown, { id: string; baseUrl: string; proxyUrl?: string }>>,
+  addToast: (msg: string, type?: "success" | "error" | "info") => void,
+  t: TFunction,
+) {
+  const [state, setState] = useState<ProviderConfigState>({
+    provider: null, keyInput: "", urlInput: "", proxyInput: "", hasStoredKey: false,
+    saving: false, error: null, testing: false, testResult: null,
+  });
+
+  const open = useCallback((p: ProviderItem) => {
+    setState({
+      provider: p, keyInput: "", urlInput: p.base_url || "", proxyInput: p.proxy_url || "",
+      hasStoredKey: p.auth_status === "configured" || p.auth_status === "validated_key" || p.auth_status === "invalid_key" || p.auth_status === "auto_detected",
+      saving: false, error: null, testing: false, testResult: null,
+    });
+  }, []);
+
+  const close = useCallback(() => setState(s => ({ ...s, provider: null })), []);
+
+  const setKeyInput = useCallback((v: string) => setState(s => ({ ...s, keyInput: v })), []);
+  const setUrlInput = useCallback((v: string) => setState(s => ({ ...s, urlInput: v })), []);
+  const setProxyInput = useCallback((v: string) => setState(s => ({ ...s, proxyInput: v })), []);
+
+  const saveKey = useCallback(async () => {
+    if (!state.provider) return;
+    setState(s => ({ ...s, saving: true, error: null }));
+    try {
+      const urlChanged = state.urlInput.trim() && state.urlInput !== state.provider.base_url;
+      const proxyChanged = state.proxyInput !== (state.provider.proxy_url || "");
+      if (urlChanged || proxyChanged) {
+        await setUrlMutation.mutateAsync({
+          id: state.provider.id,
+          baseUrl: state.urlInput.trim() || state.provider.base_url || "",
+          proxyUrl: proxyChanged ? state.proxyInput.trim() : undefined,
+        });
+      }
+      if (state.keyInput.trim()) {
+        await setKeyMutation.mutateAsync({
+          id: state.provider.id,
+          key: state.keyInput.trim(),
+        });
+      }
+      setState(s => ({ ...s, provider: null }));
+      addToast(t("providers.key_saved"), "success");
+    } catch (e: unknown) {
+      setState(s => ({ ...s, error: getErrorMessage(e) }));
+    } finally {
+      setState(s => ({ ...s, saving: false }));
+    }
+  }, [state.provider, state.keyInput, state.urlInput, state.proxyInput, setKeyMutation, setUrlMutation, addToast, t]);
+
+  const removeKey = useCallback(async () => {
+    if (!state.provider) return;
+    setState(s => ({ ...s, saving: true }));
+    try {
+      await deleteKeyMutation.mutateAsync(state.provider.id);
+      setState(s => ({ ...s, provider: null, hasStoredKey: false }));
+      addToast(t("providers.key_removed"), "success");
+    } catch (e: unknown) {
+      setState(s => ({ ...s, error: getErrorMessage(e) }));
+    } finally {
+      setState(s => ({ ...s, saving: false }));
+    }
+  }, [state.provider, deleteKeyMutation, addToast, t]);
+
+  const testKey = useCallback(async () => {
+    if (!state.provider) return;
+    setState(s => ({ ...s, testing: true, testResult: null }));
+    try {
+      if (state.keyInput.trim()) {
+        await setKeyMutation.mutateAsync({
+          id: state.provider.id,
+          key: state.keyInput.trim(),
+        });
+        setState(s => ({ ...s, hasStoredKey: true, keyInput: "" }));
+      }
+      const urlChanged = state.urlInput.trim() && state.urlInput !== state.provider.base_url;
+      const proxyChanged = state.proxyInput !== (state.provider.proxy_url || "");
+      if (urlChanged || proxyChanged) {
+        await setUrlMutation.mutateAsync({
+          id: state.provider.id,
+          baseUrl: state.urlInput.trim() || state.provider.base_url || "",
+          proxyUrl: proxyChanged ? state.proxyInput.trim() : undefined,
+        });
+      }
+      const result = await testMutation.mutateAsync(state.provider.id);
+      if (result.status === "error") {
+        setState(s => ({ ...s, testResult: { ok: false, message: getActionResultError(result, t("providers.unreachable")) } }));
+      } else {
+        setState(s => ({ ...s, testResult: { ok: true, message: t("providers.reachable") } }));
+      }
+    } catch (e: unknown) {
+      setState(s => ({ ...s, testResult: { ok: false, message: getErrorMessage(e) || t("common.error") } }));
+    } finally {
+      setState(s => ({ ...s, testing: false }));
+    }
+  }, [state.provider, state.keyInput, state.urlInput, state.proxyInput, testMutation, setKeyMutation, setUrlMutation, t]);
+
+  return { ...state, open, close, setKeyInput, setUrlInput, setProxyInput, saveKey, removeKey, testKey };
+}
+
+// ── ProviderCard ─────────────────────────────────────────────────
+
+interface ProviderCardProps {
+  provider: ProviderItem;
+  isSelected: boolean;
+  isDefault: boolean;
+  pendingId: string | null;
+  viewMode: ViewMode;
+  onSelect: (id: string, checked: boolean) => void;
+  onTest: (id: string) => void;
+  onSetDefault: (id: string) => void;
+  onViewDetails: (provider: ProviderItem) => void;
+  onConfigure: (provider: ProviderItem) => void;
+  onDelete: (provider: ProviderItem) => void;
+}
+
+const ProviderCard = memo(function ProviderCard({ provider: p, isSelected, isDefault, pendingId, viewMode, onSelect, onTest, onSetDefault, onViewDetails, onConfigure, onDelete }: ProviderCardProps) {
+  const { t } = useTranslation();
+  const isConfigured = isProviderAvailable(p.auth_status);
+  const isCli = isCliProvider(p);
+
+  if (viewMode === "list") {
+    return (
+      <Card hover padding="sm" onClick={() => onViewDetails(p)} className={`flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 group transition-all ${isSelected ? "ring-2 ring-brand" : ""}`}>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <button
+            onClick={(e) => { e.stopPropagation(); onSelect(p.id, !isSelected); }}
+            className="shrink-0 text-text-dim hover:text-brand transition-colors"
+          >
+            {isSelected ? <CheckSquare className="w-5 h-5 text-brand" /> : <Square className="w-5 h-5" />}
+          </button>
+
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-lg shrink-0 ${isConfigured ? "bg-success/10 border border-success/20" : "bg-brand/10 border border-brand/20"}`}>
+            {getProviderIcon(p.id)}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-black truncate">{p.display_name || p.id}</h3>
+              {isCli && <Badge variant="default" className="shrink-0">CLI</Badge>}
+              {isConfigured ? (
+                <Badge variant={p.reachable === true ? "success" : p.reachable === false ? "error" : "default"} className="shrink-0">
+                  {p.reachable === true ? t("providers.online") : p.reachable === false ? t("providers.offline") : t("providers.not_checked")}
+                </Badge>
+              ) : (
+                <Badge variant="warning" className="shrink-0">{t("common.setup")}</Badge>
+              )}
+            </div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-text-dim/60 truncate">{p.id}</p>
+          </div>
+        </div>
+
+        <div className="hidden md:flex items-center gap-6 shrink-0">
+          <div className="text-center">
+            <p className="text-xs font-black">{p.model_count ?? 0}</p>
+            <p className="text-[8px] uppercase text-text-dim">{t("providers.models")}</p>
+          </div>
+          <div className="text-center">
+            <p className={`text-xs font-black ${getLatencyColor(p.latency_ms)}`}>{p.latency_ms != null ? `${p.latency_ms}ms` : "-"}</p>
+            <p className="text-[8px] uppercase text-text-dim">{t("providers.latency")}</p>
+          </div>
+          <div className="text-center" title={p.max_output_tokens != null ? p.max_output_tokens.toLocaleString() : undefined}>
+            <p className="text-xs font-black">{p.max_output_tokens != null ? formatCompact(p.max_output_tokens) : "-"}</p>
+            <p className="text-[8px] uppercase text-text-dim">{t("providers.max_tokens")}</p>
+          </div>
+          {p.last_tested && (
+            <div className="text-center w-20">
+              <p className="text-[10px] font-mono text-text-dim">{formatTime(p.last_tested)}</p>
+              <p className="text-[8px] uppercase text-text-dim">{t("providers.last_test")}</p>
+            </div>
+          )}
+          {p.media_capabilities && p.media_capabilities.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {p.media_capabilities.map((cap: string) => (
+                <Badge key={cap} variant="default" className="text-[8px] px-1 py-0">
+                  {cap.replace(/_/g, " ")}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto">
+          {isDefault && (
+            <Badge variant="brand" className="shrink-0">
+              <Star className="w-3 h-3 mr-1 inline" />{t("providers.is_default")}
+            </Badge>
+          )}
+          {isConfigured ? (
+            <>
+              {!isDefault && (
+                <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onSetDefault(p.id); }} leftIcon={<Star className="w-3 h-3" />}>
+                  <span className="hidden sm:inline">{t("providers.set_as_default")}</span>
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onConfigure(p); }} leftIcon={<Pencil className="w-3 h-3" />}>
+                <span className="hidden sm:inline">{t("common.edit")}</span>
+              </Button>
+              <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onDelete(p); }} leftIcon={<Trash2 className="w-3 h-3 text-error" />}>
+                <span className="hidden sm:inline text-error">{p.is_custom ? t("common.delete") : t("providers.remove_key")}</span>
+              </Button>
+              <Button
+                variant="secondary" size="sm"
+                onClick={(e) => { e.stopPropagation(); onTest(p.id); }}
+                disabled={pendingId === p.id}
+                leftIcon={pendingId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                className="whitespace-nowrap"
+              >
+                <span className="hidden sm:inline">{pendingId === p.id ? t("providers.analyzing") : t("providers.test")}</span>
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onConfigure(p); }} leftIcon={<Key className="w-3 h-3" />}>
+              <span className="hidden sm:inline">{t("providers.config")}</span>
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onViewDetails(p); }}>
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+
+  // Grid view
+  return (
+    <Card hover padding="none" onClick={() => onViewDetails(p)} className={`relative flex flex-col overflow-hidden group transition-all ${isSelected ? "ring-2 ring-brand" : ""}`}>
+      {isCli && (
+        <div className="absolute top-1.5 left-0 z-10 overflow-hidden w-20 h-20 pointer-events-none">
+          <div className="absolute top-[12px] left-[-18px] w-[90px] text-center text-[9px] font-black uppercase tracking-wider text-text-dim bg-surface/80 border-y border-border-subtle rotate-[-45deg] py-px">
+            CLI
+          </div>
+        </div>
+      )}
+      <div className={`relative z-20 h-1.5 bg-linear-to-r ${isConfigured ? "from-success via-success/60 to-success/30" : "from-brand via-brand/60 to-brand/30"}`} />
+      <div className="p-5 flex-1 flex flex-col">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={(e) => { e.stopPropagation(); onSelect(p.id, !isSelected); }}
+              className="shrink-0 text-text-dim hover:text-brand transition-colors"
+            >
+              {isSelected ? <CheckSquare className="w-5 h-5 text-brand" /> : <Square className="w-5 h-5" />}
+            </button>
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-xl shadow-sm ${isConfigured ? "bg-linear-to-br from-success/10 to-success/5 border border-success/20" : "bg-linear-to-br from-brand/10 to-brand/5 border border-brand/20"}`}>
+              {getProviderIcon(p.id)}
+            </div>
+            <div className="min-w-0">
+              <h2 className={`text-base font-black truncate transition-colors ${isConfigured ? "group-hover:text-success" : "group-hover:text-brand"}`}>{p.display_name || p.id}</h2>
+              <p className="text-[10px] font-black uppercase tracking-widest text-text-dim/60 truncate">{p.id}</p>
+            </div>
+          </div>
+          {isConfigured ? (
+            <Badge variant={p.reachable === true ? "success" : p.reachable === false ? "error" : "default"}>
+              {p.reachable === true ? t("providers.online") : p.reachable === false ? t("providers.offline") : t("providers.not_checked")}
+            </Badge>
+          ) : (
+            <Badge variant="warning">{t("common.setup")}</Badge>
+          )}
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="p-3 rounded-xl bg-linear-to-br from-main/60 to-main/30 border border-border-subtle/50">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Zap className={`w-3 h-3 ${isConfigured ? "text-success" : "text-brand"}`} />
+              <p className="text-[9px] font-black uppercase tracking-wider text-text-dim/70">{t("providers.models")}</p>
+            </div>
+            <p className="text-xl font-black text-text-main">{p.model_count ?? 0}</p>
+          </div>
+          <div className="p-3 rounded-xl bg-linear-to-br from-main/60 to-main/30 border border-border-subtle/50">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Clock className="w-3 h-3 text-warning" />
+              <p className="text-[9px] font-black uppercase tracking-wider text-text-dim/70">{t("providers.latency")}</p>
+            </div>
+            <p className={`text-xl font-black ${getLatencyColor(p.latency_ms)}`}>
+              {p.latency_ms != null ? `${p.latency_ms}ms` : "-"}
+            </p>
+          </div>
+          <div
+            className="p-3 rounded-xl bg-linear-to-br from-main/60 to-main/30 border border-border-subtle/50"
+            title={p.max_output_tokens != null ? p.max_output_tokens.toLocaleString() : undefined}
+          >
+            <div className="flex items-center gap-1.5 mb-1">
+              <Gauge className="w-3 h-3 text-brand" />
+              <p className="text-[9px] font-black uppercase tracking-wider text-text-dim/70">{t("providers.max_tokens")}</p>
+            </div>
+            <p className="text-xl font-black text-text-main">
+              {p.max_output_tokens != null ? formatCompact(p.max_output_tokens) : "-"}
+            </p>
+          </div>
+        </div>
+
+        {/* Media capabilities */}
+        {p.media_capabilities && p.media_capabilities.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-3">
+            {p.media_capabilities.map((cap: string) => (
+              <Badge key={cap} variant="default" className="text-[8px] px-1.5 py-0.5">
+                {cap.replace(/_/g, " ")}
+              </Badge>
+            ))}
+          </div>
+        )}
+
+        {/* Info */}
+        <div className="space-y-1.5 mb-4 flex-1">
+          {p.base_url && (
+            <div className="flex items-center gap-2 text-xs">
+              <Globe className="w-3 h-3 text-text-dim/50 shrink-0" />
+              <span className="text-text-dim truncate font-mono text-[10px]">{p.base_url}</span>
+            </div>
+          )}
+          {p.api_key_env && (
+            <div className="flex items-center gap-2 text-xs">
+              <Key className="w-3 h-3 text-text-dim/50 shrink-0" />
+              <span className="text-text-dim font-mono text-[10px]">{p.api_key_env}</span>
+            </div>
+          )}
+          <div className="flex items-center gap-2 text-xs">
+            {isConfigured ? (
+              p.reachable === true ? (
+                <>
+                  <CheckCircle2 className="w-3 h-3 text-success shrink-0" />
+                  <span className="text-success font-bold text-[10px]">{t("providers.reachable")}</span>
+                </>
+              ) : p.reachable === false ? (
+                <>
+                  <XCircle className="w-3 h-3 text-error shrink-0" />
+                  <span className="text-error font-bold text-[10px]">{t("providers.unreachable")}</span>
+                </>
+              ) : (
+                <span className="text-text-dim font-bold text-[10px]">{t("providers.not_checked")}</span>
+              )
+            ) : (
+              <>
+                <AlertCircle className="w-3 h-3 text-text-dim/50 shrink-0" />
+                <span className="text-text-dim font-bold text-[10px]">{t("providers.require_config")}</span>
+              </>
+            )}
+          </div>
+          {p.last_tested && (
+            <div className="flex items-center gap-2 text-xs">
+              <Activity className="w-3 h-3 text-text-dim/50 shrink-0" />
+              <span className="text-text-dim font-mono text-[10px]">
+                {t("providers.last_test")}: {formatTime(p.last_tested)}
+              </span>
+            </div>
+          )}
+          {p.error_message && (
+            <div className="flex items-center gap-2 text-xs text-error">
+              <AlertCircle className="w-3 h-3 shrink-0" />
+              <span className="text-[10px] truncate">{p.error_message}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Default status */}
+        <div className="mb-2">
+          {isDefault ? (
+            <Badge variant="brand">
+              <Star className="w-3 h-3 mr-1 inline" />{t("providers.is_default")}
+            </Badge>
+          ) : isConfigured ? (
+            <button onClick={(e) => { e.stopPropagation(); onSetDefault(p.id); }} className="inline-flex items-center gap-1 text-[10px] font-bold text-brand/70 hover:text-brand cursor-pointer transition-colors">
+              <Star className="w-3 h-3" />{t("providers.set_as_default")}
+            </button>
+          ) : null}
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 mt-auto">
+          {isConfigured ? (
+            <>
+              <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onConfigure(p); }} leftIcon={<Pencil className="w-3 h-3" />}>
+                {t("common.edit")}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onDelete(p); }} leftIcon={<Trash2 className="w-3 h-3 text-error" />}>
+                {p.is_custom ? t("common.delete") : t("providers.remove_key")}
+              </Button>
+              <Button
+                variant="secondary" size="sm"
+                onClick={(e) => { e.stopPropagation(); onTest(p.id); }}
+                disabled={pendingId === p.id}
+                leftIcon={pendingId === p.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                className="flex-1 whitespace-nowrap"
+              >
+                {pendingId === p.id ? t("providers.analyzing") : t("providers.test")}
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onConfigure(p); }} leftIcon={<Key className="w-3 h-3" />} className="flex-1 whitespace-nowrap">
+              {t("providers.config")}
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
+  );
+});
+
+// ── Details Modal ────────────────────────────────────────────────
+
+function DetailsModal({ provider, onClose, onTest, pendingId }: {
+  provider: ProviderItem;
+  onClose: () => void;
+  onTest: (id: string) => void;
+  pendingId: string | null;
+}) {
+  const { t } = useTranslation();
+  const isConfigured = isProviderAvailable(provider.auth_status);
+  const authBadge = getAuthBadge(provider.auth_status);
+
+  const modelsQuery = useModels({ provider: provider.id });
+  const models = modelsQuery.data?.models ?? [];
+
+  return (
+    <DrawerPanel isOpen onClose={onClose} title={provider.display_name || provider.id} size="lg">
+      <div className="p-6 space-y-4">
+        {/* Header info */}
+        <div className="flex items-center gap-3">
+          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-2xl ${isConfigured ? "bg-success/10 border border-success/20" : "bg-brand/10 border border-brand/20"}`}>
+            {getProviderIcon(provider.id)}
+          </div>
+          <div className="flex-1">
+            <p className="text-xs font-black uppercase tracking-widest text-text-dim/60">{provider.id}</p>
+          </div>
+          <Badge variant={authBadge.variant}>{authBadge.label}</Badge>
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="p-4 rounded-xl bg-main/30">
+            <p className="text-[10px] font-black uppercase tracking-wider text-text-dim/70 mb-1">{t("providers.models")}</p>
+            <p className="text-2xl font-black">{provider.model_count ?? 0}</p>
+          </div>
+          <div className="p-4 rounded-xl bg-main/30">
+            <p className="text-[10px] font-black uppercase tracking-wider text-text-dim/70 mb-1">{t("providers.latency")}</p>
+            <p className={`text-2xl font-black ${getLatencyColor(provider.latency_ms)}`}>
+              {provider.latency_ms != null ? `${provider.latency_ms}ms` : "-"}
+            </p>
+          </div>
+        </div>
+
+        {/* Model list — placed right under the count so users see what
+            actually counts toward the number rather than scrolling past
+            properties to find it. No inner scroll: the drawer's own
+            overflow-y-auto handles overflow. */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-black uppercase tracking-wider text-text-dim">{t("providers.provider_models")}</h3>
+          {modelsQuery.isLoading ? (
+            <p className="text-xs text-text-dim">{t("common.loading")}</p>
+          ) : models.length === 0 ? (
+            <p className="text-xs text-text-dim">{t("providers.no_models_for_provider")}</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {models.map(m => (
+                <div key={m.id} className="flex items-center gap-2 p-2 rounded-lg bg-main/20 text-xs">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${m.available ? "bg-success" : "bg-text-dim/30"}`} />
+                  <span className="truncate font-mono">{m.display_name || m.id}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Properties */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-black uppercase tracking-wider text-text-dim">{t("common.properties")}</h3>
+          <div className="space-y-2">
+            {provider.base_url && (
+              <div className="flex justify-between items-center p-3 rounded-lg bg-main/20">
+                <span className="text-xs font-bold text-text-dim">{t("providers.base_url")}</span>
+                <span className="text-xs font-mono text-text-main truncate max-w-[200px]">{provider.base_url}</span>
+              </div>
+            )}
+            {provider.api_key_env && (
+              <div className="flex justify-between items-center p-3 rounded-lg bg-main/20">
+                <span className="text-xs font-bold text-text-dim">{t("providers.api_key")}</span>
+                <span className="text-xs font-mono text-text-main">{provider.api_key_env}</span>
+              </div>
+            )}
+            <div className="flex justify-between items-center p-3 rounded-lg bg-main/20">
+              <span className="text-xs font-bold text-text-dim">{t("common.status")}</span>
+              <Badge variant={authBadge.variant}>{authBadge.label}</Badge>
+            </div>
+            <div className="flex justify-between items-center p-3 rounded-lg bg-main/20">
+              <span className="text-xs font-bold text-text-dim">{t("providers.health")}</span>
+              {provider.reachable !== undefined ? (
+                <Badge variant={provider.reachable === true ? "success" : "error"}>
+                  {provider.reachable === true ? t("providers.reachable") : t("providers.unreachable")}
+                </Badge>
+              ) : <Badge variant="default">{t("providers.not_checked")}</Badge>}
+            </div>
+            {provider.key_required !== undefined && (
+              <div className="flex justify-between items-center p-3 rounded-lg bg-main/20">
+                <span className="text-xs font-bold text-text-dim">{t("providers.key_required")}</span>
+                <span className="text-xs font-bold">{provider.key_required ? t("common.yes") : t("common.no")}</span>
+              </div>
+            )}
+            {provider.last_tested && (
+              <div className="flex justify-between items-center p-3 rounded-lg bg-main/20">
+                <span className="text-xs font-bold text-text-dim">{t("providers.last_test")}</span>
+                <span className="text-xs font-mono text-text-main">{formatDateTime(provider.last_tested)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {provider.error_message && (
+          <div className="p-4 rounded-xl bg-error/10 border border-error/20">
+            <h3 className="text-xs font-black uppercase tracking-wider text-error mb-2">{t("providers.error")}</h3>
+            <p className="text-xs font-mono text-error">{provider.error_message}</p>
+          </div>
+        )}
+
+        {/* Quick Actions */}
+        <div className="flex gap-2 pt-2">
+          <Button
+            variant="primary" className="flex-1"
+            onClick={() => onTest(provider.id)}
+            disabled={pendingId === provider.id}
+            leftIcon={pendingId === provider.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+          >
+            {pendingId === provider.id ? t("providers.analyzing") : t("providers.test_connection")}
+          </Button>
+        </div>
+      </div>
+    </DrawerPanel>
+  );
+}
+
+// ── Filter Chips ─────────────────────────────────────────────────
+
+function FilterChips({ activeFilter, onChange }: {
+  activeFilter: FilterStatus;
+  onChange: (filter: FilterStatus) => void;
+}) {
+  const { t } = useTranslation();
+  const filters: { value: FilterStatus; label: string; icon: React.ReactNode }[] = [
+    { value: "all", label: t("providers.filter_all"), icon: <Filter className="w-3 h-3" /> },
+    { value: "reachable", label: t("providers.filter_reachable"), icon: <CheckCircle2 className="w-3 h-3 text-success" /> },
+    { value: "unreachable", label: t("providers.filter_unreachable"), icon: <XCircle className="w-3 h-3 text-error" /> },
+  ];
+
+  return (
+    <div className="flex gap-1 p-1 bg-main/30 rounded-lg">
+      {filters.map(f => (
+        <button
+          key={f.value}
+          onClick={() => onChange(f.value)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${
+            activeFilter === f.value
+              ? "bg-surface shadow-sm text-text-main"
+              : "text-text-dim hover:text-text-main"
+          }`}
+        >
+          {f.icon}
+          {f.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Create Provider Wizard ──────────────────────────────────────
+
+interface ModelEntry {
+  id: string;
+  display_name: string;
+  tier: string;
+  context_window: number | "";
+  max_output_tokens: number | "";
+  input_cost_per_m: number | "";
+  output_cost_per_m: number | "";
+}
+
+function toTitleCase(id: string): string {
+  return id.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function toEnvVar(id: string): string {
+  return id.toUpperCase().replace(/-/g, "_") + "_API_KEY";
+}
+
+const EMPTY_MODEL: ModelEntry = {
+  id: "", display_name: "", tier: "balanced",
+  context_window: "", max_output_tokens: "",
+  input_cost_per_m: "", output_cost_per_m: "",
+};
+
+// Values must match the backend `ModelTier` enum
+// (crates/librefang-types/src/model_catalog.rs). "reasoning" is NOT a tier —
+// it was rejected by the catalog TOML parser and made the provider silently
+// vanish (#5822); "frontier" is the real top-capability tier.
+const TIER_OPTIONS = [
+  { value: "fast", label: "Fast" },
+  { value: "balanced", label: "Balanced" },
+  { value: "smart", label: "Smart" },
+  { value: "frontier", label: "Frontier" },
+];
+
+function CreateProviderWizard({
+  onSubmit,
+  onCancel,
+}: {
+  onSubmit: (values: Record<string, unknown>) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const [step, setStep] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const [id, setId] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+
+  const [displayName, setDisplayName] = useState("");
+  const [apiKeyEnv, setApiKeyEnv] = useState("");
+  const [keyRequired, setKeyRequired] = useState(true);
+  const [derivedOverridden, setDerivedOverridden] = useState(false);
+
+  const [models, setModels] = useState<ModelEntry[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
+
+  const derivedDisplayName = toTitleCase(id);
+  const derivedApiKeyEnv = toEnvVar(id);
+  const effectiveDisplayName = derivedOverridden ? displayName : derivedDisplayName;
+  const effectiveApiKeyEnv = derivedOverridden ? apiKeyEnv : derivedApiKeyEnv;
+  const effectiveKeyRequired = derivedOverridden ? keyRequired : apiKey.trim().length > 0;
+
+  const steps = [
+    t("providers.wizard_step_basics"),
+    t("providers.wizard_step_advanced"),
+    t("providers.wizard_step_models"),
+  ];
+
+  const validateStep0 = () => {
+    const errs: string[] = [];
+    if (!id.trim()) errs.push("id");
+    if (!baseUrl.trim()) errs.push("base_url");
+    setErrors(errs);
+    return errs.length === 0;
+  };
+
+  const handleNext = () => {
+    if (step === 0 && !validateStep0()) return;
+    if (step === 0 && !derivedOverridden) {
+      setDisplayName(derivedDisplayName);
+      setApiKeyEnv(derivedApiKeyEnv);
+      setKeyRequired(apiKey.trim().length > 0);
+    }
+    setStep((s) => Math.min(s + 1, 2));
+    setErrors([]);
+  };
+
+  const handleBack = () => {
+    setStep((s) => Math.max(s - 1, 0));
+    setErrors([]);
+  };
+
+  const buildValues = () => {
+    const values: Record<string, unknown> = {
+      id: id.trim(),
+      display_name: effectiveDisplayName,
+      api_key_env: effectiveApiKeyEnv,
+      base_url: baseUrl.trim(),
+      key_required: effectiveKeyRequired,
+    };
+    if (apiKey.trim()) values.api_key = apiKey.trim();
+    if (models.length > 0) {
+      values.models = models
+        .filter((m) => m.id.trim())
+        .map((m) => ({
+          id: m.id.trim(),
+          display_name: m.display_name.trim() || m.id.trim(),
+          tier: m.tier,
+          context_window: typeof m.context_window === "number" ? m.context_window : 128000,
+          max_output_tokens: typeof m.max_output_tokens === "number" ? m.max_output_tokens : 4096,
+          input_cost_per_m: typeof m.input_cost_per_m === "number" ? m.input_cost_per_m : 0,
+          output_cost_per_m: typeof m.output_cost_per_m === "number" ? m.output_cost_per_m : 0,
+        }));
+    }
+    return values;
+  };
+
+  const handleCreate = async () => {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await onSubmit(buildValues());
+    } catch (err: unknown) {
+      setSubmitError(getErrorMessage(err) ?? t("common.error"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const updateModel = (idx: number, field: keyof ModelEntry, value: unknown) => {
+    setModels((prev) => prev.map((m, i) => (i === idx ? { ...m, [field]: value } : m)));
+  };
+
+  const removeModel = (idx: number) => {
+    setModels((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  return (
+    <div>
+      {/* Step indicator */}
+      <div className="px-5 pt-4 pb-2">
+        <div className="flex items-center gap-1">
+          {steps.map((label, i) => (
+            <button key={i} className="flex items-center gap-1 flex-1 group"
+              onClick={() => { if (i < step) setStep(i); }} disabled={i > step}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 transition-colors ${
+                i < step ? "bg-success text-white cursor-pointer" : i === step ? "bg-brand text-white" : "bg-main text-text-dim"
+              }`}>
+                {i < step ? <Check className="w-3 h-3" /> : i + 1}
+              </div>
+              <span className={`text-[10px] font-bold uppercase tracking-wider truncate ${i === step ? "text-text-main" : "text-text-dim"}`}>
+                {label}
+              </span>
+              {i < steps.length - 1 && <div className={`flex-1 h-px ${i < step ? "bg-success" : "bg-border-subtle"}`} />}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="p-5 space-y-4">
+        {/* Step 1: Basics */}
+        {step === 0 && (
+          <>
+            <Input label={t("providers.wizard_id_label") + " *"} value={id}
+              onChange={(e) => { setId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "")); setErrors(prev => prev.filter(e2 => e2 !== "id")); }}
+              placeholder={t("providers.wizard_id_placeholder")} className={errors.includes("id") ? "border-error" : ""} />
+            {errors.includes("id") && <p className="text-[10px] text-error -mt-2">{t("providers.wizard_id_required")}</p>}
+            <p className="text-[10px] text-text-dim/60 -mt-2">{t("providers.wizard_id_hint")}</p>
+
+            <Input label={t("providers.wizard_base_url_label") + " *"} value={baseUrl}
+              onChange={(e) => { setBaseUrl(e.target.value); setErrors(prev => prev.filter(e2 => e2 !== "base_url")); }}
+              placeholder={t("providers.wizard_base_url_placeholder")} className={errors.includes("base_url") ? "border-error" : ""} />
+            {errors.includes("base_url") && <p className="text-[10px] text-error -mt-2">{t("providers.wizard_base_url_required")}</p>}
+
+            <Input label={t("providers.wizard_api_key_label")} type="password" value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)} placeholder={t("providers.wizard_api_key_placeholder")} />
+            <p className="text-[10px] text-text-dim/60 -mt-2">{t("providers.wizard_api_key_hint")}</p>
+
+            {id.trim() && (
+              <div className="p-3 rounded-xl bg-main/40 border border-border-subtle/50 space-y-1.5">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-text-dim/60">{t("providers.wizard_auto_derived")}</p>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-text-dim w-24 shrink-0">{t("providers.wizard_display_name_label")}</span>
+                  <span className="font-mono text-text-main">{derivedDisplayName}</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-text-dim w-24 shrink-0">{t("providers.wizard_env_var")}</span>
+                  <span className="font-mono text-text-main">{derivedApiKeyEnv}</span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Step 2: Advanced */}
+        {step === 1 && (
+          <>
+            <p className="text-[10px] text-text-dim/60">{t("providers.wizard_advanced_hint")}</p>
+            <Input label={t("providers.wizard_display_name_label")} value={displayName}
+              onChange={(e) => { setDisplayName(e.target.value); setDerivedOverridden(true); }} placeholder={derivedDisplayName} />
+            <Input label={t("providers.wizard_api_key_env_label")} value={apiKeyEnv}
+              onChange={(e) => { setApiKeyEnv(e.target.value); setDerivedOverridden(true); }} placeholder={derivedApiKeyEnv} />
+            <div className="space-y-1">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <button type="button" role="checkbox" aria-checked={keyRequired}
+                  onClick={() => { setKeyRequired(!keyRequired); setDerivedOverridden(true); }}
+                  className={`relative w-10 h-5 rounded-full transition-colors duration-200 shrink-0 ${keyRequired ? "bg-brand" : "bg-main border border-border-subtle"}`}>
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200 ${keyRequired ? "translate-x-5" : "translate-x-0"}`} />
+                </button>
+                <span className="text-xs font-bold text-text-main">{t("providers.wizard_key_required_label")}</span>
+              </label>
+            </div>
+          </>
+        )}
+
+        {/* Step 3: Models */}
+        {step === 2 && (
+          <>
+            <p className="text-[10px] text-text-dim/60">{t("providers.wizard_models_hint")}</p>
+            {models.map((m, idx) => (
+              <div key={idx} className="p-3 rounded-xl border border-border-subtle/50 bg-main/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-text-dim uppercase tracking-widest">#{idx + 1}</span>
+                  <button onClick={() => removeModel(idx)} className="p-1 rounded hover:bg-error/10 text-text-dim hover:text-error transition-colors">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label={t("providers.wizard_model_id") + " *"} value={m.id} onChange={(e) => updateModel(idx, "id", e.target.value)} placeholder="gpt-4o" />
+                  <Input label={t("providers.wizard_model_name")} value={m.display_name} onChange={(e) => updateModel(idx, "display_name", e.target.value)} placeholder="GPT-4o" />
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <Select label={t("providers.wizard_model_tier")} options={TIER_OPTIONS} value={m.tier} onChange={(e) => updateModel(idx, "tier", e.target.value)} />
+                  <Input label={t("providers.wizard_model_context")} type="number" value={m.context_window === "" ? "" : String(m.context_window)}
+                    onChange={(e) => updateModel(idx, "context_window", e.target.value === "" ? "" : Number(e.target.value))} placeholder="128000" />
+                  <Input label={t("providers.wizard_model_max_output")} type="number" value={m.max_output_tokens === "" ? "" : String(m.max_output_tokens)}
+                    onChange={(e) => updateModel(idx, "max_output_tokens", e.target.value === "" ? "" : Number(e.target.value))} placeholder="4096" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label={t("providers.wizard_model_input_cost")} type="number" value={m.input_cost_per_m === "" ? "" : String(m.input_cost_per_m)}
+                    onChange={(e) => updateModel(idx, "input_cost_per_m", e.target.value === "" ? "" : Number(e.target.value))} placeholder="2.5" />
+                  <Input label={t("providers.wizard_model_output_cost")} type="number" value={m.output_cost_per_m === "" ? "" : String(m.output_cost_per_m)}
+                    onChange={(e) => updateModel(idx, "output_cost_per_m", e.target.value === "" ? "" : Number(e.target.value))} placeholder="10.0" />
+                </div>
+              </div>
+            ))}
+            <button type="button" onClick={() => setModels(prev => [...prev, { ...EMPTY_MODEL }])}
+              className="w-full py-2 rounded-xl border border-dashed border-border-subtle text-xs font-bold text-text-dim hover:text-brand hover:border-brand transition-colors flex items-center justify-center gap-1.5">
+              <Plus className="w-3.5 h-3.5" />
+              {t("schema_form.add_item")}
+            </button>
+          </>
+        )}
+
+        {submitError && (
+          <div className="flex items-center gap-2 text-error text-xs">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            {submitError}
+          </div>
+        )}
+
+        {/* Navigation */}
+        <div className="flex gap-2 pt-2">
+          {step > 0 && (
+            <Button variant="ghost" onClick={handleBack} disabled={submitting}>
+              <ChevronLeft className="w-4 h-4 mr-1" />
+              {t("providers.wizard_back")}
+            </Button>
+          )}
+          <div className="flex-1" />
+          {step < 2 && (
+            <>
+              {step === 1 && (
+                <Button variant="ghost" onClick={handleCreate} disabled={submitting}>
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                  {t("providers.wizard_skip_create")}
+                </Button>
+              )}
+              <Button variant="primary" onClick={handleNext}>
+                {t("providers.wizard_next")}
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </>
+          )}
+          {step === 2 && (
+            <>
+              {models.length === 0 && (
+                <Button variant="ghost" onClick={handleCreate} disabled={submitting}>
+                  {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                  {t("providers.wizard_skip_create")}
+                </Button>
+              )}
+              <Button variant="primary" onClick={handleCreate} disabled={submitting}>
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Plus className="w-4 h-4 mr-1" />}
+                {submitting ? t("providers.wizard_creating") : t("providers.wizard_create")}
+              </Button>
+            </>
+          )}
+          <Button variant="secondary" onClick={onCancel} disabled={submitting}>
+            {t("common.cancel")}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Filter/Sort reducer (P8) ─────────────────────────────────────
+
+type FilterState = {
+  search: string;
+  filterStatus: FilterStatus;
+  sortField: SortField;
+  sortOrder: SortOrder;
+};
+
+type FilterAction =
+  | { type: "SEARCH"; value: string }
+  | { type: "FILTER"; status: FilterStatus }
+  | { type: "SORT"; field: SortField };
+
+function filterReducer(state: FilterState, action: FilterAction): FilterState {
+  switch (action.type) {
+    case "SEARCH":
+      return { ...state, search: action.value };
+    case "FILTER":
+      return { ...state, filterStatus: action.status };
+    case "SORT":
+      return {
+        ...state,
+        sortField: action.field,
+        sortOrder: state.sortField === action.field
+          ? (state.sortOrder === "asc" ? "desc" : "asc")
+          : "desc",
+      };
+    default:
+      return state;
+  }
+}
+
+const initialFilterState: FilterState = {
+  search: "",
+  filterStatus: "all",
+  sortField: "name",
+  sortOrder: "asc",
+};
+
+// ── Credential Pools section (#4965) ────────────────────────────────────────
+
+function strategyLabel(s: CredentialPoolStatus["strategy"]): string {
+  switch (s) {
+    case "fill_first":
+      return "fill first";
+    case "round_robin":
+      return "round robin";
+    case "least_used":
+      return "least used";
+    case "random":
+      return "random";
+  }
+}
+
+function formatCooldown(secs: number): string {
+  if (secs >= 3600) {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  }
+  if (secs >= 60) {
+    return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+  }
+  return `${secs}s`;
+}
+
+function CredentialKeyRow({ cred }: { cred: CredentialPoolKeySnapshot }) {
+  const cooldown = cred.cooldown_remaining_secs;
+  let statusBadge: React.ReactNode;
+  if (cred.is_exhausted) {
+    if (cooldown === "permanent") {
+      statusBadge = <Badge variant="error">invalid</Badge>;
+    } else if (typeof cooldown === "number") {
+      statusBadge = (
+        <Badge variant="warning">
+          cooldown {formatCooldown(cooldown)}
+        </Badge>
+      );
+    } else {
+      statusBadge = <Badge variant="warning">exhausted</Badge>;
+    }
+  } else {
+    statusBadge = <Badge variant="success">healthy</Badge>;
+  }
+  const label = cred.label?.trim() || "key";
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border-subtle bg-surface px-3 py-2 text-xs">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="font-bold text-text-main truncate">{label}</span>
+        <span className="font-mono text-text-dim">{cred.key_hint}</span>
+        <span className="text-text-dim">priority {cred.priority}</span>
+      </div>
+      <div className="flex items-center gap-3 shrink-0">
+        <span className="text-text-dim">{cred.request_count.toLocaleString()} reqs</span>
+        {statusBadge}
+      </div>
+    </div>
+  );
+}
+
+function CredentialPoolCard({ pool }: { pool: CredentialPoolStatus }) {
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Key className="w-4 h-4 text-text-dim" />
+          <span className="font-bold text-text-main">{pool.provider}</span>
+          <Badge variant="info">{strategyLabel(pool.strategy)}</Badge>
+        </div>
+        <span className="text-xs text-text-dim">
+          {pool.available_count} / {pool.total_count} available
+        </span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {pool.credentials.map((c, idx) => (
+          <CredentialKeyRow key={`${pool.provider}-${idx}-${c.key_hint}`} cred={c} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function CredentialPoolsSection() {
+  const { data, isLoading, error } = useCredentialPools();
+
+  // Hide the section entirely when no pools are configured — it's a niche
+  // feature and the empty state would just add visual noise to the
+  // Providers page for the 99% of users who don't use it.
+  if (isLoading) return null;
+  if (error) return null;
+  if (!data || data.length === 0) return null;
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Key className="w-4 h-4 text-blue-500" />
+          <h3 className="text-sm font-bold text-text-main">Credential pools</h3>
+          <Badge variant="info">{data.length}</Badge>
+        </div>
+        <span className="text-[10px] text-text-dim font-mono">
+          configure in config.toml `[[credential_pools]]`
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {data.map((p) => (
+          <CredentialPoolCard key={p.provider} pool={p} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+// ── Main Page ────────────────────────────────────────────────────
+
+export function ProvidersPage() {
+  const { t } = useTranslation();
+  // Stable prefix for the config modal's <label htmlFor> / <input id>
+  // pairs so screen readers announce each field (#5140).
+  const cfgFieldId = useId();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [testingIds, setTestingIds] = useState<Set<string>>(new Set());
+  const [filterState, dispatch] = useReducer(filterReducer, initialFilterState);
+  const { search, sortField, sortOrder, filterStatus } = filterState;
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [detailsProvider, setDetailsProvider] = useState<ProviderItem | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  // The picker drawer holds the catalog of unconfigured providers, mirroring
+  // ChannelsPage. Default view shows only configured providers so the page
+  // stays focused on what's actually wired up; the configure-flow surface
+  // for new providers lives behind the Add picker.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerSearch, setPickerSearch] = useState("");
+  useCreateShortcut(() => { setPickerSearch(""); setPickerOpen(true); });
+  const [deleteConfirmProvider, setDeleteConfirmProvider] = useState<ProviderItem | null>(null);
+  const addToast = useUIStore((s) => s.addToast);
+
+  const providersQuery = useProviders();
+  const statusQuery = useProviderStatus();
+  const testMutation = useTestProvider();
+  const setKeyMutation = useSetProviderKey();
+  const deleteKeyMutation = useDeleteProviderKey();
+  const enableProviderMutation = useEnableProvider();
+  const setUrlMutation = useSetProviderUrl();
+  const defaultProviderMutation = useSetDefaultProvider();
+  const createRegistryContentMutation = useCreateRegistryContent();
+
+  const config = useProviderConfig(
+    testMutation,
+    setKeyMutation,
+    deleteKeyMutation,
+    setUrlMutation,
+    addToast,
+    t,
+  );
+
+  const providers = useMemo(() => providersQuery.data ?? [], [providersQuery.data]);
+  const currentDefaultProvider = statusQuery.data?.default_provider ?? "";
+  const configuredCount = useMemo(() => providers.filter(p => isProviderAvailable(p.auth_status)).length, [providers]);
+
+  useEffect(() => {
+    if (!providersQuery.data) return;
+    setDetailsProvider(prev => {
+      if (!prev) return prev;
+      const updated = providersQuery.data.find(p => p.id === prev.id);
+      return updated ?? prev;
+    });
+  }, [providersQuery.data]);
+
+  // Configured providers are the main page content. Filter/sort applies
+  // to those only; the unconfigured catalog lives behind the Add picker.
+  const filteredProviders = useMemo(
+    () => [...providers]
+      .filter(p => {
+        if (!isProviderAvailable(p.auth_status)) return false;
+        const searchMatch = !search || (p.display_name || p.id).toLowerCase().includes(search.toLowerCase()) || p.id.toLowerCase().includes(search.toLowerCase());
+        let statusMatch = true;
+        if (filterStatus === "reachable") statusMatch = p.reachable === true;
+        else if (filterStatus === "unreachable") statusMatch = p.reachable === false;
+        return searchMatch && statusMatch;
+      })
+      .sort((a, b) => {
+        const aCli = isCliProvider(a) ? 1 : 0;
+        const bCli = isCliProvider(b) ? 1 : 0;
+        if (aCli !== bCli) return aCli - bCli;
+        let cmp = 0;
+        if (sortField === "name") cmp = a.id.localeCompare(b.id);
+        else if (sortField === "models") cmp = (a.model_count ?? 0) - (b.model_count ?? 0);
+        else if (sortField === "latency") cmp = (a.latency_ms ?? 0) - (b.latency_ms ?? 0);
+        return sortOrder === "asc" ? cmp : -cmp;
+      }),
+    [providers, search, filterStatus, sortField, sortOrder],
+  );
+
+  // Split the configured list into coding-agent CLIs (claude-code, codex-cli,
+  // gemini-cli, qwen-code, codewhale) vs raw provider APIs, using the backend
+  // `is_coding_agent` flag, so the page shows them under separate headers.
+  // Order within each group is preserved from `filteredProviders`.
+  const codingAgentProviders = useMemo(
+    () => filteredProviders.filter(p => p.is_coding_agent),
+    [filteredProviders],
+  );
+  const apiProviders = useMemo(
+    () => filteredProviders.filter(p => !p.is_coding_agent),
+    [filteredProviders],
+  );
+  // Only show the group headers when both groups are non-empty — a single
+  // group renders flat, without a lone header.
+  const showGroupHeaders = codingAgentProviders.length > 0 && apiProviders.length > 0;
+
+  // Catalog of unconfigured providers, surfaced in the Add picker.
+  const pickerProviders = useMemo(
+    () => [...providers]
+      .filter(p => !isProviderAvailable(p.auth_status))
+      .filter(p => !pickerSearch
+        || (p.display_name || p.id).toLowerCase().includes(pickerSearch.toLowerCase())
+        || p.id.toLowerCase().includes(pickerSearch.toLowerCase()))
+      .sort((a, b) => (a.display_name || a.id).localeCompare(b.display_name || b.id)),
+    [providers, pickerSearch],
+  );
+
+  const openPicker = () => { setPickerSearch(""); setPickerOpen(true); };
+  const handlePick = (p: ProviderItem) => {
+    setPickerOpen(false);
+    config.open(p);
+  };
+  // CLI-shape providers (`claude-code`, `codex-cli`, `gemini-cli`,
+  // `qwen-code`) have no key or URL to set, so `set_provider_key` /
+  // `set_provider_url` — which un-suppress as a side effect — never run
+  // for them. The Re-enable button on suppressed picker entries calls
+  // `POST /api/providers/{id}/enable` directly so the provider returns
+  // to the configured grid in one click. For non-CLI suppressed
+  // providers this is also the preferred path when the user is happy
+  // with the prior URL/key and only wants to revert the suppress.
+  const handleReenable = useCallback(async (p: ProviderItem) => {
+    try {
+      await enableProviderMutation.mutateAsync(p.id);
+      setPickerOpen(false);
+      addToast(t("providers.reenabled", { defaultValue: "Provider re-enabled" }), "success");
+    } catch (e) {
+      addToast(getErrorMessage(e) || t("common.error"), "error");
+    }
+  }, [enableProviderMutation, addToast, t]);
+
+  const handleSearch = (value: string) => { dispatch({ type: "SEARCH", value }); setSelectedIds(new Set()); };
+  const handleFilterChange = (filter: FilterStatus) => { dispatch({ type: "FILTER", status: filter }); setSelectedIds(new Set()); };
+
+  const handleSort = (field: SortField) => { dispatch({ type: "SORT", field }); };
+
+  const handleSelect = useCallback((id: string, checked: boolean) => {
+    setSelectedIds(prev => { const next = new Set(prev); if (checked) next.add(id); else next.delete(id); return next; });
+  }, []);
+
+  const handleSelectAll = () => {
+    if (selectedIds.size === filteredProviders.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(filteredProviders.map(p => p.id)));
+  };
+
+  const handleBatchTest = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setTestingIds(new Set(ids));
+    let successCount = 0;
+    let failCount = 0;
+    const CONCURRENCY = 4;
+    const queue = [...ids];
+    const worker = async () => {
+      while (queue.length > 0) {
+        const id = queue.shift()!;
+        try {
+          const result = await testMutation.mutateAsync(id);
+          if (result.status === "error") failCount++;
+          else successCount++;
+        } catch {
+          failCount++;
+        } finally {
+          setTestingIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, () => worker()));
+    if (failCount === 0) {
+      addToast(t("common.success"), "success");
+    } else if (successCount === 0) {
+      addToast(t("providers.batch_test_all_failed", { defaultValue: "All tests failed" }), "error");
+    } else {
+      addToast(
+        t("providers.batch_test_partial", { defaultValue: `${successCount} passed, ${failCount} failed` }),
+        "error",
+      );
+    }
+  };
+
+  const handleTest = useCallback(async (id: string) => {
+    setPendingId(id);
+    try {
+      const result = await testMutation.mutateAsync(id);
+      if (result.status === "error") addToast(getActionResultError(result, t("common.error")), "error");
+      else addToast(t("common.success"), "success");
+    } catch (e: unknown) {
+      addToast(getErrorMessage(e) || t("common.error"), "error");
+    } finally {
+      setPendingId(null);
+    }
+  }, [testMutation, addToast, t]);
+
+  const handleSetDefault = useCallback(async (id: string, model?: string) => {
+    try {
+      await defaultProviderMutation.mutateAsync({ id, model });
+      addToast(t("providers.default_set"), "success");
+    } catch (e: unknown) {
+      addToast(getErrorMessage(e) || t("common.error"), "error");
+    }
+  }, [defaultProviderMutation, addToast, t]);
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirmProvider) return;
+    try {
+      await deleteKeyMutation.mutateAsync(deleteConfirmProvider.id);
+      setDeleteConfirmProvider(null);
+      addToast(t("providers.key_removed"), "success");
+    } catch (e: unknown) {
+      addToast(getErrorMessage(e) || t("common.error"), "error");
+    }
+  };
+
+  const allSelected = filteredProviders.length > 0 && selectedIds.size === filteredProviders.length;
+  const isUnchanged = !!config.provider
+    && !config.keyInput.trim()
+    && config.urlInput === (config.provider.base_url || "")
+    && config.proxyInput === (config.provider.proxy_url || "");
+  // testKey() clears keyInput after saving, making isUnchanged true — keep Save enabled when the last test passed.
+  const testedOk = config.testResult?.ok === true;
+  const saveDisabled = !config.provider || config.saving || config.testing || (isUnchanged && !testedOk);
+  // Local providers (Ollama / vLLM / LM Studio) declare `key_required: false`
+  // — for them, the Test button must NOT require a key, otherwise users have
+  // no way to verify their custom base_url. Issue #3138.
+  const testDisabled =
+    config.saving
+    || config.testing
+    || (config.provider?.key_required !== false
+        && !config.hasStoredKey
+        && !config.keyInput.trim());
+  const configAuthBadge = config.provider ? getAuthBadge(config.provider.auth_status) : null;
+
+  return (
+    <div className="flex flex-col gap-6 transition-colors duration-300">
+      <PageHeader
+        badge={t("common.infrastructure")}
+        title={t("providers.title")}
+        subtitle={t("providers.subtitle")}
+        isFetching={providersQuery.isFetching}
+        onRefresh={() => void providersQuery.refetch()}
+        icon={<Server className="h-4 w-4" />}
+        helpText={t("providers.help")}
+        actions={
+          <div className="flex items-center gap-2">
+            {/* Always enabled: even with every catalog provider configured,
+                the picker still exposes "Create custom provider" — disabling
+                would strand mouse users away from the wizard. */}
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={openPicker}
+              leftIcon={<Plus className="w-3.5 h-3.5" />}
+              title={t("providers.add") + " (n)"}
+            >
+              <span>{t("providers.add")}</span>
+              <kbd className="hidden sm:inline-flex h-4 min-w-[16px] items-center justify-center rounded border border-white/30 bg-white/10 px-1 text-[8px] font-mono font-semibold ml-1.5">n</kbd>
+            </Button>
+            <div className="hidden rounded-full border border-border-subtle bg-surface px-3 py-1.5 text-[10px] font-bold uppercase text-text-dim sm:block">
+              {configuredCount} / {providers.length} {t("providers.configured")}
+            </div>
+          </div>
+        }
+      />
+
+      {/* Credential pools (#4965) — visible only when at least one pool is
+          configured in config.toml. Read-only here; mutations live in the
+          `librefang auth pool …` CLI. */}
+      <CredentialPoolsSection />
+
+      {/* Search & Controls */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex-1">
+          <Input value={search} onChange={(e) => handleSearch(e.target.value)} placeholder={t("common.search")}
+            leftIcon={<Search className="w-4 h-4" />}
+            rightIcon={search && (
+              <button onClick={() => dispatch({ type: "SEARCH", value: "" })} className="hover:text-text-main" aria-label={t("common.clear_search")}>
+                <X className="w-3 h-3" />
+              </button>
+            )} />
+        </div>
+
+        <div className="flex gap-2 items-center flex-wrap">
+          <div className="flex gap-1 p-1 bg-main/30 rounded-lg">
+            {(["name", "models", "latency"] as SortField[]).map(field => (
+              <button key={field} onClick={() => handleSort(field)}
+                className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-bold transition-colors ${sortField === field ? "bg-surface shadow-sm" : "text-text-dim hover:text-text-main"}`}>
+                {sortField === field && (sortOrder === "asc" ? <SortAsc className="w-3 h-3" /> : <SortDesc className="w-3 h-3" />)}
+                {t(`providers.${field === "name" ? "name" : field}`)}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-1 p-1 bg-main/30 rounded-lg">
+            <button onClick={() => setViewMode("grid")} className={`p-1.5 rounded-md transition-colors ${viewMode === "grid" ? "bg-surface shadow-sm" : "text-text-dim hover:text-text-main"}`}>
+              <Grid3X3 className="w-4 h-4" />
+            </button>
+            <button onClick={() => setViewMode("list")} className={`p-1.5 rounded-md transition-colors ${viewMode === "list" ? "bg-surface shadow-sm" : "text-text-dim hover:text-text-main"}`}>
+              <List className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Filter & batch — hidden when there's nothing to filter, so the
+          empty-state CTA below isn't crowded by reachable/unreachable
+          chips that have no targets. */}
+      {configuredCount > 0 && (
+        <div className="flex items-center justify-between gap-3 flex-wrap overflow-x-auto">
+          <FilterChips activeFilter={filterStatus} onChange={handleFilterChange} />
+
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-text-dim">{selectedIds.size} selected</span>
+              <Button variant="secondary" size="sm" onClick={handleBatchTest} leftIcon={<Zap className="w-3 h-3" />}>
+                {t("providers.batch_test")}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex flex-col gap-4">
+      {providersQuery.isLoading ? (
+        <div className={viewMode === "grid" ? "grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6" : "flex flex-col gap-2"}>
+          {[1, 2, 3, 4, 5, 6].map((i) => <CardSkeleton key={i} />)}
+        </div>
+      ) : providers.length === 0 ? (
+        <EmptyState title={t("common.no_data")} icon={<Server className="h-6 w-6" />} />
+      ) : configuredCount === 0 ? (
+        // No providers configured yet — surface the picker as a primary
+        // CTA instead of an empty list. Mirrors the ChannelsPage empty
+        // state.
+        <Card padding="lg" className="flex flex-col items-center text-center gap-4 py-10">
+          <div className="w-12 h-12 rounded-xl bg-brand/10 border border-brand/30 grid place-items-center text-brand">
+            <Server className="h-6 w-6" />
+          </div>
+          <div className="max-w-md space-y-2">
+            <h2 className="text-base font-bold text-text-main">
+              {t("providers.empty_title", { defaultValue: "No providers configured yet" })}
+            </h2>
+            <p className="text-sm text-text-dim leading-relaxed">
+              {t("providers.empty_body", {
+                defaultValue: "Connect OpenAI, Anthropic, Gemini, Groq, or any other LLM provider so agents can route prompts and consume models.",
+              })}
+            </p>
+          </div>
+          <Button variant="primary" size="md" onClick={openPicker} leftIcon={<Plus className="h-4 w-4" />}>
+            {t("providers.connect_first", { defaultValue: "Connect a provider" })}
+          </Button>
+        </Card>
+      ) : filteredProviders.length === 0 ? (
+        <EmptyState
+          title={search || filterStatus !== "all" ? t("providers.no_results") : t("providers.no_configured")}
+          icon={<Search className="h-6 w-6" />}
+        />
+      ) : (
+        <>
+          <div className="flex items-center gap-2">
+            <button onClick={handleSelectAll} className="flex items-center gap-2 text-xs font-bold text-text-dim hover:text-text-main transition-colors">
+              {allSelected ? <CheckSquare className="w-4 h-4 text-brand" /> : <Square className="w-4 h-4" />}
+              {t("providers.select_all")}
+            </button>
+            {(search || filterStatus !== "all") && (
+              <span className="text-xs text-text-dim">({filteredProviders.length} {t("providers.results")})</span>
+            )}
+          </div>
+
+          {codingAgentProviders.length > 0 && (
+            <>
+              {showGroupHeaders && (
+                <h3 className="text-xs font-black uppercase tracking-wider text-text-dim">{t("providers.section_coding_agents")}</h3>
+              )}
+              <div className={viewMode === "grid" ? "grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6" : "flex flex-col gap-2"}>
+                {codingAgentProviders.map((p) => (
+                  <ProviderCard
+                    key={p.id} provider={p}
+                    isSelected={selectedIds.has(p.id)}
+                    isDefault={p.id === currentDefaultProvider}
+                    pendingId={testingIds.has(p.id) ? p.id : pendingId}
+                    viewMode={viewMode}
+                    onSelect={handleSelect}
+                    onTest={handleTest}
+                    onSetDefault={handleSetDefault}
+                    onViewDetails={setDetailsProvider}
+                    onConfigure={config.open}
+                    onDelete={setDeleteConfirmProvider}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+          {apiProviders.length > 0 && (
+            <>
+              {showGroupHeaders && (
+                <h3 className="text-xs font-black uppercase tracking-wider text-text-dim">{t("providers.section_providers")}</h3>
+              )}
+              <div className={viewMode === "grid" ? "grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 3xl:grid-cols-5 4xl:grid-cols-6" : "flex flex-col gap-2"}>
+                {apiProviders.map((p) => (
+                  <ProviderCard
+                    key={p.id} provider={p}
+                    isSelected={selectedIds.has(p.id)}
+                    isDefault={p.id === currentDefaultProvider}
+                    pendingId={testingIds.has(p.id) ? p.id : pendingId}
+                    viewMode={viewMode}
+                    onSelect={handleSelect}
+                    onTest={handleTest}
+                    onSetDefault={handleSetDefault}
+                    onViewDetails={setDetailsProvider}
+                    onConfigure={config.open}
+                    onDelete={setDeleteConfirmProvider}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+      </div>
+
+      {/* Details Modal */}
+      {detailsProvider && (
+        <DetailsModal
+          provider={detailsProvider}
+          onClose={() => setDetailsProvider(null)}
+          onTest={handleTest}
+          pendingId={pendingId}
+        />
+      )}
+
+      {/* Config Modal */}
+      <DrawerPanel isOpen={!!config.provider} onClose={config.close} title={t("providers.configure_provider")} size="md">
+        {config.provider && (
+          <div className="p-5 space-y-4">
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-main">
+              <div className="w-10 h-10 rounded-xl bg-brand/10 flex items-center justify-center">
+                {getProviderIcon(config.provider.id)}
+              </div>
+              <div>
+                <p className="text-sm font-bold">{config.provider.display_name || config.provider.id}</p>
+                <p className="text-[10px] text-text-dim font-mono">{config.provider.id}</p>
+              </div>
+              <Badge variant={configAuthBadge!.variant} className="ml-auto">
+                {configAuthBadge!.label}
+              </Badge>
+            </div>
+
+            {config.provider.key_required !== false && (
+              <div>
+                <label htmlFor={`${cfgFieldId}-api-key`} className="text-[10px] font-bold text-text-dim uppercase">API Key</label>
+                <input id={`${cfgFieldId}-api-key`} type="password" value={config.keyInput} onChange={e => config.setKeyInput(e.target.value)}
+                  placeholder={config.hasStoredKey ? t("providers.key_placeholder_existing") : t("providers.key_placeholder")}
+                  className="mt-1 w-full rounded-xl border border-border-subtle bg-main px-3 py-2 text-sm font-mono outline-none focus:border-brand focus:ring-1 focus:ring-brand/20" />
+              </div>
+            )}
+
+            <div>
+              <label htmlFor={`${cfgFieldId}-base-url`} className="text-[10px] font-bold text-text-dim uppercase">Base URL <span className="normal-case font-normal text-text-dim/50">({t("providers.optional")})</span></label>
+              <input id={`${cfgFieldId}-base-url`} type="text" value={config.urlInput} onChange={e => config.setUrlInput(e.target.value)}
+                placeholder="https://api.example.com/v1"
+                className="mt-1 w-full rounded-xl border border-border-subtle bg-main px-3 py-2 text-sm font-mono outline-none focus:border-brand focus:ring-1 focus:ring-brand/20" />
+              <p className="mt-1 text-[10px] text-text-dim/60 leading-snug">
+                {t("providers.base_url_hint", {
+                  defaultValue:
+                    "Bare host:port URLs (e.g. http://192.168.1.10:11434) will get /v1 appended automatically for OpenAI-compatible endpoints.",
+                })}
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor={`${cfgFieldId}-proxy-url`} className="text-[10px] font-bold text-text-dim uppercase">{t("providers.proxy_url")} <span className="normal-case font-normal text-text-dim/50">({t("providers.optional")})</span></label>
+              <input id={`${cfgFieldId}-proxy-url`} type="text" value={config.proxyInput} onChange={e => config.setProxyInput(e.target.value)}
+                placeholder={t("providers.proxy_url_placeholder")}
+                className="mt-1 w-full rounded-xl border border-border-subtle bg-main px-3 py-2 text-sm font-mono outline-none focus:border-brand focus:ring-1 focus:ring-brand/20" />
+            </div>
+
+            {config.error && (
+              <div className="flex items-center gap-2 text-error text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {config.error}
+              </div>
+            )}
+
+            {config.testResult && (
+              <div className={`flex items-center gap-2 text-xs p-3 rounded-xl ${config.testResult.ok ? "bg-success/10 border border-success/20 text-success" : "bg-error/10 border border-error/20 text-error"}`}>
+                {config.testResult.ok ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <XCircle className="w-4 h-4 shrink-0" />}
+                {config.testResult.message}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <Button variant="primary" className="flex-1" onClick={config.saveKey}
+                disabled={saveDisabled}>
+                {config.saving ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Key className="w-4 h-4 mr-1" />}
+                {t("common.save")}
+              </Button>
+              <Button variant="secondary" onClick={config.testKey} disabled={testDisabled}>
+                {config.testing ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Zap className="w-4 h-4 mr-1" />}
+                {t("providers.test")}
+              </Button>
+              {config.hasStoredKey && (
+                <Button variant="secondary" onClick={config.removeKey} disabled={config.saving || config.testing}>
+                  <XCircle className="w-4 h-4 mr-1 text-error" />
+                  {t("providers.remove_key")}
+                </Button>
+              )}
+            </div>
+
+            {config.hasStoredKey && (
+              <SetDefaultModelSection
+                providerId={config.provider.id}
+                currentDefault={statusQuery.data?.default_provider}
+                onSetDefault={handleSetDefault}
+              />
+            )}
+
+            <ProviderMaxTokensSection
+              providerId={config.provider.id}
+              addToast={addToast}
+            />
+          </div>
+        )}
+      </DrawerPanel>
+
+      {/* Delete Confirmation Modal */}
+      <Modal isOpen={!!deleteConfirmProvider} onClose={() => setDeleteConfirmProvider(null)}
+        title={deleteConfirmProvider?.is_custom ? t("providers.delete_confirm_title") : t("providers.remove_key_confirm_title")} size="sm">
+        {deleteConfirmProvider && (
+          <div className="p-5 space-y-4">
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-main">
+              <div className="w-10 h-10 rounded-xl bg-error/10 flex items-center justify-center">
+                {getProviderIcon(deleteConfirmProvider.id)}
+              </div>
+              <div>
+                <p className="text-sm font-bold">{deleteConfirmProvider.display_name || deleteConfirmProvider.id}</p>
+                <p className="text-[10px] text-text-dim font-mono">{deleteConfirmProvider.id}</p>
+              </div>
+            </div>
+            <p className="text-sm text-text-dim">
+              {deleteConfirmProvider.is_custom ? t("providers.delete_confirm_message") : t("providers.remove_key_confirm_message")}
+            </p>
+            <div className="flex gap-2 pt-2">
+              <Button variant="ghost" className="flex-1" onClick={() => setDeleteConfirmProvider(null)}>
+                {t("common.cancel")}
+              </Button>
+              <Button variant="primary" className="flex-1 !bg-error hover:!bg-error/80" onClick={handleDeleteConfirm}>
+                <Trash2 className="w-4 h-4 mr-1" />
+                {deleteConfirmProvider.is_custom ? t("common.delete") : t("providers.remove_key")}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Create Provider Wizard */}
+      <DrawerPanel isOpen={showCreateForm} onClose={() => setShowCreateForm(false)} title={t("providers.add")} size="xl" hideCloseButton>
+        <CreateProviderWizard
+          onSubmit={async (values) => {
+            // Hook invalidates providerKeys.all + modelKeys.lists() on
+            // success, so the page refetches without an explicit refetch()
+            // call here.
+            await createRegistryContentMutation.mutateAsync({
+              contentType: "provider",
+              values,
+            });
+            setShowCreateForm(false);
+          }}
+          onCancel={() => setShowCreateForm(false)}
+        />
+      </DrawerPanel>
+
+      {/* Add-provider picker — shows the catalog of unconfigured providers.
+          Click one to open the configure drawer; the "Create custom provider"
+          footer button drops back to the existing wizard. */}
+      <DrawerPanel
+        isOpen={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        title={t("providers.picker_title", { defaultValue: "Add provider" })}
+        size="lg"
+      >
+        <div className="flex flex-col gap-4 p-5">
+          <Input
+            value={pickerSearch}
+            onChange={(e) => setPickerSearch(e.target.value)}
+            placeholder={t("common.search")}
+            leftIcon={<Search className="w-4 h-4" />}
+            rightIcon={pickerSearch && (
+              <button
+                onClick={() => setPickerSearch("")}
+                className="hover:text-text-main"
+                aria-label={t("common.clear_search", { defaultValue: "Clear search" })}
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          />
+          {pickerProviders.length === 0 ? (
+            <div className="rounded-md border border-border-subtle bg-main/40 p-4 text-[12px] text-text-dim italic">
+              {pickerSearch
+                ? t("providers.no_results")
+                : t("providers.all_configured", { defaultValue: "All available providers are already configured." })}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {pickerProviders.map((p) => {
+                // Suppressed entries collapsed into the picker by
+                // `DELETE /api/providers/{id}/key` get a one-click
+                // Re-enable instead of opening the configure drawer —
+                // CLI providers have no key/URL to set, and even for
+                // local HTTP providers the prior URL is usually still
+                // what the user wants. Non-suppressed entries keep the
+                // existing "open configure drawer" flow.
+                const suppressed = p.suppressed === true;
+                const onClick = suppressed
+                  ? () => handleReenable(p)
+                  : () => handlePick(p);
+                const reenabling =
+                  suppressed
+                  && enableProviderMutation.isPending
+                  && enableProviderMutation.variables === p.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={onClick}
+                    disabled={reenabling}
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border-subtle bg-main/40 hover:border-brand/40 hover:bg-main/60 transition-colors text-left disabled:opacity-60"
+                  >
+                    <div className={`w-9 h-9 rounded-lg grid place-items-center shrink-0 ${suppressed ? "bg-warning/10 border border-warning/20 text-warning" : "bg-brand/10 border border-brand/20 text-brand"}`}>
+                      {getProviderIcon(p.id)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-mono text-[13px] font-medium text-text-main truncate">
+                        {p.display_name || p.id}
+                      </div>
+                      <div className="font-mono text-[10.5px] text-text-dim/80 truncate">
+                        {p.id}
+                      </div>
+                    </div>
+                    {suppressed ? (
+                      <span className="flex items-center gap-1 text-[10px] font-bold uppercase text-warning shrink-0">
+                        {reenabling
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <RotateCcw className="w-3.5 h-3.5" />}
+                        {t("providers.reenable", { defaultValue: "Re-enable" })}
+                      </span>
+                    ) : (
+                      <ChevronRight className="w-4 h-4 text-text-dim shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="border-t border-border-subtle pt-3 mt-1">
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => { setPickerOpen(false); setShowCreateForm(true); }}
+              leftIcon={<Plus className="w-3.5 h-3.5" />}
+            >
+              {t("providers.create_custom", { defaultValue: "Create custom provider" })}
+            </Button>
+          </div>
+        </div>
+      </DrawerPanel>
+    </div>
+  );
+}

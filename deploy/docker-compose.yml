@@ -1,0 +1,23 @@
+services:
+  librefang:
+    image: ghcr.io/librefang/librefang:latest
+    # build:  # Uncomment to build from source
+    #   context: ..
+    #   dockerfile: Dockerfile
+    ports:
+      - "4545:4545"
+    volumes:
+      - librefang-data:/data
+    environment:
+      - LIBREFANG_LISTEN=0.0.0.0:4545
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
+    restart: unless-stopped
+
+volumes:
+  librefang-data:

@@ -1,0 +1,624 @@
+//! Auto-generated OpenAPI specification using utoipa.
+//!
+//! This module defines the `ApiDoc` struct which collects all annotated
+//! handlers and schemas into a single OpenAPI 3.1 document.
+
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use utoipa::OpenApi;
+
+use crate::oauth;
+use crate::openai_compat;
+use crate::routes;
+use crate::types;
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "LibreFang API",
+        version = env!("CARGO_PKG_VERSION"),
+        description = "LibreFang Agent Operating System — REST API for managing AI agents, tools, workflows, and more.",
+        license(name = "MIT", url = "https://opensource.org/licenses/MIT"),
+    ),
+    paths(
+        // ── System / Health ──
+        routes::health,
+        routes::health_detail,
+        routes::status,
+        routes::version,
+        routes::api_versions,
+        routes::prometheus_metrics,
+        routes::get_config,
+        routes::config_schema,
+        routes::config_set,
+        routes::config_reload,
+        routes::export_config,
+        routes::quick_init,
+        routes::security_status,
+        routes::shutdown,
+        routes::migrate_detect,
+        routes::migrate_scan,
+        routes::run_migrate,
+        routes::list_profiles,
+        routes::get_profile,
+        routes::list_agent_templates,
+        routes::get_agent_template,
+        routes::get_agent_template_toml,
+        routes::list_commands,
+        routes::get_command,
+        routes::queue_status,
+
+        // ── Agents ──
+        routes::list_agents,
+        routes::get_agent_stats,
+        routes::list_agent_events,
+        routes::spawn_agent,
+        routes::get_agent,
+        routes::kill_agent,
+        routes::patch_agent,
+        routes::send_message,
+        routes::send_message_stream,
+        routes::attach_session_stream,
+        routes::get_agent_session,
+        routes::get_agent_session_context,
+        routes::list_agent_sessions,
+        routes::create_agent_session,
+        routes::switch_agent_session,
+        routes::export_session,
+        routes::export_session_trajectory,
+        routes::import_session,
+        routes::reset_session,
+        routes::reboot_session,
+        routes::clear_agent_history,
+        routes::compact_session,
+        routes::stop_agent,
+        // Canonical agent UUID registry (refs #4614)
+        routes::list_agent_identities,
+        routes::reset_agent_identity,
+        routes::list_agent_runtime,
+        routes::stop_session,
+        routes::set_model,
+        routes::set_agent_mode,
+        routes::get_agent_traces,
+        routes::get_agent_tools,
+        routes::set_agent_tools,
+        routes::get_agent_skills,
+        routes::set_agent_skills,
+        routes::get_agent_mcp_servers,
+        routes::set_agent_mcp_servers,
+        routes::get_agent_channels,
+        routes::set_agent_channels,
+        routes::update_agent_identity,
+        routes::patch_agent_config,
+        routes::patch_hand_agent_runtime_config,
+        routes::delete_hand_agent_runtime_config,
+        routes::clone_agent,
+        routes::list_agent_files,
+        routes::get_agent_file,
+        routes::set_agent_file,
+        routes::delete_agent_file,
+        routes::upload_file,
+        routes::serve_upload,
+        routes::get_agent_deliveries,
+        routes::inject_message,
+        routes::push_message,
+        routes::reload_agent_manifest,
+        routes::suspend_agent,
+        routes::resume_agent,
+        routes::agent_metrics,
+        routes::agent_logs,
+
+        // ── Bulk Operations ──
+        routes::bulk_create_agents,
+        routes::bulk_delete_agents,
+        routes::bulk_start_agents,
+        routes::bulk_stop_agents,
+
+        // ── Skills & Tools ──
+        routes::list_skills,
+        routes::install_skill,
+        routes::uninstall_skill,
+        routes::create_skill,
+        routes::get_skill_detail,
+        routes::get_supporting_file,
+        routes::list_skill_registry,
+        routes::reload_skills,
+        // Skill evolution (write / patch / rollback)
+        routes::evolve_write_file,
+        routes::evolve_remove_file,
+        routes::evolve_update_skill,
+        routes::evolve_patch_skill,
+        routes::evolve_delete_skill,
+        routes::evolve_rollback_skill,
+        // Propose an evolved skill back to the public registry as a PR (#5842)
+        routes::propose_skill_to_registry,
+        // Skill workshop pending review (#3328)
+        routes::list_pending_candidates,
+        routes::show_pending_candidate,
+        routes::approve_pending_candidate,
+        routes::reject_pending_candidate,
+        // Propose a pending candidate directly to the registry (#5819)
+        routes::propose_pending_to_registry,
+        routes::list_tools,
+        routes::get_tool,
+        routes::invoke_tool,
+        routes::marketplace_search,
+        routes::clawhub_search,
+        routes::clawhub_browse,
+        routes::clawhub_skill_detail,
+        routes::clawhub_skill_code,
+        routes::clawhub_install,
+
+        // ── Hands ──
+        routes::list_hands,
+        routes::install_hand,
+        routes::install_hand_from_marketplace,
+        routes::list_active_hands,
+        routes::get_hand,
+        routes::get_hand_manifest,
+        routes::activate_hand,
+        routes::check_hand_deps,
+        routes::install_hand_deps,
+        routes::get_hand_settings,
+        routes::update_hand_settings,
+        routes::set_hand_secret,
+        routes::pause_hand,
+        routes::resume_hand,
+        routes::deactivate_hand,
+        routes::uninstall_hand,
+        routes::hand_stats,
+        routes::hand_instance_browser,
+        routes::reload_hands,
+
+        // ── MCP Servers (unified) ──
+        routes::list_mcp_servers,
+        routes::get_mcp_server,
+        routes::add_mcp_server,
+        routes::update_mcp_server,
+        routes::delete_mcp_server,
+        routes::reconnect_mcp_server_handler,
+        routes::list_mcp_catalog,
+        routes::get_mcp_catalog_entry,
+        routes::mcp_health_handler,
+        routes::reload_mcp_handler,
+        routes::list_mcp_taint_rules,
+        routes::patch_mcp_server_taint,
+
+        // ── MCP Server OAuth (UI-driven PKCE flow) ──
+        routes::auth_start,
+        routes::auth_status,
+        routes::auth_revoke,
+
+        // ── Extensions (dashboard-friendly aliases over MCP store) ──
+        routes::list_extensions,
+        routes::get_extension,
+        routes::install_extension,
+        routes::uninstall_extension,
+
+        // ── Models & Providers ──
+        routes::list_models,
+        routes::get_model,
+        routes::list_aliases,
+        routes::create_alias,
+        routes::delete_alias,
+        routes::add_custom_model,
+        routes::remove_custom_model,
+        routes::list_providers,
+        routes::get_provider,
+        routes::set_provider_key,
+        routes::delete_provider_key,
+        routes::enable_provider,
+        routes::test_provider,
+        routes::set_provider_url,
+        routes::set_default_provider,
+        routes::copilot_oauth_start,
+        routes::copilot_oauth_poll,
+        routes::catalog_update,
+        routes::catalog_status,
+        routes::list_credential_pools,
+
+        // ── Channels ──
+        routes::list_channels,
+        routes::configure_sidecar_channel,
+        routes::delete_sidecar_channel,
+        routes::reload_channels,
+        routes::list_channel_registry,
+        // Per-channel `/configure` (POST/DELETE) + `/instances` (GET/POST)
+        // + `/instances/{index}` (PUT/DELETE) + `/test` (POST) endpoints
+        // gone alongside the in-process channel scaffolding — they all
+        // hit a fall-through 404 via the removed `find_channel_meta`
+        // helper anyway. Sidecar channels go through
+        // `configure_sidecar_channel` (POST /channels/sidecar/{name}/configure).
+        //
+        // Single read-only QR endpoint that replaces the four removed
+        // pre-migration ones (`/{wechat,whatsapp}/qr/{start,status}`).
+        // The sidecar drives the QR lifecycle; the dashboard reads
+        // `ChannelStatus.qr` through this projection.
+        routes::get_channel_qr,
+
+        // ── Workflows / Triggers / Schedules / Cron ──
+        routes::list_workflows,
+        routes::get_workflow,
+        routes::create_workflow,
+        routes::update_workflow,
+        routes::delete_workflow,
+        routes::run_workflow,
+        routes::dry_run_workflow,
+        routes::list_workflow_runs,
+        routes::get_workflow_run,
+        routes::cancel_workflow_run,
+        routes::pause_workflow_run,
+        routes::resume_workflow_run,
+        routes::operator_action_workflow_run,
+        routes::save_workflow_as_template,
+        routes::list_workflow_templates,
+        routes::get_workflow_template,
+        routes::instantiate_template,
+        routes::list_triggers,
+        routes::create_trigger,
+        routes::get_trigger,
+        routes::delete_trigger,
+        routes::update_trigger,
+        routes::list_schedules,
+        routes::create_schedule,
+        routes::get_schedule,
+        routes::update_schedule,
+        routes::delete_schedule,
+        routes::run_schedule,
+        routes::list_cron_jobs,
+        routes::create_cron_job,
+        routes::get_cron_job,
+        routes::delete_cron_job,
+        routes::update_cron_job,
+        routes::toggle_cron_job,
+        routes::cron_job_status,
+
+        // ── Sessions ──
+        routes::list_sessions,
+        routes::get_session,
+        routes::delete_session,
+        routes::set_session_label,
+        routes::patch_session_model,
+        routes::find_session_by_label,
+        routes::search_sessions,
+        routes::session_cleanup,
+
+        // ── Budget / Usage ──
+        routes::budget_status,
+        routes::update_budget,
+        routes::provider_budget_list,
+        routes::update_provider_budget,
+        routes::agent_budget_status,
+        routes::agent_budget_ranking,
+        routes::update_agent_budget,
+        routes::user_budget_ranking,
+        routes::user_budget_detail,
+        routes::update_user_budget,
+        routes::delete_user_budget,
+        routes::usage_stats,
+        routes::usage_summary,
+        routes::usage_by_model,
+        routes::usage_by_model_performance,
+        routes::usage_daily,
+
+        // ── Auto-Dream (background memory consolidation) ──
+        routes::auto_dream_status,
+        routes::auto_dream_trigger,
+        routes::auto_dream_abort,
+        routes::auto_dream_set_enabled,
+
+        // ── Users / RBAC ──
+        routes::users::list_users,
+        routes::users::get_user,
+        routes::users::create_user,
+        routes::users::update_user,
+        routes::users::delete_user,
+        routes::users::import_users,
+        routes::users::rotate_user_key,
+        routes::users::get_user_policy,
+        routes::users::update_user_policy,
+
+        // ── Authorization (RBAC checks) ──
+        routes::check,
+        routes::effective_permissions,
+
+        // ── Memory (KV) ──
+        routes::get_agent_kv,
+        routes::get_agent_kv_key,
+        routes::set_agent_kv_key,
+        routes::delete_agent_kv_key,
+        routes::export_agent_memory,
+        routes::import_agent_memory,
+
+        // ── Proactive Memory (mem0-style) ──
+        routes::memory_search,
+        routes::memory_list,
+        routes::memory_get_user,
+        routes::memory_add,
+        routes::memory_update,
+        routes::memory_delete,
+        routes::memory_bulk_delete,
+        routes::memory_stats,
+        routes::memory_list_agent,
+        routes::memory_count_agent,
+        routes::memory_reset_agent,
+        routes::memory_clear_level,
+        routes::memory_search_agent,
+        routes::memory_stats_agent,
+        routes::memory_duplicates,
+        routes::memory_history,
+        routes::memory_consolidate,
+        routes::memory_cleanup,
+        routes::memory_decay,
+        routes::memory_export_agent,
+        routes::memory_import_agent,
+        routes::memory_query_relations,
+        routes::memory_store_relations,
+        routes::memory_config_get,
+        routes::memory_config_patch,
+
+        // ── Audit / Logs ──
+        routes::audit_recent,
+        routes::audit_verify,
+        routes::audit_query,
+        routes::audit_export,
+        routes::logs_stream,
+
+        // ── Approvals ──
+        routes::list_approvals,
+        routes::approval_count,
+        routes::create_approval,
+        routes::get_approval,
+        routes::approve_request,
+        routes::reject_request,
+        routes::modify_request,
+        routes::batch_resolve,
+        routes::list_approvals_for_session,
+        routes::approve_all_for_session,
+        routes::reject_all_for_session,
+        routes::audit_log,
+
+        // ── Goals ──
+        routes::list_goal_templates,
+
+        // ── Inbox ──
+        routes::inbox_status,
+
+        // ── Webhooks ──
+        routes::webhook_wake,
+        routes::webhook_agent,
+
+        // ── Backup / Restore ──
+        routes::create_backup,
+        routes::list_backups,
+        routes::delete_backup,
+        routes::restore_backup,
+
+        // ── Bindings ──
+        routes::list_bindings,
+        routes::add_binding,
+        routes::remove_binding,
+
+        // ── Pairing ──
+        routes::pairing_request,
+        routes::pairing_complete,
+        routes::pairing_devices,
+        routes::pairing_remove_device,
+        routes::pairing_notify,
+
+        // ── Network / Peers / Comms ──
+        routes::list_peers,
+        routes::get_peer,
+        routes::network_status,
+        routes::network_trusted_peers,
+        routes::comms_topology,
+        routes::comms_events,
+        routes::comms_events_stream,
+        routes::comms_send,
+        routes::comms_task,
+
+        // ── A2A (Agent-to-Agent) ──
+        routes::a2a_list_external_agents,
+        routes::a2a_get_external_agent,
+        routes::a2a_discover_external,
+        routes::a2a_approve_external,
+        routes::a2a_send_external,
+        routes::a2a_external_task_status,
+        routes::a2a_agent_card,
+        routes::a2a_list_agents,
+        routes::a2a_send_task,
+        routes::a2a_get_task,
+        routes::a2a_cancel_task,
+
+        // ── Plugins ──
+        routes::list_plugins,
+        routes::get_plugin,
+        routes::install_plugin,
+        routes::uninstall_plugin,
+        routes::upgrade_plugin,
+        routes::enable_plugin,
+        routes::disable_plugin,
+        routes::reload_plugin,
+        routes::prewarm_plugin,
+        routes::plugin_status,
+        routes::plugin_env,
+        routes::plugin_advanced_config,
+        routes::plugin_doctor,
+        routes::lint_plugin,
+        routes::sign_plugin,
+        routes::scaffold_plugin,
+        routes::install_plugin_deps,
+        routes::test_plugin_hook,
+        routes::list_plugin_registries,
+        // Context engine (plugin-backed)
+        routes::context_engine_config,
+        routes::context_engine_chain,
+        routes::context_engine_health,
+        routes::context_engine_metrics,
+        routes::context_engine_traces,
+        routes::context_engine_sandbox_policy,
+
+        // ── MCP HTTP ──
+        routes::mcp_http,
+
+        // ── OAuth / OIDC ──
+        oauth::auth_providers,
+        oauth::auth_login,
+        oauth::auth_login_provider,
+        oauth::auth_callback,
+        oauth::auth_callback_post,
+        oauth::auth_userinfo,
+        oauth::auth_introspect,
+        oauth::auth_refresh,
+
+        // ── Dashboard auth (credential login / logout / password change) ──
+        crate::server::dashboard_login,
+        crate::server::dashboard_auth_check,
+        crate::server::dashboard_logout,
+        crate::server::change_password,
+
+        // ── Passkey (WebAuthn/FIDO2) login + credential management (#5981) ──
+        routes::passkey::registration_options,
+        routes::passkey::registration_verify,
+        routes::passkey::authentication_options,
+        routes::passkey::authentication_verify,
+        routes::passkey::list_credentials,
+        routes::passkey::revoke_credential,
+
+        // ── OpenAI-Compatible API ──
+        openai_compat::chat_completions,
+        openai_compat::list_models,
+    ),
+    components(schemas(
+        types::JsonObject,
+        types::JsonArray,
+        types::SpawnRequest,
+        types::SpawnResponse,
+        types::AttachmentRef,
+        types::MessageRequest,
+        types::MessageResponse,
+        types::SkillInstallRequest,
+        types::SkillUninstallRequest,
+        types::SetModeRequest,
+        types::MigrateRequest,
+        types::MigrateScanRequest,
+        types::ClawHubInstallRequest,
+        types::BulkCreateRequest,
+        types::BulkCreateResult,
+        types::BulkAgentIdsRequest,
+        types::BulkActionResult,
+        types::ExtensionInstallRequest,
+        types::ExtensionUninstallRequest,
+        types::InjectMessageRequest,
+        types::InjectMessageResponse,
+        types::PushMessageRequest,
+        crate::server::ChangePasswordRequest,
+        routes::auto_dream::SetEnabledRequest,
+        routes::agents::AgentStats24hView,
+        routes::agents::AgentStatsPrevView,
+        routes::agents::AgentEventRowView,
+        routes::agents::AgentEventsResponse,
+        routes::agents::SessionContextResponse,
+        routes::users::UserView,
+        routes::users::UserUpsert,
+        routes::users::BulkImportRequest,
+        routes::users::BulkImportResult,
+        routes::users::BulkImportRow,
+        routes::users::RotateKeyResponse,
+        routes::channels::ConfigureSidecarBody,
+        routes::sidecar_describe::SidecarSchema,
+        routes::sidecar_describe::SidecarSchemaField,
+    )),
+    tags(
+        (name = "system", description = "Health checks, status, version, config, and system management"),
+        (name = "agents", description = "Agent lifecycle — spawn, query, message, kill, configure"),
+        (name = "skills", description = "Skill and tool management, ClawHub marketplace"),
+        (name = "hands", description = "Browser automation hands management"),
+        (name = "mcp", description = "MCP server management and protocol endpoints"),
+        (name = "extensions", description = "Extension management"),
+        (name = "models", description = "Model catalog, aliases, and provider management"),
+        (name = "channels", description = "Messaging channel configuration"),
+        (name = "workflows", description = "Workflow, trigger, schedule, and cron job management"),
+        (name = "sessions", description = "Session management and cleanup"),
+        (name = "budget", description = "Usage tracking and budget management"),
+        (name = "memory", description = "Agent key-value memory store"),
+        (name = "proactive-memory", description = "Proactive memory system (mem0-style) — semantic memory that agents build automatically"),
+        (name = "approvals", description = "Human-in-the-loop approval requests"),
+        (name = "webhooks", description = "External webhook triggers"),
+        (name = "network", description = "P2P network, peers, and inter-agent communication"),
+        (name = "a2a", description = "Agent-to-Agent protocol endpoints"),
+        (name = "pairing", description = "Device pairing and mobile sync"),
+        (name = "auth", description = "OAuth/OIDC authentication endpoints"),
+        (name = "openai", description = "OpenAI-compatible API endpoints"),
+        (name = "users", description = "RBAC user management — CRUD over UserConfig entries plus bulk CSV import"),
+    ),
+)]
+pub struct ApiDoc;
+
+/// GET /api/openapi.json — Serve the auto-generated OpenAPI specification.
+///
+/// The spec includes paths for both `/api/*` (unversioned) and `/api/v1/*`
+/// (explicit version) since v1 routes are mounted at both prefixes.
+pub async fn openapi_spec() -> impl IntoResponse {
+    let doc = ApiDoc::openapi();
+    let json_str = match doc.to_json() {
+        Ok(j) => j,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to generate OpenAPI spec: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    // Parse the generated spec so we can inject /api/v1/* path copies.
+    let mut spec: serde_json::Value = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to parse generated spec: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    // Duplicate every /api/* path as /api/v1/* so clients can discover both
+    // the unversioned and explicitly-versioned routes from the single spec.
+    if let Some(paths) = spec.get("paths").and_then(|p| p.as_object()).cloned() {
+        let mut v1_entries: Vec<(String, serde_json::Value)> = Vec::new();
+        for (path, ops) in &paths {
+            if let Some(suffix) = path.strip_prefix("/api/") {
+                let v1_path = format!("/api/v1/{suffix}");
+                if !paths.contains_key(&v1_path) {
+                    v1_entries.push((v1_path, ops.clone()));
+                }
+            }
+        }
+        if !v1_entries.is_empty() {
+            if let Some(paths_obj) = spec.get_mut("paths").and_then(|p| p.as_object_mut()) {
+                for (k, v) in v1_entries {
+                    paths_obj.insert(k, v);
+                }
+            }
+        }
+    }
+
+    match serde_json::to_string(&spec) {
+        Ok(output) => (
+            StatusCode::OK,
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            )],
+            output,
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to serialize spec: {e}"),
+        )
+            .into_response(),
+    }
+}

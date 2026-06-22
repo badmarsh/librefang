@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LibreFang",
+  "version": "26.6.32242",
+  "identifier": "ai.librefang.desktop",
+  "build": {},
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self' tauri: ipc: http://127.0.0.1:* ws://127.0.0.1:* https://fonts.googleapis.com https://fonts.gstatic.com; img-src 'self' tauri: data: blob: http://127.0.0.1:*; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; script-src 'self' tauri: ipc: 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; connect-src 'self' tauri: ipc: http://127.0.0.1:* ws://127.0.0.1:*; media-src 'self' blob: http://127.0.0.1:*; frame-src 'self' blob: http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png",
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Open-source Agent Operating System",
+    "longDescription": "LibreFang is an open-source Agent Operating System \u2014 run, orchestrate, and extend AI agents across every channel from your desktop.",
+    "linux": {
+      "deb": {
+        "depends": []
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    },
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "minimumSystemVersion": "12.0"
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "certificateThumbprint": null,
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  }
+}

@@ -1,0 +1,122 @@
+name: Discussion to Issue
+
+# Automatically create issues from new Discussions when content analysis
+# detects a real problem (bug report, error, regression).
+# FAQ, guides, and community threads are skipped regardless of category.
+# Manual "/to-issue" command bypasses all content filters.
+
+on:
+  discussion:
+    types: [created]
+  discussion_comment:
+    types: [created]
+  schedule:
+    - cron: '17 4 * * *' # daily 04:17 UTC — catch missed discussions
+  workflow_dispatch:
+    inputs:
+      category:
+        description: 'Category to backfill (Ideas, General, Q&A, or all)'
+        required: false
+        type: string
+        default: 'all'
+
+permissions:
+  issues: write
+  discussions: write
+
+jobs:
+  # ── Auto-promote new discussions ─────────────────────────────────
+  auto-promote:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'discussion' &&
+      (
+        github.event.discussion.category.name == 'Ideas' ||
+        github.event.discussion.category.name == 'General' ||
+        github.event.discussion.category.name == 'Q&A'
+      )
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Create issue from discussion
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          DISC_NUMBER: ${{ github.event.discussion.number }}
+          DISC_TITLE: ${{ github.event.discussion.title }}
+          DISC_URL: ${{ github.event.discussion.html_url }}
+          DISC_AUTHOR: ${{ github.event.discussion.user.login }}
+          DISC_CATEGORY: ${{ github.event.discussion.category.name }}
+        run: bash .github/scripts/discussion-to-issue.sh
+
+  # ── Manual /to-issue command from maintainers ────────────────────
+  manual-promote:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'discussion_comment' &&
+      contains(github.event.comment.body, '/to-issue') &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      )
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Create issue from discussion
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          MANUAL: 'true'
+          DISC_NUMBER: ${{ github.event.discussion.number }}
+          DISC_TITLE: ${{ github.event.discussion.title }}
+          DISC_URL: ${{ github.event.discussion.html_url }}
+          DISC_AUTHOR: ${{ github.event.discussion.user.login }}
+          DISC_CATEGORY: ${{ github.event.discussion.category.name }}
+        run: bash .github/scripts/discussion-to-issue.sh
+
+  # ── Backfill: scheduled + manual ─────────────────────────────────
+  backfill:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - name: Backfill existing discussions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          INPUT_CATEGORY: ${{ github.event.inputs.category }}
+        run: |
+          set -euo pipefail
+
+          # Build category list — iterate one at a time to avoid Q&A word-split
+          if [ -z "${INPUT_CATEGORY:-}" ] || [ "$INPUT_CATEGORY" = "all" ]; then
+            cats=("Ideas" "General" "Q&A")
+          else
+            cats=("$INPUT_CATEGORY")
+          fi
+
+          for CAT in "${cats[@]}"; do
+            echo "=== Scanning category: ${CAT} ==="
+
+            # NOTE: pipe to standalone `jq`, not `gh api --jq`. `gh api --jq`
+            # only takes a single bare filter string and does NOT accept jq's
+            # `--arg` flag, so passing it produces "accepts 1 arg(s), received 4"
+            # and the call fails before any HTTP request. Shell-injection
+            # hardening (no `${CAT}` interpolated into the jq source) is
+            # preserved by feeding the category through `--arg cat`. See #5753.
+            gh api "repos/${REPO}/discussions" --paginate \
+              | jq -r --arg cat "$CAT" '.[] | select(.category.name == $cat) | @base64' \
+            | while IFS= read -r row; do
+                decoded=$(printf '%s' "$row" | base64 -d)
+                num=$(printf '%s' "$decoded" | jq -r '.number')
+                title=$(printf '%s' "$decoded" | jq -r '.title')
+                url=$(printf '%s' "$decoded" | jq -r '.html_url')
+                author=$(printf '%s' "$decoded" | jq -r '.user.login')
+
+                DISC_NUMBER="$num" DISC_TITLE="$title" DISC_URL="$url" \
+                  DISC_AUTHOR="$author" DISC_CATEGORY="$CAT" \
+                  bash .github/scripts/discussion-to-issue.sh \
+                  || echo "  (skipped or failed)"
+
+                sleep 2
+              done
+          done

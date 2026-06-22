@@ -1,0 +1,1601 @@
+//! Core channel bridge types.
+
+/// Kernel-internal channel names that derive `SessionId`s via
+/// `SessionId::for_channel(agent, name)`. Mirrors the constants in
+/// `librefang-kernel::kernel::{SYSTEM_CHANNEL_CRON,
+/// SYSTEM_CHANNEL_AUTONOMOUS, SYSTEM_CHANNEL_WEBUI}` — duplicated
+/// here because `librefang-channels` cannot depend on
+/// `librefang-kernel` (the dependency goes the other way).
+///
+/// Audit: cron-channel-name-not-reserved — a custom channel adapter
+/// passing `channel = "cron"` (case-insensitively) used to derive the
+/// SAME `SessionId` as the cron-fire path, so two write streams could
+/// interleave into one session history. The `is_internal_cron` flag
+/// gated behaviour but not SessionId derivation.
+pub const RESERVED_SYSTEM_CHANNEL_NAMES: &[&str] = &["cron", "autonomous", "webui"];
+
+/// Returns true when `name` would collide with a kernel-internal
+/// system channel (case-insensitive). Used by `channel_type_str` to
+/// rename operator-supplied `Custom("cron")` (and friends) before
+/// they reach the SessionId derivation path. See
+/// [`RESERVED_SYSTEM_CHANNEL_NAMES`].
+pub fn is_reserved_system_channel(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    RESERVED_SYSTEM_CHANNEL_NAMES.iter().any(|r| *r == lower)
+}
+
+/// Sanitize a raw channel name before it reaches `SessionId`
+/// derivation. If `name` would collide with a kernel-internal system
+/// channel (`cron`, `autonomous`, `webui` — see
+/// [`RESERVED_SYSTEM_CHANNEL_NAMES`]), prefix it with `ext-` so it
+/// derives a disjoint `SessionId` via
+/// `SessionId::for_channel(agent, name)` instead of writing into the
+/// kernel's cron/autonomous/webui session history. Matching is
+/// case-insensitive — `for_channel` lowercases internally before
+/// hashing.
+///
+/// Audit: cron-channel-name-not-reserved. External callers that
+/// construct a `SenderContext` (HTTP request body, channel bridge
+/// adapter `ChannelType::Custom("cron")`, stored deferred-tool
+/// metadata) used to be able to drive `channel = "cron"` (or case
+/// variants) into `SessionId::for_channel` and collide with the
+/// internal cron-fire path — two independent write streams
+/// interleaving into one history. Every external `SenderContext`
+/// construction site must funnel through this helper.
+pub fn sanitize_channel_name(name: &str) -> String {
+    if is_reserved_system_channel(name) {
+        let renamed = format!("ext-{}", name.trim().to_ascii_lowercase());
+        tracing::warn!(
+            requested = %name,
+            renamed_to = %renamed,
+            "channel name collides with reserved kernel system channel; \
+             renaming to keep session history disjoint \
+             (audit: cron-channel-name-not-reserved)"
+        );
+        renamed
+    } else {
+        name.to_string()
+    }
+}
+
+/// Truncate `s` to at most `max_bytes`, respecting UTF-8 char boundaries.
+pub(crate) fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+use chrono::{DateTime, Utc};
+use librefang_types::agent::AgentId;
+use librefang_types::config::AutoRouteStrategy;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::pin::Pin;
+
+use async_trait::async_trait;
+use futures::Stream;
+use tokio::sync::mpsc;
+
+/// The type of messaging channel.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ChannelType {
+    Telegram,
+    WhatsApp,
+    Slack,
+    Discord,
+    Signal,
+    Matrix,
+    Email,
+    Teams,
+    Mattermost,
+    WeChat,
+    WebChat,
+    CLI,
+    Custom(String),
+}
+
+/// A user on a messaging platform.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelUser {
+    /// Platform-specific user ID.
+    pub platform_id: String,
+    /// Human-readable display name.
+    pub display_name: String,
+    /// Optional mapping to an LibreFang user identity.
+    pub librefang_user: Option<String>,
+}
+
+/// A known member of a group chat, accumulated from past messages.
+///
+/// Used to populate multi-user context in the system prompt so agents can
+/// distinguish between the current sender and other users mentioned in a
+/// message (e.g. `@pepe`, `@jose`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupMember {
+    /// Platform-specific user ID.
+    pub user_id: String,
+    /// Human-readable display name (what the platform shows).
+    pub display_name: String,
+    /// Optional `@handle` for platforms that expose one (Telegram, Discord, ...).
+    #[serde(default)]
+    pub username: Option<String>,
+}
+
+/// Typing indicator event from a channel.
+#[derive(Debug, Clone)]
+pub struct TypingEvent {
+    pub channel: ChannelType,
+    pub sender: ChannelUser,
+    pub is_typing: bool,
+}
+
+/// A single interactive button in a message.
+///
+/// Platform-agnostic representation used by Telegram inline keyboards,
+/// Slack Block Kit buttons, and Feishu interactive card actions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveButton {
+    /// Human-visible button label.
+    pub label: String,
+    /// Callback data string sent back when the button is clicked.
+    /// Must be ≤ 64 bytes for Telegram compatibility.
+    pub action: String,
+    /// Optional style hint: `"primary"`, `"danger"`, etc.
+    /// Interpretation is platform-specific.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    /// Optional URL to open when the button is clicked (instead of a callback).
+    /// Mutually exclusive with `action` on some platforms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+/// A complete interactive message with text and button rows.
+///
+/// Used as the parameter type for `ChannelAdapter::send_interactive()`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveMessage {
+    /// Message text displayed above the buttons.
+    pub text: String,
+    /// Rows of buttons. Each inner `Vec` is rendered as a horizontal row.
+    pub buttons: Vec<Vec<InteractiveButton>>,
+}
+
+/// A single media item in a `MediaGroup` album message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MediaGroupItem {
+    /// A photo with optional caption.
+    Photo {
+        url: String,
+        caption: Option<String>,
+    },
+    /// A video with optional caption and duration.
+    Video {
+        url: String,
+        caption: Option<String>,
+        duration_seconds: u32,
+    },
+}
+
+/// Content types that can be received from a channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ChannelContent {
+    Text(String),
+    Image {
+        url: String,
+        caption: Option<String>,
+        /// MIME type of the image (e.g. `image/jpeg`, `image/png`).
+        /// When present, this is passed through to the vision/LLM layer so that
+        /// the correct media type is used instead of the generic
+        /// `application/octet-stream` default.
+        #[serde(default)]
+        mime_type: Option<String>,
+    },
+    File {
+        url: String,
+        filename: String,
+    },
+    /// Local file data (bytes read from disk). Used by the proactive `channel_send`
+    /// tool when `file_path` is provided instead of `file_url`.
+    FileData {
+        data: Vec<u8>,
+        filename: String,
+        mime_type: String,
+    },
+    Voice {
+        url: String,
+        caption: Option<String>,
+        duration_seconds: u32,
+    },
+    Video {
+        url: String,
+        caption: Option<String>,
+        duration_seconds: u32,
+        filename: Option<String>,
+    },
+    Location {
+        lat: f64,
+        lon: f64,
+    },
+    Command {
+        name: String,
+        args: Vec<String>,
+    },
+    /// Interactive message with buttons (inline keyboards, block actions, etc.).
+    ///
+    /// Used by Telegram inline keyboards, Slack Block Kit actions, and Feishu
+    /// interactive cards. The `buttons` field is a list of rows, where each row
+    /// contains one or more buttons.
+    Interactive {
+        text: String,
+        buttons: Vec<Vec<InteractiveButton>>,
+    },
+    /// A callback from a user clicking an interactive button.
+    ///
+    /// Generated by Telegram `callback_query`, Slack `block_actions`, or
+    /// Feishu `card.action.trigger` events. The `action` field contains the
+    /// callback data string set when the button was created.
+    ButtonCallback {
+        action: String,
+        /// Original message text (if available).
+        message_text: Option<String>,
+    },
+    /// Delete a previously sent message (outbound only).
+    /// Sending this variant causes the adapter to call deleteMessage.
+    DeleteMessage {
+        message_id: String,
+    },
+    /// Edit an existing interactive message in place (outbound only).
+    /// Telegram maps this to editMessageText with a new reply_markup.
+    EditInteractive {
+        message_id: String,
+        text: String,
+        buttons: Vec<Vec<InteractiveButton>>,
+    },
+    /// Audio file (music/podcast — distinct from Voice messages).
+    /// Voice is for voice memos; Audio is for music files with metadata.
+    Audio {
+        url: String,
+        caption: Option<String>,
+        duration_seconds: u32,
+        /// Optional track title.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        /// Optional performer/artist.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        performer: Option<String>,
+    },
+    /// Animated GIF or H.264/MPEG-4 AVC video without sound.
+    Animation {
+        url: String,
+        caption: Option<String>,
+        duration_seconds: u32,
+    },
+    /// Sticker identified by a platform file_id (not a download URL).
+    Sticker {
+        file_id: String,
+    },
+    /// A group of media items sent as a single album.
+    MediaGroup {
+        items: Vec<MediaGroupItem>,
+    },
+    /// A poll or quiz sent to the user (outbound).
+    Poll {
+        question: String,
+        /// Answer option texts (2–10 options for Telegram).
+        options: Vec<String>,
+        /// When true, sent as a quiz (one correct answer).
+        #[serde(default)]
+        is_quiz: bool,
+        /// Index of the correct option (required when `is_quiz` is true).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        correct_option_id: Option<u8>,
+        /// Explanation shown after user answers (quiz mode only).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        explanation: Option<String>,
+    },
+    /// A user's answer to a poll (inbound only).
+    PollAnswer {
+        poll_id: String,
+        /// Indices of the selected options.
+        option_ids: Vec<u8>,
+    },
+}
+
+/// A unified message from any channel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelMessage {
+    /// Which channel this came from.
+    pub channel: ChannelType,
+    /// Platform-specific message identifier.
+    pub platform_message_id: String,
+    /// Who sent this message.
+    pub sender: ChannelUser,
+    /// The message content.
+    pub content: ChannelContent,
+    /// Optional target agent (if routed directly).
+    pub target_agent: Option<AgentId>,
+    /// When the message was sent.
+    pub timestamp: DateTime<Utc>,
+    /// Whether this message is from a group chat (vs DM).
+    #[serde(default)]
+    pub is_group: bool,
+    /// Thread ID for threaded conversations (platform-specific).
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    /// Arbitrary platform metadata.
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+
+/// Sender identity context passed from channels to the kernel.
+///
+/// Carries enough information for agents to know who is talking to them
+/// and from which channel, without depending on kernel-level types.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SenderContext {
+    /// Channel name (e.g. "telegram", "discord", "slack").
+    pub channel: String,
+    /// Platform-specific user ID.
+    pub user_id: String,
+    /// Platform-specific conversation ID (Telegram chat_id, Discord
+    /// channel_id, WhatsApp JID, etc.). Populated by `build_sender_context`
+    /// from `ChannelMessage.sender.platform_id` so kernel session scoping
+    /// can distinguish groups, DMs, and other conversations on the same
+    /// channel+agent pair. `None` for non-channel invocations (CLI, REST).
+    #[serde(default)]
+    pub chat_id: Option<String>,
+    /// Human-readable display name.
+    pub display_name: String,
+    /// Whether the message came from a group chat (vs DM).
+    #[serde(default)]
+    pub is_group: bool,
+    /// Whether the bot was @mentioned in this message.
+    #[serde(default)]
+    pub was_mentioned: bool,
+    /// Thread ID for threaded conversations (platform-specific).
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    /// Account ID for multi-bot deployments on the same channel.
+    #[serde(default)]
+    pub account_id: Option<String>,
+    /// Auto-routing strategy configured for this channel.
+    #[serde(default)]
+    pub auto_route: AutoRouteStrategy,
+    /// TTL in minutes for the `sticky_ttl` auto-routing strategy.
+    #[serde(default)]
+    pub auto_route_ttl_minutes: u32,
+    /// Minimum heuristic confidence threshold for `sticky_heuristic` strategy.
+    #[serde(default)]
+    pub auto_route_confidence_threshold: u32,
+    /// Sticky bonus score for `sticky_heuristic` strategy.
+    #[serde(default)]
+    pub auto_route_sticky_bonus: u32,
+    /// Divergence count threshold for `sticky_heuristic` strategy.
+    #[serde(default)]
+    pub auto_route_divergence_count: u32,
+    /// The bot's own platform `@handle` on this channel (e.g. `fandangorodelo_bot`
+    /// on Telegram). Used so the agent knows its own alias in the prompt.
+    #[serde(default)]
+    pub bot_username: Option<String>,
+    /// The current sender's `@handle` on the platform, when available.
+    #[serde(default)]
+    pub sender_username: Option<String>,
+    /// Known members of the group chat where this message was sent.
+    /// Empty for DMs and for the very first message in a group before the
+    /// roster has accumulated any entries.
+    #[serde(default)]
+    pub group_members: Vec<GroupMember>,
+    /// Group participant roster (Phase 2 §C OB-04/OB-05/GS-01).
+    ///
+    /// Populated by the WhatsApp gateway via `sock.groupMetadata(groupJid)`
+    /// (5min TTL cache) for group messages. Empty for DMs and for non-WhatsApp
+    /// channels that don't yet expose roster info. Used by the addressee guard
+    /// in `should_process_group_message` to detect when a turn is addressed
+    /// to a named participant other than the agent.
+    ///
+    /// `#[serde(default)]` ensures BC-02: stored canonical blobs that predate
+    /// this field still deserialize cleanly.
+    #[serde(default)]
+    pub group_participants: Vec<ParticipantRef>,
+    /// When true, the kernel session resolver treats this invocation as
+    /// non-channel for *storage* purposes: messages persist to
+    /// `entry.session_id` instead of `SessionId::for_channel(agent, channel)`.
+    /// `channel` itself is still used for routing cache keys so the assistant
+    /// auto-router stays per-surface (`webui` vs `telegram` etc.).
+    ///
+    /// Set by the dashboard WebSocket handler so the webui chat view shares a
+    /// session with `agent_send` / triggers and so `list_agent_sessions` /
+    /// `switch_agent_session` actually affect what the user sees.
+    #[serde(default)]
+    pub use_canonical_session: bool,
+    /// Set by the kernel's internal cron runner only — never by external API
+    /// callers. Gates [SILENT] marker processing so a regular user who
+    /// happens to type "[SILENT]" in chat does not accidentally suppress
+    /// their session history.
+    ///
+    /// Intentionally excluded from serialization so external callers cannot
+    /// inject `"is_internal_cron": true` through a JSON payload.
+    #[serde(skip)]
+    pub is_internal_cron: bool,
+    /// Set by the kernel's trusted internal system constructors (cron,
+    /// autonomous background tick, web UI) — never by external API callers.
+    ///
+    /// Marks a `SenderContext` whose `channel` deliberately equals a reserved
+    /// system name (`cron` / `autonomous` / `webui`). The kernel's
+    /// channel-derived session resolver uses this flag to skip the
+    /// reserved-name re-sanitization it applies to external callers, so the
+    /// internal paths keep deriving their legacy `for_channel(agent, "<name>")`
+    /// SessionIds and existing persistent history stays continuous. External
+    /// callers reach the resolver with this flag `false` and a reserved name
+    /// is rewritten to `ext-<name>`, keeping the two namespaces disjoint.
+    ///
+    /// Separate from [`Self::is_internal_cron`] on purpose:
+    /// `is_internal_cron` additionally gates `[SILENT]` marker stripping, which
+    /// must stay cron-only — the autonomous path must NOT strip `[SILENT]`.
+    ///
+    /// Intentionally excluded from serialization so external callers cannot
+    /// inject `"is_internal_system": true` through a JSON payload.
+    #[serde(skip)]
+    pub is_internal_system: bool,
+}
+
+/// Reference to a participant in a group chat.
+///
+/// Minimal shape required by the §C addressee guard. Full roster persistence
+/// (with phone-number resolution, role, etc.) is deferred to Phase 5.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ParticipantRef {
+    /// Platform JID (e.g. `1234567890@s.whatsapp.net` or `lid@lid`).
+    pub jid: String,
+    /// Human-readable name (push-name, contact name, or first part of JID).
+    pub display_name: String,
+}
+
+/// Agent lifecycle phase for UX indicators.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPhase {
+    /// Message is queued, waiting for agent.
+    Queued,
+    /// Agent is calling the LLM.
+    Thinking,
+    /// Agent is executing a tool.
+    ToolUse {
+        /// Tool being executed (max 64 chars, sanitized).
+        tool_name: String,
+    },
+    /// Agent is streaming tokens.
+    Streaming,
+    /// Agent finished successfully.
+    Done,
+    /// Agent encountered an error.
+    Error,
+}
+
+impl AgentPhase {
+    /// Sanitize a tool name for display (truncate to 64 chars, strip control chars).
+    #[inline]
+    pub fn tool_use(name: &str) -> Self {
+        let sanitized: String = name.chars().filter(|c| !c.is_control()).take(64).collect();
+        Self::ToolUse {
+            tool_name: sanitized,
+        }
+    }
+}
+
+/// Reaction to show in a channel (emoji-based).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LifecycleReaction {
+    /// The agent phase this reaction represents.
+    pub phase: AgentPhase,
+    /// Channel-appropriate emoji.
+    pub emoji: String,
+    /// Whether to remove the previous phase reaction.
+    pub remove_previous: bool,
+}
+
+/// Hardcoded emoji allowlist for lifecycle reactions.
+pub const ALLOWED_REACTION_EMOJI: &[&str] = &[
+    "\u{1F914}",        // 🤔 thinking
+    "\u{2699}\u{FE0F}", // ⚙️ tool_use
+    "\u{270D}\u{FE0F}", // ✍️ streaming
+    "\u{2705}",         // ✅ done
+    "\u{274C}",         // ❌ error
+    "\u{23F3}",         // ⏳ queued
+    "\u{1F504}",        // 🔄 processing
+    "\u{1F440}",        // 👀 looking
+];
+
+/// Get the default emoji for a given agent phase.
+#[inline]
+pub fn default_phase_emoji(phase: &AgentPhase) -> &'static str {
+    match phase {
+        AgentPhase::Queued => "\u{23F3}",                 // ⏳
+        AgentPhase::Thinking => "\u{1F914}",              // 🤔
+        AgentPhase::ToolUse { .. } => "\u{2699}\u{FE0F}", // ⚙️
+        AgentPhase::Streaming => "\u{270D}\u{FE0F}",      // ✍️
+        AgentPhase::Done => "\u{2705}",                   // ✅
+        AgentPhase::Error => "\u{274C}",                  // ❌
+    }
+}
+
+/// Delivery status for outbound messages.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryStatus {
+    /// Message was sent to the channel API.
+    Sent,
+    /// Message was confirmed delivered to recipient.
+    Delivered,
+    /// Message delivery failed.
+    Failed,
+    /// Best-effort delivery (no confirmation available).
+    BestEffort,
+}
+
+/// Receipt tracking outbound message delivery.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliveryReceipt {
+    /// Platform message ID (if available).
+    pub message_id: String,
+    /// Channel type this was sent through.
+    pub channel: String,
+    /// Sanitized recipient identifier (no PII).
+    pub recipient: String,
+    /// Delivery status.
+    pub status: DeliveryStatus,
+    /// When the delivery attempt occurred.
+    pub timestamp: DateTime<Utc>,
+    /// Error message (if failed — sanitized, no credentials).
+    pub error: Option<String>,
+}
+
+/// Health status for a channel adapter.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ChannelStatus {
+    /// Whether the adapter is currently connected/running.
+    pub connected: bool,
+    /// When the adapter was started (ISO 8601).
+    pub started_at: Option<DateTime<Utc>>,
+    /// When the last message was received.
+    pub last_message_at: Option<DateTime<Utc>>,
+    /// Total messages received since start.
+    pub messages_received: u64,
+    /// Total messages sent since start.
+    pub messages_sent: u64,
+    /// Last error message (if any).
+    pub last_error: Option<String>,
+    /// Latest QR-login session state, when the adapter exposes one.
+    /// Skipped entirely from JSON when the adapter has never published
+    /// a QR event — preserves the historical `ChannelStatus` shape for
+    /// every non-QR channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qr: Option<QrState>,
+}
+
+/// One QR-login session as seen by the daemon. Populated from the
+/// `qr_ready` / `qr_status` events that a sidecar emits during its
+/// authentication flow (e.g. WeChat iLink scan, WhatsApp Web pairing),
+/// and surfaced to the dashboard via `GET /api/channels/{name}/qr` so
+/// the operator can scan the code without having to read sidecar logs.
+///
+/// Lifecycle:
+/// 1. Sidecar emits `qr_ready` → `status = Pending`, `qr_code` set,
+///    optional `qr_url` populated when the platform exposes a
+///    pre-rendered scannable URL (Bluesky/WhatsApp Web), otherwise
+///    `None` and the dashboard renders `qr_code` to a canvas itself.
+/// 2. Sidecar polls the platform; intermediate progress → `qr_status`
+///    with `Scanning` (user scanned, awaiting confirm).
+/// 3. Terminal: `Confirmed` (login succeeded — sidecar continues with
+///    the obtained token), `Expired` (no scan in time), or `Failed`
+///    (network / API error). Dashboard stops polling.
+///
+/// `updated_at` advances on every state transition so dashboard polls
+/// can use it as a cheap diff signal — a stale `qr` whose
+/// `updated_at` is older than the poll's last-seen value is treated
+/// as no progress, not as a fresh QR.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QrState {
+    pub status: QrStatusKind,
+    /// Raw QR payload — the string the user's phone scanner reads.
+    /// For WeChat this is an opaque iLink token; for WhatsApp Web it
+    /// is the pairing payload; for any other QR-style auth it is
+    /// whatever the platform documents as the "scan me" string.
+    pub qr_code: String,
+    /// Optional pre-formed URL. When present the dashboard renders
+    /// THIS into the canvas (often a deep-link the platform's mobile
+    /// app recognises explicitly); when absent it falls back to
+    /// encoding `qr_code` directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qr_url: Option<String>,
+    /// Operator-facing message — populated for `Failed` / `Expired`
+    /// (the error reason), and on `Confirmed` when the sidecar wants
+    /// to point at follow-up action ("set WECHAT_BOT_TOKEN to skip QR
+    /// next time").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// When the QR will/did expire — populated by the sidecar from
+    /// the platform's response (e.g. WeChat 5-minute window). The
+    /// dashboard uses this to show a countdown and stop polling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
+    /// Wall-clock of the latest state transition. Acts as the
+    /// monotonic-ish ETag for poll-based consumers.
+    pub updated_at: DateTime<Utc>,
+}
+
+// NOTE: an earlier draft of this PR carried a `bot_token: Option<String>`
+// here so the dashboard could auto-persist on `Confirmed`. That was
+// dropped on review: the only safe persist path today is
+// `POST /api/channels/sidecar/{name}/configure`, which is a full-form
+// upsert that drops every schema-managed env key not in the payload —
+// silently wiping `WECHAT_ALLOWED_USERS` / `WECHAT_ACCOUNT_ID` / etc.
+// when called with only `{WECHAT_BOT_TOKEN}`. Until a narrow
+// `/api/channels/sidecar/{name}/secrets` endpoint exists, the sidecar
+// continues to log the captured token at DEBUG (see
+// `wechat.py::_qr_login`) and `QrState.message` instructs the operator
+// to copy it into `~/.librefang/secrets.env` themselves.
+
+/// QR-login lifecycle states. `snake_case` on the wire so the
+/// dashboard and the Python sidecar can each emit/consume the
+/// strings their convention prefers.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum QrStatusKind {
+    /// Sidecar has fetched a QR and is waiting for the user to scan.
+    /// This is the state set by `qr_ready`.
+    #[default]
+    Pending,
+    /// User scanned the QR; platform reports the login is in
+    /// progress (e.g. WeChat's confirm-on-phone step).
+    Scanning,
+    /// Login succeeded. `message` may carry follow-up instructions.
+    Confirmed,
+    /// QR window closed without a scan.
+    Expired,
+    /// Sidecar gave up — network error, API rejection, etc.
+    /// `message` carries the cause for the operator.
+    Failed,
+}
+
+// Re-export policy/format types from librefang-types for convenience.
+pub use librefang_types::config::{DmPolicy, GroupPolicy, OutputFormat};
+
+/// Platform-native role tokens returned by [`ChannelRoleQuery`].
+///
+/// Channel adapters return platform-shaped strings (`"creator"`,
+/// `"administrator"`, `"member"`, …) that the kernel translates into
+/// LibreFang `UserRole` values using the operator-defined mapping in
+/// `config.toml: [channel_role_mapping]`. Adapters stay unaware of
+/// `UserRole` so a kernel-side change to role granularity does not
+/// ripple through every channel implementation.
+///
+/// Telegram and Slack always populate exactly one token (membership
+/// status is single-valued); Discord populates every guild role the
+/// user holds. The translator scans the whole vector and never treats
+/// any position as privileged — see the kernel resolver for the
+/// per-platform precedence rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlatformRole {
+    /// Every role token the user holds on the platform. Adapters that
+    /// have nothing to report should return `Ok(None)` from
+    /// [`ChannelRoleQuery::lookup_role`] rather than constructing an
+    /// empty `PlatformRole`; an empty `roles` vector here is a no-op
+    /// for every translator (Telegram/Slack early-return on `first()`,
+    /// Discord's loop is a no-op) and resolves to default-deny `Viewer`.
+    pub roles: Vec<String>,
+}
+
+impl PlatformRole {
+    /// Convenience constructor for the single-token case (Telegram / Slack).
+    pub fn single(role: impl Into<String>) -> Self {
+        Self {
+            roles: vec![role.into()],
+        }
+    }
+
+    /// Convenience constructor for the multi-token case (Discord guild roles).
+    pub fn many(roles: Vec<String>) -> Self {
+        Self { roles }
+    }
+}
+
+/// Adapter capability for resolving the platform-native role of a user in a
+/// specific conversation/guild/workspace. Implementors only need to query
+/// the platform API — the kernel handles caching and translation.
+///
+/// Errors are surfaced as `Err`. A successful "user not in chat / no role
+/// info available" outcome is reported as `Ok(None)` so the caller can fall
+/// through to default-deny instead of treating it as a hard failure.
+#[async_trait]
+pub trait ChannelRoleQuery: Send + Sync {
+    /// Look up the platform-native role for `user_id` inside `chat_id`.
+    ///
+    /// `chat_id` is the **scope identifier as carried in
+    /// `ChannelMessage.sender.platform_id`** for the originating
+    /// message. The kernel forwards it verbatim — adapters are
+    /// responsible for mapping it to whatever the platform API needs:
+    ///
+    /// - **Telegram** — chat id (group / supergroup / DM); passed
+    ///   directly to `getChatMember`.
+    /// - **Discord** — channel id (Discord doesn't expose roles per
+    ///   channel, only per guild). The Discord adapter resolves
+    ///   channel→guild internally via `GET /channels/{channel_id}`
+    ///   and then queries `/guilds/{guild_id}/members/{user_id}`. DM
+    ///   channels (no `guild_id`) yield `Ok(None)` → default-deny.
+    /// - **Slack** — workspace-scoped roles, so `chat_id` is unused
+    ///   (the adapter ignores it and queries `users.info`).
+    ///
+    /// The kernel guarantees `chat_id` is non-empty for Telegram and
+    /// Discord before calling — empty `chat_id` on a non-Slack channel
+    /// short-circuits to default-deny `Viewer` so a misconfigured
+    /// caller cannot hot-loop the platform API.
+    async fn lookup_role(
+        &self,
+        chat_id: &str,
+        user_id: &str,
+    ) -> Result<Option<PlatformRole>, Box<dyn std::error::Error + Send + Sync>>;
+}
+
+/// Trait that every channel adapter must implement.
+///
+/// A channel adapter bridges a messaging platform to the LibreFang kernel by converting
+/// platform-specific messages into `ChannelMessage` events and sending responses back.
+#[async_trait]
+pub trait ChannelAdapter: Send + Sync {
+    /// Human-readable name of this adapter.
+    fn name(&self) -> &str;
+
+    /// The channel type this adapter handles.
+    fn channel_type(&self) -> ChannelType;
+
+    /// Start receiving messages. Returns a stream of incoming messages.
+    async fn start(
+        &self,
+    ) -> Result<
+        Pin<Box<dyn Stream<Item = ChannelMessage> + Send>>,
+        Box<dyn std::error::Error + Send + Sync>,
+    >;
+
+    /// Send a response back to a user on this channel.
+    async fn send(
+        &self,
+        user: &ChannelUser,
+        content: ChannelContent,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Send a typing indicator (optional — default no-op).
+    async fn send_typing(
+        &self,
+        _user: &ChannelUser,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+
+    /// Extra HTTP headers required to fetch a media URL that originated
+    /// from this channel. Default: empty (anonymous GET).
+    ///
+    /// Most channels expose media via signed CDN URLs that don't need
+    /// auth (Telegram `getFile`, Discord attachments, Slack files via
+    /// pre-signed `files.remote` URLs). Matrix is the exception:
+    /// MSC3916 requires `Authorization: Bearer <access_token>` on
+    /// `/_matrix/client/v1/media/download`. Returning a non-empty list
+    /// from this method tells the bridge to attach the headers when
+    /// streaming the URL into `<temp>/librefang_uploads/`.
+    ///
+    /// Implementations must only emit auth for URLs that point at
+    /// **their own** trusted endpoint — a credential leak to a
+    /// model-controlled hostname would let a forged inbound message
+    /// exfiltrate the access token. Match on the homeserver / API host
+    /// before returning.
+    fn fetch_headers_for(&self, _url: &str) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
+    /// Send a lifecycle reaction to a message (optional — default no-op).
+    async fn send_reaction(
+        &self,
+        _user: &ChannelUser,
+        _message_id: &str,
+        _reaction: &LifecycleReaction,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(())
+    }
+
+    /// Send an interactive message with buttons to a user.
+    ///
+    /// Platforms that support interactive messages (Telegram inline keyboards,
+    /// Slack Block Kit, Feishu cards) should override this. The default
+    /// implementation falls back to sending plain text with button labels
+    /// listed as a hint.
+    async fn send_interactive(
+        &self,
+        user: &ChannelUser,
+        message: &InteractiveMessage,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Fallback: render buttons as text hints
+        let mut text = message.text.clone();
+        for row in &message.buttons {
+            text.push('\n');
+            for btn in row {
+                text.push_str(&format!("  [{}]", btn.label));
+            }
+        }
+        self.send(user, ChannelContent::Text(text)).await
+    }
+
+    /// Whether error messages should be suppressed (logged only) instead of
+    /// posted publicly. Adapters where replies are visible to all followers
+    /// (e.g. Mastodon) should return `true` to avoid leaking internal errors.
+    fn suppress_error_responses(&self) -> bool {
+        false
+    }
+
+    /// Build webhook routes for mounting on the shared HTTP server.
+    ///
+    /// Adapters that handle incoming messages via HTTP webhooks (e.g. Feishu,
+    /// Teams, DingTalk) should implement this method instead of spawning their
+    /// own HTTP server inside `start()`.
+    ///
+    /// Returns `(axum::Router, message_stream)`. The router will be nested
+    /// under `/channels/{adapter_name}` on the main API server. The stream
+    /// yields parsed `ChannelMessage` items exactly like `start()` does.
+    ///
+    /// When this method returns `Some`, `start()` should return an empty stream
+    /// (the BridgeManager will use the stream returned here instead).
+    async fn create_webhook_routes(
+        &self,
+    ) -> Option<(
+        axum::Router,
+        Pin<Box<dyn Stream<Item = ChannelMessage> + Send>>,
+    )> {
+        None
+    }
+
+    /// Stop the adapter and clean up resources.
+    async fn stop(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Get the current health status of this adapter (optional — default returns disconnected).
+    fn status(&self) -> ChannelStatus {
+        ChannelStatus::default()
+    }
+
+    /// Get a stream of typing indicator events (optional — default returns None).
+    fn typing_events(&self) -> Option<mpsc::Receiver<TypingEvent>> {
+        None
+    }
+
+    /// Send a response as a thread reply (optional — default falls back to `send()`).
+    async fn send_in_thread(
+        &self,
+        user: &ChannelUser,
+        content: ChannelContent,
+        _thread_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.send(user, content).await
+    }
+
+    /// Whether this adapter owns message formatting (Markdown → platform-native).
+    ///
+    /// Sidecar adapters return `true` because the Python sidecar process
+    /// applies its own `markdown_to_*` conversion. The Rust bridge must
+    /// send raw Markdown to avoid double-formatting.
+    fn owns_formatting(&self) -> bool {
+        false
+    }
+
+    /// Whether this adapter supports streaming output (progressive message updates).
+    ///
+    /// When true, the bridge will use `send_streaming()` instead of `send()` for
+    /// agent responses, enabling real-time token display.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    /// Stream a response progressively by consuming text deltas from a channel.
+    ///
+    /// For adapters that support streaming (e.g. Telegram), this sends an initial
+    /// placeholder message, then edits it in-place as new tokens arrive. The
+    /// `thread_id` is used for forum-topic replies on supported platforms.
+    ///
+    /// The `delta_rx` receiver is consumed (ownership transfer) — the adapter
+    /// reads deltas until the channel closes. On error, delivery is partial:
+    /// tokens already sent to the user are not retracted. The bridge layer
+    /// buffers deltas and will fall back to a non-streaming `send()` if this
+    /// method returns an error.
+    ///
+    /// Default implementation collects all deltas and sends as a single message.
+    async fn send_streaming(
+        &self,
+        user: &ChannelUser,
+        mut delta_rx: mpsc::Receiver<String>,
+        _thread_id: Option<&str>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut full_text = String::new();
+        while let Some(delta) = delta_rx.recv().await {
+            full_text.push_str(&delta);
+        }
+        if !full_text.is_empty() {
+            self.send(user, ChannelContent::Text(full_text)).await?;
+        }
+        Ok(())
+    }
+
+    /// Recipients for non-conversational broadcasts originating outside an
+    /// active chat — currently just approval notifications (#4875). Default
+    /// returns an empty list, which is correct for adapters that don't know
+    /// a stable operator inbox (group-only integrations, public broadcast
+    /// platforms) and means those adapters silently skip the notification.
+    /// Adapters with a configured `allowed_users` / admin list should
+    /// override this to return those users so the bridge can deliver.
+    fn notification_recipients(&self) -> Vec<ChannelUser> {
+        Vec::new()
+    }
+
+    /// Account identifier for multi-bot deployments on the same channel type
+    /// (e.g. two Slack workspaces in the same daemon, each with a different
+    /// `account_id` in `[[channels.slack]]`). Used by the bridge to build
+    /// the same account-qualified channel key the `AgentRouter` stores when
+    /// resolving `channel_default(channel_key)` — so an approval routed to
+    /// agent A reaches only the adapter(s) bound to agent A (#4985).
+    ///
+    /// Default `None` matches single-bot adapters and adapters whose channel
+    /// has no multi-account concept. Adapters that accept per-account
+    /// configuration MUST override this to return the configured value.
+    fn account_id(&self) -> Option<&str> {
+        None
+    }
+
+    /// Per-instance channel behaviour overrides carried by the adapter
+    /// itself, rather than resolved kernel-side by channel type (#5841).
+    ///
+    /// Sidecar adapters build this from their `[[sidecar_channels]]`
+    /// block so that two adapters sharing the same `channel_type`
+    /// (e.g. two Telegram bots) can carry distinct command-policy and
+    /// message-coalescing settings — a channel-type-keyed lookup cannot
+    /// tell them apart. The bridge prefers this over the kernel-level
+    /// `channel_overrides(channel_type, …)` lookup when present.
+    ///
+    /// Default `None`: adapters with no per-instance overrides fall back
+    /// to the kernel-resolved overrides.
+    fn channel_overrides(&self) -> Option<librefang_types::config::ChannelOverrides> {
+        None
+    }
+}
+
+/// Split a message into chunks of at most `max_len` characters,
+/// preferring to split at newline boundaries.
+///
+/// HTML-entity-aware: never cuts in the middle of `&...;` sequences
+/// (e.g. `&amp;`, `&lt;`, `&#123;`).
+///
+/// HTML-tag-aware: never cuts inside an unclosed Telegram HTML tag
+/// (e.g. `<code>`, `<pre>`, `<b>`, `<i>`, `<u>`, `<s>`, `<a>`).
+///
+/// Shared utility used by Telegram, Discord, and Slack adapters.
+#[inline]
+pub fn split_message(text: &str, max_len: usize) -> Vec<&str> {
+    if text.len() <= max_len {
+        return vec![text];
+    }
+    let mut chunks = Vec::new();
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        if remaining.len() <= max_len {
+            chunks.push(remaining);
+            break;
+        }
+        // Try to split at a newline near the boundary (UTF-8 safe)
+        let safe_end = librefang_types::truncate_str(remaining, max_len).len();
+        // Avoid splitting inside an HTML entity (`&...;`).  Walk backwards
+        // from safe_end: if we find `&` without a subsequent `;` before the
+        // boundary, move the split point to just before that `&`.
+        let safe_end = retreat_past_html_entity(remaining, safe_end);
+        // Avoid splitting inside an unclosed Telegram HTML tag (e.g. `<code>`).
+        // If there is an unclosed tag at the boundary, retreat to just before
+        // its opening `<`.  Fall back to safe_end if retreating would produce
+        // an empty chunk (tag longer than max_len).
+        let safe_end = {
+            let retreated = retreat_past_html_tag(remaining, safe_end);
+            if retreated == 0 {
+                safe_end
+            } else {
+                retreated
+            }
+        };
+        let split_at = remaining[..safe_end].rfind('\n').unwrap_or(safe_end);
+        let (chunk, rest) = remaining.split_at(split_at);
+        chunks.push(chunk);
+        // Skip the newline (and optional \r) we split on
+        remaining = rest
+            .strip_prefix("\r\n")
+            .or_else(|| rest.strip_prefix('\n'))
+            .unwrap_or(rest);
+    }
+    chunks
+}
+
+/// If `pos` falls inside an unclosed Telegram HTML tag in `text[..pos]`,
+/// return the byte index of the opening `<` so the caller splits before it.
+/// Otherwise return `pos` unchanged.
+///
+/// Telegram's supported tags: `b`, `i`, `u`, `s`, `code`, `pre`, `a`.
+/// Matching is case-insensitive.  Self-closing tags are ignored.
+///
+/// The function counts open vs close tags for each tag name.  If any tag
+/// has more opens than closes, the position is retreated to just before the
+/// last unmatched opening tag's `<`.
+///
+/// If retreating would produce an empty chunk (i.e. the result would be 0),
+/// the caller should fall back to the original position to avoid an
+/// infinite loop.
+fn retreat_past_html_tag(text: &str, pos: usize) -> usize {
+    // Only Telegram-supported inline/block tags.
+    const TELEGRAM_TAGS: &[&str] = &["b", "i", "u", "s", "code", "pre", "a"];
+
+    let slice = &text[..pos];
+
+    // Walk the slice collecting tag events.
+    // We record the byte offset of the `<` for each opening tag so we can
+    // retreat to it if needed.
+    //
+    // Opening tags look like: `<tagname` (followed by `>` or whitespace or `/>`)
+    // Closing tags look like: `</tagname`
+    let mut opens: Vec<(String, usize)> = Vec::new(); // (tag_name, lt_pos) stack of unclosed opens
+    let mut i = 0usize;
+    let bytes = slice.as_bytes();
+    while i < bytes.len() {
+        if bytes[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        let lt_pos = i;
+        i += 1; // skip `<`
+        if i >= bytes.len() {
+            break;
+        }
+        // Detect closing tag
+        let is_closing = bytes[i] == b'/';
+        if is_closing {
+            i += 1;
+        }
+        // Read tag name (ASCII letters only)
+        let name_start = i;
+        while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        let name = &slice[name_start..i];
+        if name.is_empty() {
+            continue;
+        }
+        let name_lower = name.to_ascii_lowercase();
+        if !TELEGRAM_TAGS.contains(&name_lower.as_str()) {
+            // Skip to end of tag to avoid false positives inside attributes
+            while i < bytes.len() && bytes[i] != b'>' {
+                i += 1;
+            }
+            continue;
+        }
+        // Advance to the end of the tag (`>`).
+        // A self-closing tag ends with `/>` — the slash must be immediately
+        // before the `>`.  Checking for any `/` inside the tag incorrectly
+        // flags tags whose attributes contain URLs (e.g. `<a href="…/…">`).
+        while i < bytes.len() && bytes[i] != b'>' {
+            i += 1;
+        }
+        // `i` now points at `>` (or is past the end if the tag is unclosed).
+        let self_closing = i >= 1 && i < bytes.len() && bytes[i - 1] == b'/';
+        if i < bytes.len() {
+            i += 1; // consume `>`
+        }
+        if self_closing {
+            continue;
+        }
+        if is_closing {
+            // Pop the most recent matching open from our stack
+            if let Some(last_match) = opens.iter().rposition(|(n, _)| n == &name_lower) {
+                opens.remove(last_match);
+            }
+        } else {
+            opens.push((name_lower, lt_pos));
+        }
+    }
+
+    // If there are unclosed tags, retreat to the earliest unclosed opening `<`.
+    if let Some(&(_, lt_pos)) = opens.first() {
+        lt_pos
+    } else {
+        pos
+    }
+}
+
+/// If `pos` falls inside an HTML entity (`&...;`), return the index of the
+/// `&` so the caller splits before it.  Otherwise return `pos` unchanged.
+///
+/// HTML entities are at most ~10 chars long (`&#1114111;`), so we only
+/// look back a small window.
+fn retreat_past_html_entity(text: &str, pos: usize) -> usize {
+    // Maximum entity length we consider (e.g. `&#1114111;` = 10 chars).
+    const MAX_ENTITY_LEN: usize = 12;
+    // `pos.saturating_sub(MAX_ENTITY_LEN)` is a raw byte offset that can
+    // land inside a multi-byte UTF-8 character (e.g. `ñ` is 2 bytes,
+    // `😀` is 4). Slicing at a non-char-boundary index panics, so walk
+    // forward to the next char boundary before slicing. See issue #2285.
+    let raw_start = pos.saturating_sub(MAX_ENTITY_LEN);
+    let search_start = (raw_start..=pos)
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(pos);
+    if search_start >= pos {
+        return pos;
+    }
+    // Look for the last `&` in the window ending at `pos`.
+    if let Some(rel) = text[search_start..pos].rfind('&') {
+        let amp_pos = search_start + rel;
+        // Check whether there is a matching `;` between the `&` and `pos`.
+        // If not, we are inside an incomplete entity — retreat to `amp_pos`.
+        if !text[amp_pos..pos].contains(';') {
+            return amp_pos;
+        }
+    }
+    pos
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_channel_message_serialization() {
+        let msg = ChannelMessage {
+            channel: ChannelType::Telegram,
+            platform_message_id: "123".to_string(),
+            sender: ChannelUser {
+                platform_id: "user1".to_string(),
+                display_name: "Alice".to_string(),
+                librefang_user: None,
+            },
+            content: ChannelContent::Text("Hello!".to_string()),
+            target_agent: None,
+            timestamp: Utc::now(),
+            is_group: false,
+            thread_id: None,
+            metadata: HashMap::new(),
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let deserialized: ChannelMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.channel, ChannelType::Telegram);
+    }
+
+    #[test]
+    fn test_split_message_short() {
+        assert_eq!(split_message("hello", 100), vec!["hello"]);
+    }
+
+    #[test]
+    fn test_split_message_at_newlines() {
+        let text = "line1\nline2\nline3";
+        let chunks = split_message(text, 10);
+        assert_eq!(chunks, vec!["line1", "line2", "line3"]);
+    }
+
+    /// Regression: #2285 — `retreat_past_html_entity` used to slice a raw
+    /// byte offset that could land inside a multi-byte UTF-8 char, causing
+    /// `byte index N is not a char boundary; it is inside 'ñ' ...`.
+    #[test]
+    fn test_split_message_multibyte_at_boundary() {
+        // Place a 2-byte char (`ñ`) right where the entity-retreat window
+        // would otherwise slice into it. With max_len = 10, the look-back
+        // window is the 12 bytes before pos. We craft a string so the
+        // window starts inside `ñ`.
+        let text = "abcdefghijñklmn";
+        // Should not panic; should split at a char boundary.
+        let chunks = split_message(text, 10);
+        // Verify all chunks are valid UTF-8 (implicit since `&str`) and
+        // their concatenation reconstructs the original text.
+        let rebuilt: String = chunks.concat();
+        assert_eq!(rebuilt, text);
+    }
+
+    #[test]
+    fn test_split_message_emoji_near_boundary() {
+        // 4-byte emoji at the boundary — same panic class.
+        let text = "0123456789😀abcdefghij";
+        let chunks = split_message(text, 12);
+        let rebuilt: String = chunks.concat();
+        assert_eq!(rebuilt, text);
+    }
+
+    #[test]
+    fn test_split_message_long_multibyte_does_not_panic() {
+        // Reproduce the production trace: a long string of 2-byte chars
+        // straddling the 4096 boundary used to panic on `byte index 4084`.
+        let text: String = "coño ".repeat(900);
+        let chunks = split_message(&text, 4096);
+        let rebuilt: String = chunks.concat();
+        assert_eq!(rebuilt, text);
+    }
+
+    #[test]
+    fn test_retreat_past_html_entity_multibyte_safe() {
+        // Direct unit test of the helper with a string where the retreat
+        // window would land inside a multi-byte char.
+        let text = "abñ";
+        // pos = 4 (= text.len(), past the end of `ñ`)
+        // raw_start = pos.saturating_sub(12) = 0, which is on a boundary,
+        // so this case is fine. Test the harder case where pos itself is
+        // small enough that the window is fully inside the multi-byte char.
+        let result = retreat_past_html_entity(text, 4);
+        // Should not panic; should return either 4 or an earlier valid boundary.
+        assert!(text.is_char_boundary(result));
+        assert!(result <= 4);
+    }
+
+    // ── retreat_past_html_tag regression tests ────────────────────────────
+
+    /// Regression: `<a href="https://example.com/path/to/page">` must NOT be
+    /// treated as self-closing just because the URL contains `/` characters.
+    /// Only `/>` (slash immediately before `>`) is a self-closing indicator.
+    #[test]
+    fn test_anchor_with_url_not_self_closing() {
+        // max_len=57: large enough to hold the anchor block (56 chars) in one
+        // chunk, but smaller than the full string (63 chars) so a split occurs.
+        let text = "prefix\n<a href=\"https://example.com/path/to/page\">link text</a>";
+        let chunks = split_message(text, 57);
+        // The opening <a> and its closing </a> must land in the same chunk.
+        let anchor_chunk = chunks.iter().find(|c| c.contains("<a "));
+        let close_chunk = chunks.iter().find(|c| c.contains("</a>"));
+        assert!(anchor_chunk.is_some(), "no chunk contains opening <a>");
+        assert_eq!(
+            anchor_chunk, close_chunk,
+            "opening <a> and closing </a> ended up in different chunks: {:?}",
+            chunks
+        );
+    }
+
+    /// Direct unit test: `retreat_past_html_tag` on an unclosed `<code>` block.
+    #[test]
+    fn test_retreat_past_html_tag_unclosed_code() {
+        let text = "hello <code>world";
+        let pos = text.len();
+        let result = retreat_past_html_tag(text, pos);
+        // Should retreat to the `<` of `<code>`
+        assert_eq!(&text[result..], "<code>world");
+    }
+
+    /// Direct unit test: balanced tags return `pos` unchanged.
+    #[test]
+    fn test_retreat_past_html_tag_balanced_returns_pos() {
+        let text = "hello <b>world</b> end";
+        let pos = text.len();
+        let result = retreat_past_html_tag(text, pos);
+        assert_eq!(result, pos);
+    }
+
+    /// A tag longer than max_len must not cause an infinite loop.
+    #[test]
+    fn test_very_long_tag_no_infinite_loop() {
+        let text = "<code>abcdefghijklmnopqrstuvwxyz</code>";
+        let chunks = split_message(text, 8);
+        let rebuilt: String = chunks.concat();
+        assert_eq!(rebuilt, text);
+    }
+
+    #[test]
+    fn test_channel_type_matrix_serde() {
+        let ct = ChannelType::Matrix;
+        let json = serde_json::to_string(&ct).unwrap();
+        let back: ChannelType = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ChannelType::Matrix);
+    }
+
+    #[test]
+    fn test_channel_type_email_serde() {
+        let ct = ChannelType::Email;
+        let json = serde_json::to_string(&ct).unwrap();
+        let back: ChannelType = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ChannelType::Email);
+    }
+
+    #[test]
+    fn test_channel_content_variants() {
+        let text = ChannelContent::Text("hello".to_string());
+        let cmd = ChannelContent::Command {
+            name: "status".to_string(),
+            args: vec![],
+        };
+        let loc = ChannelContent::Location {
+            lat: 40.7128,
+            lon: -74.0060,
+        };
+        let video = ChannelContent::Video {
+            url: "https://example.com/video.mp4".to_string(),
+            caption: Some("my video".to_string()),
+            duration_seconds: 30,
+            filename: Some("video.mp4".to_string()),
+        };
+
+        let interactive = ChannelContent::Interactive {
+            text: "Choose an option:".to_string(),
+            buttons: vec![vec![
+                InteractiveButton {
+                    label: "Approve".to_string(),
+                    action: "approve_123".to_string(),
+                    style: Some("primary".to_string()),
+                    url: None,
+                },
+                InteractiveButton {
+                    label: "Deny".to_string(),
+                    action: "deny_123".to_string(),
+                    style: Some("danger".to_string()),
+                    url: None,
+                },
+            ]],
+        };
+
+        let callback = ChannelContent::ButtonCallback {
+            action: "approve_123".to_string(),
+            message_text: Some("Choose an option:".to_string()),
+        };
+
+        // Just verify they serialize without panic
+        serde_json::to_string(&text).unwrap();
+        serde_json::to_string(&cmd).unwrap();
+        serde_json::to_string(&loc).unwrap();
+        serde_json::to_string(&video).unwrap();
+        serde_json::to_string(&interactive).unwrap();
+        serde_json::to_string(&callback).unwrap();
+    }
+
+    #[test]
+    fn test_interactive_button_serde_roundtrip() {
+        let btn = InteractiveButton {
+            label: "Click me".to_string(),
+            action: "do_thing".to_string(),
+            style: Some("primary".to_string()),
+            url: None,
+        };
+        let json = serde_json::to_string(&btn).unwrap();
+        let back: InteractiveButton = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.label, "Click me");
+        assert_eq!(back.action, "do_thing");
+        assert_eq!(back.style, Some("primary".to_string()));
+        assert!(back.url.is_none());
+    }
+
+    #[test]
+    fn test_interactive_button_url_variant() {
+        let btn = InteractiveButton {
+            label: "Open link".to_string(),
+            action: String::new(),
+            style: None,
+            url: Some("https://example.com".to_string()),
+        };
+        let json = serde_json::to_string(&btn).unwrap();
+        assert!(json.contains("https://example.com"));
+        // `style` should be skipped when None
+        assert!(!json.contains("style"));
+    }
+
+    #[test]
+    fn test_interactive_message_serde_roundtrip() {
+        let msg = InteractiveMessage {
+            text: "Pick one:".to_string(),
+            buttons: vec![
+                vec![
+                    InteractiveButton {
+                        label: "A".to_string(),
+                        action: "pick_a".to_string(),
+                        style: None,
+                        url: None,
+                    },
+                    InteractiveButton {
+                        label: "B".to_string(),
+                        action: "pick_b".to_string(),
+                        style: None,
+                        url: None,
+                    },
+                ],
+                vec![InteractiveButton {
+                    label: "C".to_string(),
+                    action: "pick_c".to_string(),
+                    style: Some("danger".to_string()),
+                    url: None,
+                }],
+            ],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let back: InteractiveMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.text, "Pick one:");
+        assert_eq!(back.buttons.len(), 2);
+        assert_eq!(back.buttons[0].len(), 2);
+        assert_eq!(back.buttons[1].len(), 1);
+        assert_eq!(back.buttons[1][0].label, "C");
+    }
+
+    #[test]
+    fn test_channel_content_interactive_serde() {
+        let content = ChannelContent::Interactive {
+            text: "Approve request?".to_string(),
+            buttons: vec![vec![
+                InteractiveButton {
+                    label: "Yes".to_string(),
+                    action: "approve".to_string(),
+                    style: Some("primary".to_string()),
+                    url: None,
+                },
+                InteractiveButton {
+                    label: "No".to_string(),
+                    action: "reject".to_string(),
+                    style: Some("danger".to_string()),
+                    url: None,
+                },
+            ]],
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        let back: ChannelContent = serde_json::from_str(&json).unwrap();
+        match back {
+            ChannelContent::Interactive { text, buttons } => {
+                assert_eq!(text, "Approve request?");
+                assert_eq!(buttons.len(), 1);
+                assert_eq!(buttons[0].len(), 2);
+                assert_eq!(buttons[0][0].action, "approve");
+            }
+            other => panic!("Expected Interactive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_channel_content_button_callback_serde() {
+        let content = ChannelContent::ButtonCallback {
+            action: "approve_456".to_string(),
+            message_text: Some("Original message".to_string()),
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        let back: ChannelContent = serde_json::from_str(&json).unwrap();
+        match back {
+            ChannelContent::ButtonCallback {
+                action,
+                message_text,
+            } => {
+                assert_eq!(action, "approve_456");
+                assert_eq!(message_text, Some("Original message".to_string()));
+            }
+            other => panic!("Expected ButtonCallback, got {other:?}"),
+        }
+    }
+
+    // ----- AgentPhase tests -----
+
+    #[test]
+    fn test_agent_phase_serde_roundtrip() {
+        let phases = vec![
+            AgentPhase::Queued,
+            AgentPhase::Thinking,
+            AgentPhase::tool_use("web_fetch"),
+            AgentPhase::Streaming,
+            AgentPhase::Done,
+            AgentPhase::Error,
+        ];
+        for phase in &phases {
+            let json = serde_json::to_string(phase).unwrap();
+            let back: AgentPhase = serde_json::from_str(&json).unwrap();
+            assert_eq!(*phase, back);
+        }
+    }
+
+    #[test]
+    fn test_agent_phase_tool_use_sanitizes() {
+        let phase = AgentPhase::tool_use("hello\x00world\x01test");
+        if let AgentPhase::ToolUse { tool_name } = phase {
+            assert!(!tool_name.contains('\x00'));
+            assert!(!tool_name.contains('\x01'));
+            assert!(tool_name.contains("hello"));
+        } else {
+            panic!("Expected ToolUse variant");
+        }
+    }
+
+    #[test]
+    fn test_agent_phase_tool_use_truncates_long_name() {
+        let long_name = "a".repeat(200);
+        let phase = AgentPhase::tool_use(&long_name);
+        if let AgentPhase::ToolUse { tool_name } = phase {
+            assert!(tool_name.len() <= 64);
+        }
+    }
+
+    #[test]
+    fn test_default_phase_emoji() {
+        assert_eq!(default_phase_emoji(&AgentPhase::Thinking), "\u{1F914}");
+        assert_eq!(default_phase_emoji(&AgentPhase::Done), "\u{2705}");
+        assert_eq!(default_phase_emoji(&AgentPhase::Error), "\u{274C}");
+    }
+
+    // ----- DeliveryReceipt tests -----
+
+    #[test]
+    fn test_delivery_status_serde() {
+        let statuses = vec![
+            DeliveryStatus::Sent,
+            DeliveryStatus::Delivered,
+            DeliveryStatus::Failed,
+            DeliveryStatus::BestEffort,
+        ];
+        for status in &statuses {
+            let json = serde_json::to_string(status).unwrap();
+            let back: DeliveryStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(*status, back);
+        }
+    }
+
+    #[test]
+    fn test_delivery_receipt_serde() {
+        let receipt = DeliveryReceipt {
+            message_id: "msg-123".to_string(),
+            channel: "telegram".to_string(),
+            recipient: "user-456".to_string(),
+            status: DeliveryStatus::Sent,
+            timestamp: Utc::now(),
+            error: None,
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        let back: DeliveryReceipt = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.message_id, "msg-123");
+        assert_eq!(back.status, DeliveryStatus::Sent);
+    }
+
+    #[test]
+    fn test_delivery_receipt_with_error() {
+        let receipt = DeliveryReceipt {
+            message_id: "msg-789".to_string(),
+            channel: "slack".to_string(),
+            recipient: "channel-abc".to_string(),
+            status: DeliveryStatus::Failed,
+            timestamp: Utc::now(),
+            error: Some("Connection refused".to_string()),
+        };
+        let json = serde_json::to_string(&receipt).unwrap();
+        assert!(json.contains("Connection refused"));
+    }
+
+    /// Audit: cron-channel-name-not-reserved. The reservation list
+    /// must match (case-insensitively) the kernel-internal channel
+    /// names. A drift between this list and
+    /// `librefang-kernel::kernel::SYSTEM_CHANNEL_*` is fine
+    /// short-term but indicates an upstream channel migration —
+    /// keep the lists in sync.
+    #[test]
+    fn is_reserved_system_channel_matches_case_insensitively() {
+        for variant in [
+            "cron",
+            "CRON",
+            "Cron",
+            "  cron  ",
+            "autonomous",
+            "Autonomous",
+            "webui",
+            "WebUI",
+        ] {
+            assert!(
+                is_reserved_system_channel(variant),
+                "{variant:?} must be flagged as reserved"
+            );
+        }
+    }
+
+    #[test]
+    fn is_reserved_system_channel_passes_through_normal_names() {
+        for name in ["telegram", "slack", "discord", "ext-cron", "custom-bot", ""] {
+            assert!(
+                !is_reserved_system_channel(name),
+                "{name:?} must NOT be flagged as reserved"
+            );
+        }
+    }
+}

@@ -1,0 +1,501 @@
+// Query key factories — hierarchical pattern for precise invalidation.
+//
+// Convention:
+//   all          → broadest prefix (for invalidateQueries({ queryKey: xxxKeys.all }))
+//   lists()      → all list queries
+//   list(filters) → specific list query
+//   details()    → all detail queries
+//   detail(id)   → specific detail query
+//
+// All arrays use `as const` for structural stability.
+
+export const autoDreamKeys = {
+  all: ["autoDream"] as const,
+  status: () => [...autoDreamKeys.all, "status"] as const,
+};
+
+export const agentKeys = {
+  all: ["agents"] as const,
+  lists: () => [...agentKeys.all, "list"] as const,
+  list: (opts: { includeHands?: boolean } = {}) =>
+    [...agentKeys.lists(), opts] as const,
+  details: () => [...agentKeys.all, "detail"] as const,
+  detail: (id: string) => [...agentKeys.details(), id] as const,
+  templates: () => [...agentKeys.all, "templates"] as const,
+  sessions: (agentId: string) =>
+    [...agentKeys.all, "sessions", agentId] as const,
+  // History snapshot for a single (agent, session) pair — hydrates ChatPage
+  // when the user navigates to an agent or switches sessions. `sessionId`
+  // omitted/null means "the agent's current active session".
+  sessionSnapshots: (agentId: string) =>
+    [...agentKeys.all, "session", agentId] as const,
+  session: (agentId: string, sessionId?: string | null) =>
+    [...agentKeys.sessionSnapshots(agentId), sessionId ?? null] as const,
+  // Context-window usage snapshot for a session — backs the chat header
+  // indicator. Anchored under `sessionSnapshots` so it shares the same
+  // (agent, session) invalidation subtree, but kept on its own leaf so
+  // polling the indicator does not churn the heavy history snapshot cache.
+  sessionContext: (agentId: string, sessionId?: string | null) =>
+    [...agentKeys.sessionSnapshots(agentId), sessionId ?? null, "context"] as const,
+  stats: (agentId: string) =>
+    [...agentKeys.all, "stats", agentId] as const,
+  events: (agentId: string, limit: number) =>
+    [...agentKeys.all, "events", agentId, limit] as const,
+  promptVersions: (agentId: string) =>
+    [...agentKeys.all, "promptVersions", agentId] as const,
+  experiments: (agentId: string) =>
+    [...agentKeys.all, "experiments", agentId] as const,
+  experimentMetrics: (experimentId: string) =>
+    [...agentKeys.all, "experimentMetrics", experimentId] as const,
+  tools: (agentId: string) =>
+    [...agentKeys.all, "tools", agentId] as const,
+  // Per-agent skill assignment (#4917) — backs the inline assignment UI on
+  // the agent detail Skills tab. Distinct subtree from `tools` so a skill
+  // PUT only invalidates the skill read, not the tool read.
+  skills: (agentId: string) =>
+    [...agentKeys.all, "skills", agentId] as const,
+};
+
+// Central prompt repository (#6160). The fleet-wide overview
+// (`GET /api/prompts/overview`) is a genuinely new endpoint and gets its
+// own domain key. Per-agent version lists keep using
+// `agentKeys.promptVersions(agentId)` — that read hits the same
+// `/agents/{id}/prompts/versions` endpoint the existing prompt-version
+// hooks subscribe to, so caching it under one key avoids a duplicate
+// subscription to the same data.
+export const promptsKeys = {
+  all: ["prompts"] as const,
+  lists: () => [...promptsKeys.all, "list"] as const,
+  // The overview is the only fleet-wide list today; tag it with a distinguishing
+  // segment so `list()` is strictly more specific than `lists()`. This keeps the
+  // two-level invariant intact — `invalidateQueries({ queryKey: lists() })` still
+  // matches the overview, while a future `list(filters)` slots in as a sibling
+  // without a breaking rename of the current key.
+  list: () => [...promptsKeys.lists(), "overview"] as const,
+  details: () => [...promptsKeys.all, "detail"] as const,
+  detail: (agentId: string) => [...promptsKeys.details(), agentId] as const,
+};
+
+export const toolKeys = {
+  all: ["tools"] as const,
+  list: () => [...toolKeys.all, "list"] as const,
+};
+
+export const modelKeys = {
+  all: ["models"] as const,
+  lists: () => [...modelKeys.all, "list"] as const,
+  list: (filters: {
+    provider?: string;
+    tier?: string;
+    available?: boolean;
+  } = {}) => [...modelKeys.lists(), filters] as const,
+  details: () => [...modelKeys.all, "detail"] as const,
+  detail: (id: string) => [...modelKeys.details(), id] as const,
+  overrides: (modelKey: string) =>
+    [...modelKeys.all, "overrides", modelKey] as const,
+};
+
+export const providerKeys = {
+  all: ["providers"] as const,
+  lists: () => [...providerKeys.all, "list"] as const,
+};
+
+// Credential pools (#4965) — per-provider multi-key rotation status. Kept
+// hierarchical so an invalidate on `credentialPoolKeys.all` clears every
+// pool query after a mutation (future `auth pool add` / `strategy` HTTP
+// endpoint will live alongside `useCredentialPools`).
+export const credentialPoolKeys = {
+  all: ["credentialPools"] as const,
+  lists: () => [...credentialPoolKeys.all, "list"] as const,
+};
+
+export const channelKeys = {
+  all: ["channels"] as const,
+  lists: () => [...channelKeys.all, "list"] as const,
+  // QR-login state polling (replaces the pre-migration wechatQrStart /
+  // wechatQrStatus / whatsappQrStart / whatsappQrStatus quadruple).
+  // Anchored under `channelKeys.all` so `invalidateQueries({ queryKey:
+  // channelKeys.all })` after a channel configure mutation also
+  // refreshes any open QR section — e.g. after the dashboard
+  // auto-persists the captured bot_token, the next QR poll surfaces
+  // any sidecar-restart-triggered state change.
+  qr: (name: string) => [...channelKeys.all, "qr", name] as const,
+};
+
+// Cross-agent comms / message bus. Hierarchical mirror of `agentKeys` so
+// `invalidateQueries({ queryKey: commsKeys.lists() })` batches every
+// list-shaped read (topology + events) in a single sweep — the previous
+// shape had `topology()` and `events(limit)` parked directly under `all`,
+// which forced mutations to invalidate the whole `commsKeys.all` subtree
+// or enumerate each list factory by hand. `details()`/`detail(id)` are
+// reserved for the per-event drill-down view planned alongside the
+// `/api/comms/events/:id` endpoint.
+export const commsKeys = {
+  all: ["comms"] as const,
+  lists: () => [...commsKeys.all, "list"] as const,
+  topology: () => [...commsKeys.lists(), "topology"] as const,
+  events: (limit = 200) => [...commsKeys.lists(), "events", limit] as const,
+  details: () => [...commsKeys.all, "detail"] as const,
+  detail: (id: string) => [...commsKeys.details(), id] as const,
+};
+
+export const skillKeys = {
+  all: ["skills"] as const,
+  lists: () => [...skillKeys.all, "list"] as const,
+  details: () => [...skillKeys.all, "detail"] as const,
+  detail: (name: string) => [...skillKeys.details(), name] as const,
+  supportingFiles: (name: string) =>
+    [...skillKeys.detail(name), "supportingFile"] as const,
+  supportingFile: (name: string, path: string) =>
+    [...skillKeys.supportingFiles(name), path] as const,
+  // Skill workshop (#3328) pending-candidate queries. Hierarchical so
+  // `invalidateQueries({ queryKey: skillKeys.pending() })` clears every
+  // pending list / detail at once after an approve / reject mutation.
+  pending: () => [...skillKeys.all, "pending"] as const,
+  pendingList: (agent?: string | null) =>
+    [...skillKeys.pending(), "list", agent ?? null] as const,
+  pendingDetail: (id: string) =>
+    [...skillKeys.pending(), "detail", id] as const,
+};
+
+export const clawhubKeys = {
+  all: ["clawhub"] as const,
+  browse: (filters: {
+    sort?: string;
+    limit?: number;
+    cursor?: string;
+  } = {}) => [...clawhubKeys.all, "browse", filters] as const,
+  search: (query: string) =>
+    [...clawhubKeys.all, "search", query] as const,
+  details: () => [...clawhubKeys.all, "detail"] as const,
+  detail: (slug: string) => [...clawhubKeys.details(), slug] as const,
+};
+
+export const clawhubCnKeys = {
+  all: ["clawhub-cn"] as const,
+  browse: (filters: {
+    sort?: string;
+    limit?: number;
+    cursor?: string;
+  } = {}) => [...clawhubCnKeys.all, "browse", filters] as const,
+  search: (query: string) =>
+    [...clawhubCnKeys.all, "search", query] as const,
+  details: () => [...clawhubCnKeys.all, "detail"] as const,
+  detail: (slug: string) => [...clawhubCnKeys.details(), slug] as const,
+};
+
+export const skillhubKeys = {
+  all: ["skillhub"] as const,
+  browse: (sort?: string) => [...skillhubKeys.all, "browse", sort] as const,
+  search: (query: string) =>
+    [...skillhubKeys.all, "search", query] as const,
+  details: () => [...skillhubKeys.all, "detail"] as const,
+  detail: (slug: string) => [...skillhubKeys.details(), slug] as const,
+};
+
+export const fanghubKeys = {
+  all: ["fanghub"] as const,
+  lists: () => [...fanghubKeys.all, "list"] as const,
+};
+
+export const handKeys = {
+  all: ["hands"] as const,
+  lists: () => [...handKeys.all, "list"] as const,
+  active: () => [...handKeys.all, "active"] as const,
+  details: () => [...handKeys.all, "detail"] as const,
+  detail: (id: string) => [...handKeys.details(), id] as const,
+  settings: (handId: string) =>
+    [...handKeys.all, "settings", handId] as const,
+  stats: (instanceId: string) =>
+    [...handKeys.all, "stats", instanceId] as const,
+  statsBatch: (instanceIds: readonly string[]) =>
+    [...handKeys.all, "statsBatch", instanceIds] as const,
+  session: (instanceId: string) =>
+    [...handKeys.all, "session", instanceId] as const,
+  instanceStatus: (instanceId: string) =>
+    [...handKeys.all, "instanceStatus", instanceId] as const,
+  manifest: (handId: string) =>
+    [...handKeys.all, "manifest", handId] as const,
+};
+
+export const workflowKeys = {
+  all: ["workflows"] as const,
+  lists: () => [...workflowKeys.all, "list"] as const,
+  details: () => [...workflowKeys.all, "detail"] as const,
+  detail: (id: string) => [...workflowKeys.details(), id] as const,
+  runs: (workflowId: string) =>
+    [...workflowKeys.all, "runs", workflowId] as const,
+  runDetails: () => [...workflowKeys.all, "runDetail"] as const,
+  runDetail: (runId: string) =>
+    [...workflowKeys.runDetails(), runId] as const,
+  templates: (filters: { q?: string; category?: string } = {}) =>
+    [...workflowKeys.all, "templates", filters] as const,
+  // HITL operator-step pauses (#4977). Two surfaces:
+  //   - `operatorPause(runId)` — single-run inspector behind the
+  //     workflow-run detail panel; returns the artifact + allowed
+  //     actions.
+  //   - `pendingOperator()` — worklist across all currently-paused
+  //     operator runs.
+  operatorAll: () => [...workflowKeys.all, "operator"] as const,
+  operatorPause: (runId: string) =>
+    [...workflowKeys.operatorAll(), "pause", runId] as const,
+  pendingOperator: () => [...workflowKeys.operatorAll(), "pending"] as const,
+};
+
+export const scheduleKeys = {
+  all: ["schedules"] as const,
+  lists: () => [...scheduleKeys.all, "list"] as const,
+};
+
+export const triggerKeys = {
+  all: ["triggers"] as const,
+  lists: () => [...triggerKeys.all, "list"] as const,
+  list: (agentId?: string) => [...triggerKeys.lists(), agentId] as const,
+  details: () => [...triggerKeys.all, "detail"] as const,
+  detail: (id: string) => [...triggerKeys.details(), id] as const,
+};
+
+export const cronKeys = {
+  all: ["cron"] as const,
+  jobs: (agentId?: string) =>
+    [...cronKeys.all, "jobs", agentId] as const,
+};
+
+export const approvalKeys = {
+  all: ["approvals"] as const,
+  lists: () => [...approvalKeys.all, "list"] as const,
+  count: () => [...approvalKeys.all, "count"] as const,
+  pending: (agentId?: string | null) =>
+    [...approvalKeys.all, "pending", agentId] as const,
+  audit: (filters: {
+    limit?: number;
+    offset?: number;
+    agent_id?: string;
+    tool_name?: string;
+  } = {}) => [...approvalKeys.all, "audit", filters] as const,
+};
+
+export const totpKeys = {
+  all: ["totp"] as const,
+  status: () => [...totpKeys.all, "status"] as const,
+};
+
+export const passkeyKeys = {
+  all: ["passkeys"] as const,
+  lists: () => [...passkeyKeys.all, "list"] as const,
+  list: () => [...passkeyKeys.lists()] as const,
+};
+
+export const memoryKeys = {
+  all: ["memory"] as const,
+  lists: () => [...memoryKeys.all, "list"] as const,
+  list: (filters: {
+    agentId?: string;
+    offset?: number;
+    limit?: number;
+    category?: string;
+  } = {}) => [...memoryKeys.lists(), filters] as const,
+  searchOrList: (search: string) => [...memoryKeys.lists(), "searchOrList", search] as const,
+  statsAll: () => [...memoryKeys.all, "stats"] as const,
+  stats: (agentId?: string) =>
+    [...memoryKeys.statsAll(), agentId] as const,
+  config: () => [...memoryKeys.all, "config"] as const,
+  // Per-agent KV memory store — distinct subtree from proactive memory
+  // so invalidating proactive entries doesn't invalidate KV reads (and
+  // vice versa). Always keyed by agentId; no list-level invalidation
+  // needed because each agent's KV is rendered independently.
+  agentKvs: () => [...memoryKeys.all, "agentKv"] as const,
+  agentKv: (agentId: string) => [...memoryKeys.agentKvs(), agentId] as const,
+};
+
+export const usageKeys = {
+  all: ["usage"] as const,
+  summary: () => [...usageKeys.all, "summary"] as const,
+  byAgent: () => [...usageKeys.all, "byAgent"] as const,
+  byModel: () => [...usageKeys.all, "byModel"] as const,
+  modelPerformance: () =>
+    [...usageKeys.all, "modelPerformance"] as const,
+  daily: () => [...usageKeys.all, "daily"] as const,
+};
+
+export const budgetKeys = {
+  all: ["budget"] as const,
+  status: () => [...budgetKeys.all, "status"] as const,
+  // Per-provider snapshot (#5650). Hierarchical under `budgetKeys.all`
+  // so `invalidateQueries({ queryKey: budgetKeys.all })` after a global
+  // `PUT /api/budget` (which can change `alert_threshold` and therefore
+  // the green/yellow/red coloring on each provider row) drops this cache
+  // too without a second `invalidateQueries` call.
+  providers: () => [...budgetKeys.all, "providers"] as const,
+};
+
+export const goalKeys = {
+  all: ["goals"] as const,
+  lists: () => [...goalKeys.all, "list"] as const,
+  templates: () => [...goalKeys.all, "templates"] as const,
+  runs: () => [...goalKeys.all, "run"] as const,
+  run: (id: string) => [...goalKeys.runs(), id] as const,
+};
+
+export const networkKeys = {
+  all: ["network"] as const,
+  status: () => [...networkKeys.all, "status"] as const,
+  trustedPeers: () => [...networkKeys.all, "trusted-peers"] as const,
+};
+
+export const peerKeys = {
+  all: ["peers"] as const,
+  lists: () => [...peerKeys.all, "list"] as const,
+  details: () => [...peerKeys.all, "detail"] as const,
+  detail: (id: string) => [...peerKeys.details(), id] as const,
+};
+
+export const a2aKeys = {
+  all: ["a2a"] as const,
+  agents: () => [...a2aKeys.all, "agents"] as const,
+};
+
+export const sessionKeys = {
+  all: ["sessions"] as const,
+  lists: () => [...sessionKeys.all, "list"] as const,
+  details: () => [...sessionKeys.all, "detail"] as const,
+  detail: (id: string) => [...sessionKeys.details(), id] as const,
+};
+
+export const overviewKeys = {
+  all: ["dashboard"] as const,
+  snapshot: () => [...overviewKeys.all, "snapshot"] as const,
+  version: () => [...overviewKeys.all, "version"] as const,
+};
+
+export const runtimeKeys = {
+  all: ["runtime"] as const,
+  status: () => [...runtimeKeys.all, "status"] as const,
+  queueStatus: () => [...runtimeKeys.all, "queue", "status"] as const,
+  healthDetail: () => [...runtimeKeys.all, "health", "detail"] as const,
+  healthLiveness: () => [...runtimeKeys.all, "health", "liveness"] as const,
+  security: () => [...runtimeKeys.all, "security"] as const,
+  backups: () => [...runtimeKeys.all, "backups"] as const,
+  tasks: () => [...runtimeKeys.all, "tasks"] as const,
+  taskStatus: () => [...runtimeKeys.tasks(), "status"] as const,
+  taskList: (status?: string) =>
+    [...runtimeKeys.tasks(), "list", status] as const,
+};
+
+export const auditKeys = {
+  all: ["audit"] as const,
+  recent: (limit: number) => [...auditKeys.all, "recent", limit] as const,
+  verify: () => [...auditKeys.all, "verify"] as const,
+  // M5 / #3203 — searchable audit query. The factory ships now so the
+  // dashboard data layer is ready; the daemon endpoint becomes real once
+  // M5 lands.
+  queries: () => [...auditKeys.all, "query"] as const,
+  query: (filters: {
+    limit?: number;
+    offset?: number;
+    user?: string;
+    action?: string;
+    status?: string;
+    since?: string;
+    until?: string;
+  } = {}) => [...auditKeys.queries(), filters] as const,
+};
+
+export const userKeys = {
+  all: ["users"] as const,
+  lists: () => [...userKeys.all, "list"] as const,
+  list: (filters: { role?: string; search?: string } = {}) =>
+    [...userKeys.lists(), filters] as const,
+  details: () => [...userKeys.all, "detail"] as const,
+  detail: (name: string) => [...userKeys.details(), name] as const,
+};
+
+// M5 / #3203 — per-user spend ranking + per-user detail. Endpoint stubbed
+// until budget tracking sprouts a user dimension.
+export const userBudgetKeys = {
+  all: ["userBudget"] as const,
+  details: () => [...userBudgetKeys.all, "detail"] as const,
+  detail: (name: string) => [...userBudgetKeys.details(), name] as const,
+};
+
+// RBAC M3 (#3205) — per-user tool/memory policy. Lives at
+// `/api/users/{name}/policy`; the matrix editor in `UserPolicyPage`
+// consumes this hierarchy.
+export const permissionPolicyKeys = {
+  all: ["permissionPolicy"] as const,
+  details: () => [...permissionPolicyKeys.all, "detail"] as const,
+  detail: (name: string) => [...permissionPolicyKeys.details(), name] as const,
+};
+
+// Effective-permissions snapshot — backs the permission simulator. Read-only,
+// so only `all` and `effective(name)` are needed. Hierarchical so
+// invalidating `authzKeys.all` clears every cached snapshot at once (e.g.
+// after a config reload).
+export const authzKeys = {
+  all: ["authz"] as const,
+  effectives: () => [...authzKeys.all, "effective"] as const,
+  effective: (name: string) => [...authzKeys.effectives(), name] as const,
+};
+
+export const mediaKeys = {
+  all: ["media"] as const,
+  providers: () => [...mediaKeys.all, "providers"] as const,
+  videoTasks: () => [...mediaKeys.all, "videoTasks"] as const,
+  videoTask: (taskId: string, provider: string) =>
+    [...mediaKeys.videoTasks(), taskId, provider] as const,
+  // Stable key for the disabled state of useVideoTask — paired with skipToken
+  // so every not-yet-submitted render shares the same (unused) cache slot.
+  // Shape mirrors `videoTask(taskId, provider)` (4 segments) so both branches
+  // of the query are type-compatible under useQuery's generic inference.
+  videoTaskDisabled: () =>
+    [...mediaKeys.videoTasks(), "__disabled__", "__disabled__"] as const,
+};
+
+export const mcpKeys = {
+  all: ["mcp"] as const,
+  servers: () => [...mcpKeys.all, "servers"] as const,
+  server: (id: string) => [...mcpKeys.servers(), id] as const,
+  authStatus: (id: string) => [...mcpKeys.all, "authStatus", id] as const,
+  catalog: () => [...mcpKeys.all, "catalog"] as const,
+  catalogEntry: (id: string) => [...mcpKeys.catalog(), id] as const,
+  health: () => [...mcpKeys.all, "health"] as const,
+  // Read-only `[[taint_rules]]` registry — drives dashboard validation
+  // that flags rule_set names not registered in config.toml.
+  taintRules: () => [...mcpKeys.all, "taint-rules"] as const,
+};
+
+export const pluginKeys = {
+  all: ["plugins"] as const,
+  lists: () => [...pluginKeys.all, "list"] as const,
+  registries: () => [...pluginKeys.all, "registries"] as const,
+};
+
+export const configKeys = {
+  all: ["config"] as const,
+  full: () => [...configKeys.all, "full"] as const,
+  schema: () => [...configKeys.all, "schema"] as const,
+  rawToml: () => [...configKeys.all, "rawToml"] as const,
+};
+
+export const registryKeys = {
+  all: ["registry"] as const,
+  schema: (contentType: string) =>
+    [...registryKeys.all, "schema", contentType] as const,
+};
+
+export const telemetryKeys = {
+  all: ["telemetry"] as const,
+  metrics: () => [...telemetryKeys.all, "metrics"] as const,
+};
+
+export const terminalKeys = {
+  all: ["terminal"] as const,
+  health: () => [...terminalKeys.all, "health"] as const,
+  windows: () => [...terminalKeys.all, "windows"] as const,
+};
+
+export const pairingKeys = {
+  all: ["pairing"] as const,
+  request: () => [...pairingKeys.all, "request"] as const,
+  devices: () => [...pairingKeys.all, "devices"] as const,
+};

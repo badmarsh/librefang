@@ -1,0 +1,655 @@
+//! Text-to-speech engine — synthesize text to audio.
+//!
+//! Auto-cascades through available providers based on configured API keys.
+
+use librefang_types::config::{TtsConfig, TtsElevenLabsConfig};
+
+/// Maximum audio response size (10MB).
+const MAX_AUDIO_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+
+/// Resolve the ElevenLabs output format: per-request `format_override` wins
+/// over the config-driven `[tts.elevenlabs].output_format`, which itself
+/// defaults to `opus_48000_32` (see [`TtsElevenLabsConfig`]). Free function so
+/// the precedence is unit-testable without a network call (#6116).
+fn resolve_elevenlabs_format<'a>(
+    format_override: Option<&'a str>,
+    cfg: &'a TtsElevenLabsConfig,
+) -> &'a str {
+    format_override.unwrap_or(cfg.output_format.as_str())
+}
+
+/// Derive the codec/container label from an ElevenLabs compound output-format
+/// string, e.g. `"opus_48000_32"` -> `"opus"`, `"mp3_44100_128"` -> `"mp3"`.
+fn elevenlabs_format_label(output_format: &str) -> String {
+    output_format
+        .split('_')
+        .next()
+        .unwrap_or("opus")
+        .to_string()
+}
+
+/// Result of TTS synthesis.
+#[derive(Debug)]
+pub struct TtsResult {
+    pub audio_data: Vec<u8>,
+    pub format: String,
+    pub provider: String,
+    pub duration_estimate_ms: u64,
+}
+
+/// Text-to-speech engine.
+pub struct TtsEngine {
+    config: TtsConfig,
+}
+
+impl TtsEngine {
+    pub fn new(config: TtsConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn tts_config(&self) -> &TtsConfig {
+        &self.config
+    }
+
+    /// Detect which TTS provider is available based on environment variables.
+    fn detect_provider() -> Option<&'static str> {
+        let has_key = |var: &str| std::env::var(var).is_ok_and(|v| !v.trim().is_empty());
+        if has_key("OPENAI_API_KEY") {
+            return Some("openai");
+        }
+        if has_key("ELEVENLABS_API_KEY") {
+            return Some("elevenlabs");
+        }
+        if has_key("GOOGLE_API_KEY") || has_key("GOOGLE_CLOUD_API_KEY") {
+            return Some("google_tts");
+        }
+        None
+    }
+
+    /// Synthesize text to audio bytes.
+    /// Auto-cascade: configured provider -> OpenAI -> ElevenLabs.
+    /// Optional overrides for voice and format (per-request, from tool input).
+    pub async fn synthesize(
+        &self,
+        text: &str,
+        voice_override: Option<&str>,
+        format_override: Option<&str>,
+    ) -> Result<TtsResult, String> {
+        if !self.config.enabled {
+            return Err("TTS is disabled in configuration".into());
+        }
+
+        // Validate text length
+        if text.is_empty() {
+            return Err("Text cannot be empty".into());
+        }
+        if text.len() > self.config.max_text_length {
+            return Err(format!(
+                "Text too long: {} chars (max {})",
+                text.len(),
+                self.config.max_text_length
+            ));
+        }
+
+        let provider = self
+            .config
+            .provider
+            .as_deref()
+            .or_else(|| Self::detect_provider())
+            .ok_or("No TTS provider configured. Set OPENAI_API_KEY, ELEVENLABS_API_KEY, or GOOGLE_API_KEY")?;
+
+        match provider {
+            "openai" => {
+                self.synthesize_openai(text, voice_override, format_override)
+                    .await
+            }
+            "elevenlabs" => {
+                self.synthesize_elevenlabs(text, voice_override, format_override)
+                    .await
+            }
+            "google_tts" => {
+                #[cfg(feature = "media")]
+                {
+                    self.synthesize_google(text, voice_override, format_override)
+                        .await
+                }
+                #[cfg(not(feature = "media"))]
+                {
+                    let _ = (text, voice_override, format_override);
+                    Err("google_tts provider requires the `media` feature".to_string())
+                }
+            }
+            // Custom / self-hosted OpenAI-compatible TTS endpoint
+            _other => {
+                self.synthesize_custom(text, voice_override, format_override)
+                    .await
+            }
+        }
+    }
+
+    /// Synthesize via OpenAI TTS API.
+    async fn synthesize_openai(
+        &self,
+        text: &str,
+        voice_override: Option<&str>,
+        format_override: Option<&str>,
+    ) -> Result<TtsResult, String> {
+        let api_key = std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY not set")?;
+
+        // Apply per-request overrides or fall back to config defaults
+        let voice = voice_override.unwrap_or(&self.config.openai.voice);
+        let format = format_override.unwrap_or(&self.config.openai.format);
+
+        let body = serde_json::json!({
+            "model": self.config.openai.model,
+            "input": text,
+            "voice": voice,
+            "response_format": format,
+            "speed": self.config.openai.speed,
+        });
+
+        let client = crate::http_client::proxied_client();
+        let response = client
+            .post("https://api.openai.com/v1/audio/speech")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+            .send()
+            .await
+            .map_err(|e| format!("OpenAI TTS request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let err = response.text().await.unwrap_or_default();
+            let truncated = crate::str_utils::safe_truncate_str(&err, 500);
+            return Err(format!("OpenAI TTS failed (HTTP {status}): {truncated}"));
+        }
+
+        // Check content length before downloading
+        if let Some(len) = response.content_length() {
+            if len as usize > MAX_AUDIO_RESPONSE_BYTES {
+                return Err(format!(
+                    "Audio response too large: {len} bytes (max {MAX_AUDIO_RESPONSE_BYTES})"
+                ));
+            }
+        }
+
+        let audio_data = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read audio response: {e}"))?;
+
+        if audio_data.len() > MAX_AUDIO_RESPONSE_BYTES {
+            return Err(format!(
+                "Audio data exceeds {}MB limit",
+                MAX_AUDIO_RESPONSE_BYTES / 1024 / 1024
+            ));
+        }
+
+        // Rough duration estimate: ~150 words/min at ~12 bytes/ms for MP3
+        let word_count = text.split_whitespace().count();
+        let duration_ms = (word_count as u64 * 400).max(500); // ~400ms per word, min 500ms
+
+        Ok(TtsResult {
+            audio_data: audio_data.to_vec(),
+            format: format.to_string(),
+            provider: "openai".to_string(),
+            duration_estimate_ms: duration_ms,
+        })
+    }
+
+    /// Synthesize via ElevenLabs TTS API.
+    async fn synthesize_elevenlabs(
+        &self,
+        text: &str,
+        voice_override: Option<&str>,
+        format_override: Option<&str>,
+    ) -> Result<TtsResult, String> {
+        let api_key =
+            std::env::var("ELEVENLABS_API_KEY").map_err(|_| "ELEVENLABS_API_KEY not set")?;
+
+        let voice_id = voice_override.unwrap_or(&self.config.elevenlabs.voice_id);
+        // 3-tier resolution: tool-arg override > `[tts.elevenlabs].output_format`
+        // (default `opus_48000_32` for WhatsApp PTT) > built-in default. Request
+        // the format explicitly so ElevenLabs returns Ogg/Opus, not its MP3
+        // default (#6116).
+        let output_format = resolve_elevenlabs_format(format_override, &self.config.elevenlabs);
+        let url = format!(
+            "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format={output_format}"
+        );
+
+        let body = serde_json::json!({
+            "text": text,
+            "model_id": self.config.elevenlabs.model_id,
+            "voice_settings": {
+                "stability": self.config.elevenlabs.stability,
+                "similarity_boost": self.config.elevenlabs.similarity_boost,
+            }
+        });
+
+        let client = crate::http_client::proxied_client();
+        let response = client
+            .post(&url)
+            .header("xi-api-key", &api_key)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(self.config.timeout_secs))
+            .send()
+            .await
+            .map_err(|e| format!("ElevenLabs TTS request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let err = response.text().await.unwrap_or_default();
+            let truncated = crate::str_utils::safe_truncate_str(&err, 500);
+            return Err(format!(
+                "ElevenLabs TTS failed (HTTP {status}): {truncated}"
+            ));
+        }
+
+        if let Some(len) = response.content_length() {
+            if len as usize > MAX_AUDIO_RESPONSE_BYTES {
+                return Err(format!(
+                    "Audio response too large: {len} bytes (max {MAX_AUDIO_RESPONSE_BYTES})"
+                ));
+            }
+        }
+
+        let audio_data = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read audio response: {e}"))?;
+
+        if audio_data.len() > MAX_AUDIO_RESPONSE_BYTES {
+            return Err(format!(
+                "Audio data exceeds {}MB limit",
+                MAX_AUDIO_RESPONSE_BYTES / 1024 / 1024
+            ));
+        }
+
+        let word_count = text.split_whitespace().count();
+        let duration_ms = (word_count as u64 * 400).max(500);
+
+        // Label the container/codec from the requested format prefix (e.g.
+        // `opus_48000_32` -> "opus") so downstream consumers (the WhatsApp
+        // gateway's mime sniff) see the real format, not a hardcoded "mp3".
+        let format = elevenlabs_format_label(output_format);
+
+        Ok(TtsResult {
+            audio_data: audio_data.to_vec(),
+            format,
+            provider: "elevenlabs".to_string(),
+            duration_estimate_ms: duration_ms,
+        })
+    }
+
+    /// Synthesize via a custom / self-hosted OpenAI-compatible TTS endpoint.
+    ///
+    /// Uses `[tts.custom]` for URL, auth, model, voice, and format.
+    /// A missing or empty `base_url` is rejected immediately so the error
+    /// message is actionable rather than producing a confusing HTTP failure.
+    async fn synthesize_custom(
+        &self,
+        text: &str,
+        voice_override: Option<&str>,
+        format_override: Option<&str>,
+    ) -> Result<TtsResult, String> {
+        let cfg = &self.config.custom;
+
+        if cfg.base_url.is_empty() {
+            let provider = self.config.provider.as_deref().unwrap_or("<unknown>");
+            return Err(format!(
+                "TTS provider '{provider}' is not a built-in provider and \
+                 [tts.custom] base_url is not set. \
+                 Add `base_url = \"http://<host>/v1/audio/speech\"` \
+                 to [tts.custom] in config.toml."
+            ));
+        }
+
+        // Resolve API key: env var (if configured) → empty string (keyless)
+        let api_key: Option<String> = if cfg.api_key_env.is_empty() {
+            None
+        } else {
+            match std::env::var(&cfg.api_key_env) {
+                Ok(k) if !k.trim().is_empty() => Some(k),
+                _ if cfg.key_required => {
+                    return Err(format!(
+                        "Custom TTS provider requires an API key but env var '{}' is not set or empty.",
+                        cfg.api_key_env
+                    ));
+                }
+                _ => None,
+            }
+        };
+
+        let voice = voice_override.unwrap_or(&cfg.voice);
+        let format = format_override.unwrap_or(&cfg.format);
+
+        let body = serde_json::json!({
+            "model": cfg.model,
+            "input": text,
+            "voice": voice,
+            "response_format": format,
+        });
+
+        let client = crate::http_client::proxied_client();
+        let mut req = client
+            .post(&cfg.base_url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(self.config.timeout_secs));
+
+        if let Some(ref key) = api_key {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| format!("Custom TTS request failed: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let err = response.text().await.unwrap_or_default();
+            let truncated = crate::str_utils::safe_truncate_str(&err, 500);
+            return Err(format!("Custom TTS failed (HTTP {status}): {truncated}"));
+        }
+
+        if let Some(len) = response.content_length() {
+            if len as usize > MAX_AUDIO_RESPONSE_BYTES {
+                return Err(format!(
+                    "Audio response too large: {len} bytes (max {MAX_AUDIO_RESPONSE_BYTES})"
+                ));
+            }
+        }
+
+        let audio_data = response
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read audio response: {e}"))?;
+
+        if audio_data.len() > MAX_AUDIO_RESPONSE_BYTES {
+            return Err(format!(
+                "Audio data exceeds {}MB limit",
+                MAX_AUDIO_RESPONSE_BYTES / 1024 / 1024
+            ));
+        }
+
+        let word_count = text.split_whitespace().count();
+        let duration_ms = (word_count as u64 * 400).max(500);
+        let provider = self
+            .config
+            .provider
+            .clone()
+            .unwrap_or_else(|| "custom".to_string());
+
+        Ok(TtsResult {
+            audio_data: audio_data.to_vec(),
+            format: format.to_string(),
+            provider,
+            duration_estimate_ms: duration_ms,
+        })
+    }
+
+    /// Synthesize via Google Cloud TTS API.
+    /// Delegates to `GoogleTtsMediaDriver` to avoid duplicating SSML handling.
+    #[cfg(feature = "media")]
+    async fn synthesize_google(
+        &self,
+        text: &str,
+        voice_override: Option<&str>,
+        format_override: Option<&str>,
+    ) -> Result<TtsResult, String> {
+        use crate::media::google_tts::GoogleTtsMediaDriver;
+        use crate::media::MediaDriver;
+        use librefang_types::media::MediaTtsRequest;
+
+        let driver = GoogleTtsMediaDriver::new(None);
+        let request = MediaTtsRequest {
+            text: text.to_string(),
+            provider: Some("google_tts".to_string()),
+            model: None,
+            voice: Some(
+                voice_override
+                    .unwrap_or(&self.config.google.voice)
+                    .to_string(),
+            ),
+            format: Some(
+                format_override
+                    .unwrap_or(&self.config.google.format)
+                    .to_string(),
+            ),
+            speed: Some(self.config.google.speaking_rate),
+            language: Some(self.config.google.language_code.clone()),
+            pitch: Some(self.config.google.pitch),
+        };
+
+        let result = driver
+            .synthesize_speech(&request)
+            .await
+            .map_err(|e| format!("Google TTS failed: {e}"))?;
+
+        Ok(TtsResult {
+            audio_data: result.audio_data,
+            format: result.format,
+            provider: "google_tts".to_string(),
+            duration_estimate_ms: result.duration_ms.unwrap_or(500),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_config() -> TtsConfig {
+        TtsConfig::default()
+    }
+
+    #[test]
+    fn test_engine_creation() {
+        let engine = TtsEngine::new(default_config());
+        assert!(!engine.config.enabled);
+    }
+
+    #[test]
+    fn test_config_defaults() {
+        let config = TtsConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.max_text_length, 4096);
+        assert_eq!(config.timeout_secs, 30);
+        assert_eq!(config.openai.voice, "alloy");
+        assert_eq!(config.openai.model, "tts-1");
+        assert_eq!(config.openai.format, "mp3");
+        assert_eq!(config.openai.speed, 1.0);
+        assert_eq!(config.elevenlabs.voice_id, "21m00Tcm4TlvDq8ikWAM");
+        assert_eq!(config.elevenlabs.model_id, "eleven_monolingual_v1");
+        assert_eq!(config.google.voice, "en-US-Standard-F");
+        assert_eq!(config.google.language_code, "en-US");
+        assert_eq!(config.google.speaking_rate, 1.0);
+        assert_eq!(config.google.pitch, 0.0);
+        assert_eq!(config.google.format, "mp3");
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_disabled() {
+        let engine = TtsEngine::new(default_config());
+        let result = engine.synthesize("Hello", None, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("disabled"));
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_empty_text() {
+        let mut config = default_config();
+        config.enabled = true;
+        let engine = TtsEngine::new(config);
+        let result = engine.synthesize("", None, None).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_text_too_long() {
+        let mut config = default_config();
+        config.enabled = true;
+        config.max_text_length = 10;
+        let engine = TtsEngine::new(config);
+        let result = engine
+            .synthesize("This text is definitely longer than ten chars", None, None)
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too long"));
+    }
+
+    #[test]
+    fn test_detect_provider_none() {
+        // In test env, likely no API keys set
+        let _ = TtsEngine::detect_provider(); // Just verify no panic
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_no_provider() {
+        let mut config = default_config();
+        config.enabled = true;
+        let engine = TtsEngine::new(config);
+        // This may or may not error depending on env vars
+        let result = engine.synthesize("Hello world", None, None).await;
+        // If no API keys are set, should error
+        if let Err(err) = result {
+            assert!(err.contains("No TTS provider") || err.contains("not set"));
+        }
+    }
+
+    #[test]
+    fn test_max_audio_constant() {
+        assert_eq!(MAX_AUDIO_RESPONSE_BYTES, 10 * 1024 * 1024);
+    }
+
+    /// Pins the 3-tier precedence for the ElevenLabs output format
+    /// (tool-arg override > `[tts.elevenlabs].output_format` > built-in
+    /// default) via the same `resolve_elevenlabs_format` the synth path uses.
+    #[test]
+    fn test_three_tier_resolution_elevenlabs_format() {
+        let mut config = TtsConfig::default();
+        config.elevenlabs.output_format = "mp3_44100_128".to_string();
+
+        // Tier 1: tool-arg override wins.
+        assert_eq!(
+            resolve_elevenlabs_format(Some("pcm_16000"), &config.elevenlabs),
+            "pcm_16000"
+        );
+        // Tier 2: provider-config default applies when no override.
+        assert_eq!(
+            resolve_elevenlabs_format(None, &config.elevenlabs),
+            "mp3_44100_128"
+        );
+        // Tier 3: built-in default when neither override nor custom config.
+        assert_eq!(
+            resolve_elevenlabs_format(None, &TtsConfig::default().elevenlabs),
+            "opus_48000_32"
+        );
+    }
+
+    /// The default ElevenLabs config must yield a `TtsResult.format` of
+    /// `"opus"` — the codec the WhatsApp gateway's mime sniff requires to send
+    /// an `audio/ogg; codecs=opus` PTT voice-note (#6116).
+    #[test]
+    fn test_default_elevenlabs_format_label_is_opus() {
+        let config = TtsConfig::default();
+        let fmt = elevenlabs_format_label(resolve_elevenlabs_format(None, &config.elevenlabs));
+        assert_eq!(fmt, "opus");
+
+        for (input, expected) in [
+            ("mp3_44100_128", "mp3"),
+            ("pcm_16000", "pcm"),
+            ("ulaw_8000", "ulaw"),
+        ] {
+            assert_eq!(
+                elevenlabs_format_label(input),
+                expected,
+                "prefix of {input}"
+            );
+        }
+    }
+
+    // ── Custom TTS config tests ──────────────────────────────────────────
+
+    #[test]
+    fn tts_config_default_has_empty_custom() {
+        let config = TtsConfig::default();
+        assert!(config.custom.base_url.is_empty());
+        assert!(config.custom.api_key_env.is_empty());
+        assert!(!config.custom.key_required);
+        assert_eq!(config.custom.model, "tts-1");
+        assert_eq!(config.custom.voice, "alloy");
+        assert_eq!(config.custom.format, "mp3");
+    }
+
+    #[test]
+    fn tts_config_round_trips_custom() {
+        use librefang_types::config::CustomTtsConfig;
+        let config = TtsConfig {
+            enabled: true,
+            provider: Some("local-piper".to_string()),
+            custom: CustomTtsConfig {
+                base_url: "http://localhost:5000/v1/audio/speech".to_string(),
+                api_key_env: String::new(),
+                key_required: false,
+                model: "tts-1".to_string(),
+                voice: "en_US-lessac-medium".to_string(),
+                format: "mp3".to_string(),
+            },
+            ..TtsConfig::default()
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let parsed: TtsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.custom.base_url,
+            "http://localhost:5000/v1/audio/speech"
+        );
+        assert_eq!(parsed.custom.voice, "en_US-lessac-medium");
+        assert_eq!(parsed.provider.as_deref(), Some("local-piper"));
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_custom_no_base_url_returns_err() {
+        // Provider is set to a custom name but [tts.custom] base_url is empty.
+        let mut config = default_config();
+        config.enabled = true;
+        config.provider = Some("local-piper".to_string());
+        // custom.base_url is empty (default)
+        let engine = TtsEngine::new(config);
+        let result = engine.synthesize("Hello", None, None).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("local-piper"),
+            "error should name the provider"
+        );
+        assert!(msg.contains("base_url"), "error should mention base_url");
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_custom_key_required_missing_env_returns_err() {
+        use librefang_types::config::CustomTtsConfig;
+        let mut config = default_config();
+        config.enabled = true;
+        config.provider = Some("local-piper".to_string());
+        config.custom = CustomTtsConfig {
+            base_url: "http://localhost:5000/v1/audio/speech".to_string(),
+            api_key_env: "LIBREFANG_TEST_MISSING_KEY_ZXQ99".to_string(), // pragma: allowlist secret
+            key_required: true,
+            ..Default::default()
+        };
+        let engine = TtsEngine::new(config);
+        let result = engine.synthesize("Hello", None, None).await;
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("LIBREFANG_TEST_MISSING_KEY_ZXQ99"),
+            "error should name the env var"
+        );
+    }
+}
