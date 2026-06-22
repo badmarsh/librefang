@@ -40,11 +40,17 @@ weight_deviation_threshold = 0.08
 weight_recompute_interval = 50
 
 [disinfo_pipeline.baseline_weights]
-coh = 0.16
-ml = 0.26
-src = 0.12
-trip = 0.24
-wiki = 0.22
+coh = 0.13
+ml = 0.21
+src = 0.10
+trip = 0.20
+wiki = 0.18
+kg = 0.10
+temporal = 0.08
+
+[kg_checker]
+expiry_days = 90
+weight = 0.10
 
 # Wave 3 — Improvement 15: F2-score optimised weighting
 [ensemble]

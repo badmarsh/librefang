@@ -33,13 +33,20 @@
 #   Improvement 17: Firecrawl search discovery layer in watchdog
 #                   Cross-domain spread detection for borderline escalation items.
 #   Improvement 18: Fix wiki-checker weight comment (0.25→0.22 consistency fix)
+# Wave 4: Academic Upgrade Pack (2026-06-22)
+#   Improvement 19: Claim Decomposition via QA-decomposition (arXiv:2112.09122)
+#   Improvement 20: Knowledge Graph Consistency Check (arXiv:2209.01060)
+#   Improvement 21: Narrative Framing Detection (arXiv:2305.16507)
+#   Improvement 22: Temporal Consistency Verification (arXiv:2211.07830)
+#   Improvement 23: Graph-Based Narrative Propagation (arXiv:2309.13049)
+#   Improvement 24: Stance Detection as Pre-Filter (arXiv:2006.03644)
 #
 # Declares the full agent DAG so tooling, docs and new contributors have a
 # single authoritative source of truth for run-order and data-flow.
 
 name        = "disinfo-pipeline"
-version     = "3.0.0"
-description = "MCP-orchestrated multi-agent disinformation detection: 5-agent weighted ensemble with Bayesian + F2 adaptation, CIB detection, injection shielding, HITL tiers, instance-hardness routing, adversarial mini-debate, Firecrawl web backend"
+version     = "4.0.0"
+description = "MCP-orchestrated multi-agent disinformation detection: 9-agent weighted ensemble with Bayesian + F2 adaptation, CIB detection, injection shielding, QA claim decomposition, stance pre-filtering, and temporal/KG checking."
 
 # ── Execution model ────────────────────────────────────────────────────────────
 # Stages run in the order listed below.
@@ -88,6 +95,15 @@ notes       = """
 """
 
 [[stage]]
+id          = "decompose"
+label       = "QA Claim Decomposition"
+agents      = ["claim-decomposer"]
+description = "Decomposes complex multi-hop claims into atomic sub-claims using QA-style decomposition."
+notes       = """
+  Improvement 19 (Wave 4): Reduces false negatives on compound disinformation claims.
+"""
+
+[[stage]]
 id          = "align"
 label       = "Cross-Lingual Alignment"
 agents      = ["cross-lingual-aligner"]
@@ -99,17 +115,29 @@ notes       = """
 """
 
 [[stage]]
+id          = "stance"
+label       = "Stance Pre-Filter"
+agents      = ["stance-detector"]
+description = "Classifies stance (SUPPORTS/REFUTES/NOT_ENOUGH_INFO/UNRELATED) relative to cited sources."
+notes       = """
+  Improvement 24 (Wave 4): Skips triplet-fact-checker for UNRELATED/NOT_ENOUGH_INFO to save calls.
+  REFUTES stance boosts triplet_score by +0.15.
+"""
+
+[[stage]]
 id          = "score"
-label       = "Parallel Scoring (7-agent)"
-agents      = ["ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker", "source-rater", "zk-attestor", "qsvm-classifier"]
-description = "Seven independent agents score each claim concurrently and write results to MCP context (including zero-knowledge proofs and QSVM)."
+label       = "Parallel Scoring (9-agent)"
+agents      = ["ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker", "source-rater", "kg-consistency-checker", "temporal-checker", "zk-attestor", "qsvm-classifier"]
+description = "Nine independent agents score each claim concurrently and write results to MCP context (including zero-knowledge proofs and QSVM)."
 notes       = """
   Agent weights (adaptive via Bayesian update — Improvement 1 / F2 update — Improvement 15):
-    ml-classifier        w = 0.26  (e ≈ 0.18)
-    coherence-checker    w = 0.16  (e ≈ 0.36)
-    wiki-checker         w = 0.22  (e ≈ 0.22, improves to ~0.14 with cross-lingual alignment)
-    triplet-fact-checker w = 0.24  (e ≈ 0.12)
-    source-rater         w = 0.12  (new — Improvement 3: +5–8% accuracy per arXiv:2401.17786)
+    ml-classifier        w = 0.21  (e ≈ 0.18)
+    coherence-checker    w = 0.13  (e ≈ 0.36)
+    wiki-checker         w = 0.18  (e ≈ 0.14)
+    triplet-fact-checker w = 0.20  (e ≈ 0.12)
+    source-rater         w = 0.10
+    kg-consistency-checker w = 0.10 (new — Improvement 20)
+    temporal-checker     w = 0.08 (new — Improvement 22)
   Weights self-calibrate every 50 verdicts via ensemble.agent_stats in MCP context.
   If any agent is unavailable, its weight is redistributed proportionally.
 
@@ -135,7 +163,8 @@ notes       = """
 
   Improvement 16 (Wave 3): Multi-window temporal clustering (2h/12h/72h).
   Catches slow-burn campaigns (Slavyangrad.ru → SK amplifiers over 48h) invisible to 2h window.
-  temporal_signal = 0.40*A_2h + 0.35*B_12h + 0.25*C_72h (configurable via config.toml).
+  temporal_signal = 0.10*temporal_signal + 0.30*lexical + 0.25*cross_domain + 0.20*novel_entity + 0.15*cib_graph.
+  Improvement 23 (Wave 4): Graph-based narrative propagation added to CIB score calculation.
 """
 
 [[stage]]
@@ -157,7 +186,7 @@ notes       = """
 id          = "aggregate"
 label       = "Weighted Ensemble Aggregation"
 agents      = ["disinfo-orchestrator"]
-description = "5-agent weighted ensemble with Bayesian + F2 adaptation, uncertainty quantification, Mixture-of-Depths (MoD) dynamic routing, and adversarial mini-debate."
+description = "9-agent weighted ensemble with Bayesian + F2 adaptation, uncertainty quantification, Mixture-of-Depths (MoD) dynamic routing, and adversarial mini-debate."
 notes       = """
   Improvement 1: Checks ensemble.current_weights for adaptive weights; falls back to defaults.
   Improvement 5: Uncertainty decomposition per verdict:
@@ -250,7 +279,17 @@ description = "Full multi-claim investigation report with actor mapping and time
 [[context_key]]
 key    = "claim_extractor.output"
 writer = "claim-extractor"
-readers = ["ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker", "source-rater", "cib-detector", "cross-lingual-aligner"]
+readers = ["claim-decomposer", "stance-detector", "ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker", "source-rater", "kg-consistency-checker", "temporal-checker", "cib-detector", "cross-lingual-aligner"]
+
+[[context_key]]
+key    = "claim_decomposer.output"
+writer = "claim-decomposer"
+readers = ["cross-lingual-aligner"]
+
+[[context_key]]
+key    = "stance_detector.output"
+writer = "stance-detector"
+readers = ["triplet-fact-checker"]
 
 [[context_key]]
 key    = "claim_extractor.seen_hashes"
@@ -293,9 +332,19 @@ writer = "source-rater"
 readers = ["disinfo-orchestrator"]
 
 [[context_key]]
+key    = "kg_checker.output"
+writer = "kg-consistency-checker"
+readers = ["disinfo-orchestrator"]
+
+[[context_key]]
+key    = "temporal_checker.output"
+writer = "temporal-checker"
+readers = ["disinfo-orchestrator"]
+
+[[context_key]]
 key    = "cross_lingual_aligner.output"
 writer = "cross-lingual-aligner"
-readers = ["wiki-checker", "triplet-fact-checker"]
+readers = ["wiki-checker", "triplet-fact-checker", "kg-consistency-checker"]
 
 [[context_key]]
 key    = "cib_detector.output"

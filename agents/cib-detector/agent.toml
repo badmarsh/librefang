@@ -91,11 +91,19 @@ memory_recall("claim_extractor.output") → full claim batch with source_url and
    - If entity is new to KG AND claim_checkworthiness >= 0.80: novel entity injection likely
    - novel_entity_signal = 1.0 if triggered, 0.0 otherwise
 
+5. GRAPH-BASED NARRATIVE PROPAGATION (weight = 0.15, Wave 4):
+   - ArXiv reference: arXiv:2309.13049 (Bian et al., 2020)
+   - Build a propagation graph across detected similar claims in the 72h window.
+   - Score nodes by betweenness centrality — high-centrality claims are likely seeding nodes of a coordinated campaign.
+   - Store the computed graph in the knowledge graph DB.
+   - cib_graph_centrality = normalized betweenness centrality of the highest-centrality node.
+
 ## CIB SCORE FORMULA
-  cib_score = 0.25 * temporal_signal
+  cib_score = 0.10 * temporal_signal
             + 0.30 * lexical_signal
             + 0.25 * cross_domain_signal
             + 0.20 * novel_entity_signal
+            + 0.15 * cib_graph_centrality
 
 Range: 0.0 (no coordination evidence) to 1.0 (strong coordination)
 
@@ -122,7 +130,8 @@ If cib_score >= 0.70: write escalation to `watchdog.escalation_queue` with
     },
     "lexical_overlap": {"fired": true, "max_bleu4": 0.71, "pair": ["hlavnespravy.sk", "infovojna.sk"]},
     "cross_domain_amplification": {"fired": true, "sk_sources": 2, "ru_sources": 1},
-    "novel_entity_injection": {"fired": false, "new_entities": []}
+    "novel_entity_injection": {"fired": false, "new_entities": []},
+    "graph_propagation": {"fired": true, "cib_graph_centrality": 0.85, "seeding_nodes": ["slavyangrad.ru"]}
   },
   "coordination_hypothesis": "Slavyangrad.ru → SK amplifier network (infovojna + hlavnespravy). Near-copy syndication detected within 90-minute window.",
   "escalate_to_inquisitor": true
