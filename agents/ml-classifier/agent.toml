@@ -1,100 +1,21 @@
 # LibreFang agent manifest
 # arXiv:2508.10143 — Agent 1: ML Classifier
+# Part of fix: Fix 1 — Replace fake ml-classifier with real trained model
 name        = "ml-classifier"
 version     = "1.1.0"
-description = "Logistic regression + TF-IDF fake-news classifier. Scores claims 0.0-1.0 (FAKE probability)"
+description = "TF-IDF + Logistic Regression classifier served locally via scripts/serve_ml_classifier.py"
 author      = "librefang"
-module      = "builtin:chat"
+module      = "builtin:http_scorer"
 tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
 
-[model]
-# Pinned to the same model as config.toml [default_model] for deterministic,
-# consistent behaviour across all pipeline agents. Temperature 0.0 enforces
-# fully deterministic output — do NOT raise this for the classifier.
-provider = "openrouter"
-model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
-api_key_env = "DASHSCOPE_API_KEY"
-max_tokens  = 2048
-temperature = 0.0
-
-system_prompt = """
-You are ML Classifier, the second agent in an MCP-orchestrated disinformation detection pipeline
-(arXiv:2508.10143, Agent 1).
-
-You simulate a trained logistic regression + TF-IDF classifier. Your role is to score each
-claim from claim-extractor based on surface-level linguistic signals associated with fake news.
-
-## LINGUISTIC SIGNALS (TF-IDF features the model would capture)
-Fake news signals (raise score toward 1.0):
-- Extreme/absolute language: "always", "never", "100%", "proven", "confirmed",
-  "shocking", "breaking", "exclusive", "banned", "secret", "they don't want you to know"
-- Emotional manipulation: fear, outrage, urgency triggers
-- Vague attribution: "sources say", "experts claim" (without named experts)
-- Mismatched claim magnitude vs. evidence offered
-- Unusual punctuation: multiple !!!, ALL CAPS
-- Numbers without sources: "studies show X%" without citation
-
-True news signals (reduce score toward 0.0):
-- Named, specific sources with verifiable credentials
-- Hedged, qualified language
-- Consistent terminology
-- Presence of context and counterpoint
-- Verifiable dates, locations, institutions
-
-## INPUT
-Read claims from MCP context key `claim_extractor.output` (memory_recall).
-
-## PROCESSING
-For each claim:
-1. Tokenize and analyse for the above feature groups
-2. Assign a FAKE probability score 0.0–1.0
-3. List the top 3 signal words/phrases that most influenced the score
-
-## OUTPUT FORMAT (strict JSON)
-```json
-{
-  "agent": "ml-classifier",
-  "scores": [
-    {
-      "claim_id": "c001",
-      "fake_probability": 0.78,
-      "top_signals": ["shocking", "they confirmed", "100% proven"],
-      "confidence": 0.82
-    }
-  ],
-  "model_info": {
-    "type": "logistic_regression_tfidf_simulation",
-    "note": "LLM simulation of trained LR+TF-IDF classifier per arXiv:2508.10143 Agent 1"
-  }
-}
-```
-
-Write output to MCP shared context key `ml_classifier.output` via memory_store.
-Also write to file `ml_classifier_output.json`.
-"""
+[http_scorer]
+endpoint = "http://127.0.0.1:${ML_CLASSIFIER_PORT:-8090}/score"
+input_field  = "text"
+output_field = "score"
+timeout_seconds = 5
+fallback_score  = 0.5
 
 [capabilities]
 tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
 memory_read  = ["claim_extractor.*"]
 memory_write = ["ml_classifier.*"]
-
-
-[[fallback_models]]
-provider = "freellmpool"
-model = "fast"
-api_key_env = "FREELLMPOOL_API_KEY"
-
-[[fallback_models]]
-provider = "freellmpool"
-model = "nvidia/meta/llama-3.1-8b-instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
-
-[[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Qwen3.5-9B"
-api_key_env = "FREELLMPOOL_API_KEY"
-
-[[fallback_models]]
-provider = "freellmpool"
-model = "nvidia/meta/llama-3.3-70b-instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
