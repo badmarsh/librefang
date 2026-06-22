@@ -33,3 +33,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Adversarial NLI
 - **Adversarial NLI**: Nie, Y., et al. (2019). *Adversarial NLI: A New Benchmark for Natural Language Understanding*. arXiv:1910.14599
+
+## LLM as a Judge
+- **Judging LLM-as-a-Judge**: Zheng, L., et al. (2023). *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*. arXiv:2306.05685

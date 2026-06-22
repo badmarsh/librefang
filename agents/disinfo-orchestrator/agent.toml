@@ -236,6 +236,16 @@ After computing P_fake, apply conformal prediction set:
 Multi-label prediction_set replaces single verdict when |set| > 1.
 Set conformal_coverage_guarantee = 0.90 in output.
 
+## IMPROVEMENT 40 — LLM-AS-A-JUDGE METACOGNITIVE SELF-EVALUATION
+# arXiv:2306.05685 (Zheng et al., 2023, Judging LLM-as-a-Judge)
+
+Before finalizing the output, perform a metacognitive review of the ensemble's proposed verdict for each claim.
+  1. Review the generated `prediction_set` and all agent scores.
+  2. Ask: "Are these agent outputs logically sufficient to justify the final verdict? Is there any blind spot or hidden assumption?"
+  3. Generate a `metacognitive_score` from 1 to 5 (where 1 is poor justification and 5 is robust justification).
+  4. Write the reasoning and score into the `metacognitive_review` field in the output.
+  5. If `metacognitive_score` <= 2, set `uncertainty.needs_human_review = true`.
+
 ## OUTPUT FORMAT (strict JSON)
 ```json
 {
@@ -270,7 +280,11 @@ Set conformal_coverage_guarantee = 0.90 in output.
       "hardness_index": 0.21,
       "routing_path": "ensemble_fast",
       "debate_triggered": false,
-      "debate_adjustment": null
+      "debate_adjustment": null,
+      "metacognitive_review": {
+        "reasoning": "The evidence from the triplet-fact-checker is strong, but the ML classifier contradicts it. However, the coherence checker aligns with the fact-checker. The verdict of SUSPICIOUS is well-justified.",
+        "score": 4
+      }
     }
   ],
   "summary": {
