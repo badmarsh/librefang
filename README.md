@@ -249,7 +249,7 @@ cat ~/.librefang/output/review_queue.json # verdicts awaiting human approval
 | `injection-shield` | Prompt injection quarantine (≥ 0.80) | — |
 | `claim-extractor` | NER extraction · SHA-256 + SBERT dedup · firecrawl_scrape | 2.1.0 |
 | `cross-lingual-aligner` | SK/CZ/DE/EN query expansion · Wikidata Q-ID resolution | — |
-| `ml-classifier` | Linguistic fast classifier (w=0.26) | — |
+| `ml-classifier` | Real sklearn TF-IDF+LR (see scripts/) (w=0.26) | — |
 | `coherence-checker` | Logic/fallacy detection (w=0.16) | — |
 | `wiki-checker` | **Wikidata SPARQL** + Wikipedia NER verify (w=0.22) | 1.2.0 |
 | `triplet-fact-checker` | S-P-O web verify · firecrawl_extract (w=0.24) | 1.2.0 |
@@ -299,30 +299,34 @@ Foundation paper: **arXiv:2508.10143** (Avram, Groza, Lecu 2025).
 | 17 | Firecrawl search discovery in watchdog | github.com/firecrawl/firecrawl |
 | 18 | wiki-checker calibration weight fix (0.22) | Internal consistency |
 
+> ⚠️ Waves 4-6 are speculative research directions. They are not implemented.
+> Citations marked *(unverified)* have not been confirmed against arXiv.
+> Contributions and corrections welcome via PR.
+
 ### Wave 4 (July 2026) — Paradigm Shift
 
-| # | Improvement | Paper |
-|---|-------------|-------|
-| 19 | Generative Adversarial Red-Teaming (GART) Loop | arXiv:2601.12345 |
-| 20 | Quantum-Inspired Semantic Entanglement (QISE) | arXiv:2603.09876 |
-| 21 | Federated Zero-Knowledge Verification (FZKV) | arXiv:2605.11223 |
-| 22 | Neuromorphic Threat Intelligence (Spiking Neural Networks) | arXiv:2512.08888 |
+| # | Improvement | Paper | Status |
+|---|-------------|-------|--------|
+| 19 | Generative Adversarial Red-Teaming (GART) Loop | *(citation unverified — placeholder for future work)* | 🔬 Research / Speculative |
+| 20 | Quantum-Inspired Semantic Entanglement (QISE) | *(citation unverified — placeholder for future work)* | 🔬 Research / Speculative |
+| 21 | Federated Zero-Knowledge Verification (FZKV) | *(citation unverified — placeholder for future work)* | 🔬 Research / Speculative |
+| 22 | Neuromorphic Threat Intelligence (Spiking Neural Networks) | *(citation unverified — placeholder for future work)* | 🔬 Research / Speculative |
 
 ### Wave 5 (August 2026) — SOTA Machine Learning
 
-| # | Improvement | Model/Paper |
-|---|-------------|-------|
-| 23 | Deep Adversarial Reasoning | Gemini 3.1 Pro (High) |
-| 24 | Continuous-Time Threat Detection | Liquid Neural Networks (LNNs) |
-| 25 | Dynamic Compute Allocation | Mixture-of-Depths (MoD) Router |
-| 26 | Autonomous Visual Forensics | Vision-Language-Action (VLA) |
+| # | Improvement | Model/Paper | Status |
+|---|-------------|-------------|--------|
+| 23 | Deep Adversarial Reasoning | Gemini (future version — TBD) <br> *Target model not yet released as of README update date.* | 🔬 Research / Speculative |
+| 24 | Continuous-Time Threat Detection | Liquid Neural Networks (LNNs) | 🔬 Research / Speculative |
+| 25 | Dynamic Compute Allocation | Mixture-of-Depths (MoD) Router | 🔬 Research / Speculative |
+| 26 | Autonomous Visual Forensics | Vision-Language-Action (VLA) | 🔬 Research / Speculative |
 
 ### Wave 6 (September 2026) — Quantum Advantage
 
-| # | Improvement | Hardware |
-|---|-------------|-------|
-| 27 | QSVM Disinfo Classification | Google Willow QPU (105-qubits) |
-| 28 | QISE Hardware Execution | Google CQCS + Cirq API |
+| # | Improvement | Hardware | Status |
+|---|-------------|----------|--------|
+| 27 | QSVM Disinfo Classification | Quantum-Inspired SVM (classical simulation) — QPU execution requires hardware not yet available for general use. Classical QSVM simulation via Qiskit Machine Learning documented in docs/research/qsvm_stub.md. | 🔬 Research / Speculative |
+| 28 | QISE Hardware Execution | Google CQCS + Cirq API | 🔬 Research / Speculative |
 
 ### Audit Fixes (June 2026)
 
