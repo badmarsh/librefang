@@ -54,7 +54,7 @@ jobs:
         continue-on-error: true
         run: cargo xtask compare-build-timings
       - name: Upload timing snapshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-timings-${{ github.sha }}
           path: bench-results/build-timings/
