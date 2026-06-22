@@ -26,3 +26,7 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Narrative Frames
 - **NewsFrames**: Chen, Y., et al. (2022). *NewsFrames: A Large-Scale Taxonomy of News Framing*. arXiv:2210.12029
+
+## Stance Detection
+- **Fact or Fiction (Wadden et al.)**: Wadden, D., et al. (2020). *Fact or Fiction: Verifying Scientific Claims*. arXiv:2004.14545
+- **FEVER**: Thorne, J., et al. (2018). *FEVER: a Large-scale Dataset for Fact Extraction and VERification*. arXiv:1803.05355

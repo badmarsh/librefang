@@ -58,16 +58,28 @@ output      = "approved_queue"
 timeout_s   = 15
 
 # ─────────────────────────────────────────────
+# STAGE 2.5: STANCE DETECTION (PRE-FILTER)
+# ─────────────────────────────────────────────
+[[stages]]
+id          = "stance-detect"
+agent       = "stance-detector"
+description = "Classifies stance (SUPPORTS, REFUTES, UNRELATED) using BGE-M3 cross-encoder logic (Improvement 38)."
+depends_on  = ["orchestrate"]
+input       = "approved_queue"
+output      = "stance_queue"
+timeout_s   = 15
+
+# ─────────────────────────────────────────────
 # STAGE 3: PARALLEL VERIFICATION (fan-out)
-# All three run simultaneously on approved_queue claim_ids
+# All stages run simultaneously on stance_queue claim_ids
 # ─────────────────────────────────────────────
 [[stages]]
 id          = "verify-fast"
 agent       = "ml-classifier"
 description = "Fast linguistic + structural first-pass. No web access. Confidence capped at 0.80. Returns verdict JSON for arbiter."
-depends_on  = ["orchestrate"]
+depends_on  = ["stance-detect"]
 parallel    = true
-input       = "approved_queue.ml_classifier"
+input       = "stance_queue.ml_classifier"
 output      = "verdict_ml"
 timeout_s   = 10
 notes       = "Imp 14: ml-classifier top_signals used as Affirmative argument in mini-debate when u_epi_norm > 0.35."
@@ -76,9 +88,9 @@ notes       = "Imp 14: ml-classifier top_signals used as Affirmative argument in
 id          = "verify-deep"
 agent       = "inquisitor"
 description = "Deep CRAAP + adversarial multi-source verification. Min 10 sources (or 3 for targeted_verify path). Triggers archivist for claims >180 days. Checks COST_HOLD flag before starting."
-depends_on  = ["orchestrate"]
+depends_on  = ["stance-detect"]
 parallel    = true
-input       = "approved_queue.inquisitor"
+input       = "stance_queue.inquisitor"
 output      = "verdict_inquisitor"
 timeout_s   = 120
 notes       = "Imp 13: routing_path from orchestrator controls inquisitor depth — 'targeted_verify' uses 3 sources, 'deep_verify' uses 10. 'ensemble_fast' skips inquisitor entirely (~60% of claims)."
@@ -86,11 +98,11 @@ notes       = "Imp 13: routing_path from orchestrator controls inquisitor depth 
 [[stages]]
 id          = "verify-visual"
 agent       = "visual-analyst"
-description = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if approved_queue.visual_analyst is non-empty."
-depends_on  = ["orchestrate"]
+description = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if stance_queue.visual_analyst is non-empty."
+depends_on  = ["stance-detect"]
 parallel    = true
-condition   = "len(approved_queue.visual_analyst) > 0"
-input       = "approved_queue.visual_analyst"
+condition   = "len(stance_queue.visual_analyst) > 0"
+input       = "stance_queue.visual_analyst"
 output      = "verdict_visual"
 timeout_s   = 60
 
@@ -98,9 +110,9 @@ timeout_s   = 60
 id          = "verify-kg"
 agent       = "kg-consistency-checker"
 description = "Knowledge graph consistency checking against local Neo4j/SQLite graph (Improvement 37)."
-depends_on  = ["orchestrate"]
+depends_on  = ["stance-detect"]
 parallel    = true
-input       = "approved_queue"
+input       = "stance_queue"
 output      = "verdict_kg"
 timeout_s   = 30
 

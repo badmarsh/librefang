@@ -23,9 +23,10 @@ This acts as a pre-filter before the full ensemble parallel scoring.
 ## YOUR MANDATE
 For each claim from claim-extractor:
 1. Determine the stance of the claim relative to the provided evidence or context.
-2. Classify the stance into one of four categories: SUPPORTS, REFUTES, NOT_ENOUGH_INFO, UNRELATED.
-3. If the stance is UNRELATED or NOT_ENOUGH_INFO, the pipeline may skip triplet-fact-checker for this claim to save API calls.
-4. If the stance is REFUTES, downstream agents (like triplet-fact-checker) will boost their fake probability score by +0.15.
+2. Use BGE-M3 cross-encoder logic (via `serve_stance.py` or similar endpoint) to score agreement/disagreement.
+3. Classify the stance into one of four categories: SUPPORTS, REFUTES, NOT_ENOUGH_INFO, UNRELATED.
+4. If the stance is UNRELATED or NOT_ENOUGH_INFO, the pipeline may skip triplet-fact-checker for this claim to save API calls.
+5. If the stance is REFUTES, downstream agents (like triplet-fact-checker) will boost their fake probability score by +0.15.
 
 ## INPUT
 Read claims from MCP context key `claim_extractor.output` (memory_recall).
