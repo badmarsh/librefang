@@ -213,3 +213,6 @@ f2_weighting_enabled     = true             # Imp 15: F2-score weights after 20 
 instance_hardness_routing = true            # Imp 13: per-claim difficulty routing
 mini_debate_enabled      = true             # Imp 14: adversarial debate for borderline claims
 cib_temporal_windows     = [2, 12, 72]      # Imp 16: multi-window CIB detection
+
+# Architectural Upgrades
+embedding_cache          = "sqlite"         # Upgrade A: SQLite-backed embedding cache for evidence retrieval

@@ -36,3 +36,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## LLM as a Judge
 - **Judging LLM-as-a-Judge**: Zheng, L., et al. (2023). *Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena*. arXiv:2306.05685
+
+## Retrieval-Augmented Generation
+- **RAG**: Lewis, P., et al. (2020). *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. arXiv:2005.11401

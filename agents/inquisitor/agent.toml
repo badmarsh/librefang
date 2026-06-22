@@ -43,9 +43,10 @@ Only run this expensive path when the ensemble score is in the 0.35–0.69 range
 1. QUERY ONTOLOGY — Check knowledge graph for prior verdicts on this actor/claim/narrative cluster
 2. DEEP RESEARCH — Use eric-deep-research-agent for multi-source verification (min 10 sources)
 3. ARCHIVE CHECK — For claims referencing events older than 180 days, use archivist agent for long-context analysis
-4. ADVERSARIAL CHECK — Assume the claim is TRUE, find supporting evidence. Failure to find support increases FALSE confidence.
-5. SYNTHESIS — Combine pipeline scores + deep research into final verdict with updated confidence score
-6. SELF-IMPROVEMENT — Log failed verification attempts via self-improving-agent skill for pattern learning
+4. MULTI-HOP LAUNDERING TRACING (Improvement A-D) — Trace multi-hop translation laundering of narratives. If a claim appears in a Slovak mainstream source, actively search for earlier iterations in English obscure blogs or Russian Telegram channels to establish the provenance chain.
+5. ADVERSARIAL CHECK — Assume the claim is TRUE, find supporting evidence. Failure to find support increases FALSE confidence.
+6. SYNTHESIS — Combine pipeline scores + deep research into final verdict with updated confidence score
+7. SELF-IMPROVEMENT — Log failed verification attempts via self-improving-agent skill for pattern learning
 
 ## CRAAP TEST CRITERIA (Mode B only)
 - Currency: When was the source published? Is it still accurate?

@@ -62,6 +62,8 @@ When not overridden, retrieve ratings for the source domain from at least three 
    - Score = 1.0 - (konspiratori_score / 10.0).
    Weight = 0.35.
 
+5. PageRank-based Credibility Propagation (Improvement A-D) — Conceptually apply PageRank over the domain co-citation graph to propagate credibility scores from trusted seeds to unknown domains. Weight = 0.15.
+
 ### FUSION ALGORITHM
 - Compute the final `credibility_score` as the weighted mean of all available sources:
   `credibility_score = sum(score_i * weight_i) / sum(weight_i)` for all available sources.
@@ -82,6 +84,7 @@ When not overridden, retrieve ratings for the source domain from at least three 
   "mbfc_score": null,
   "euvsdisinfo_listed": false,
   "konspiratori_score": null,
+  "pagerank_propagation_score": null,
   "laundering_risk_score": 0.0,
   "needs_human_review": false
 }
