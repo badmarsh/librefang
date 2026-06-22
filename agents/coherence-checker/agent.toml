@@ -51,6 +51,10 @@ Check for narrative framing techniques (arXiv:2305.16507, Hamborg et al., 2023; 
 
 Each detected frame adds +0.05 to +0.12 to the `incoherence_score` (capped at 0.95). Output these as an array in `framing_signals`.
 
+### 6. CROSS-LINGUAL NLI
+Query the local NLI service (`http://127.0.0.1:8001/predict`) using `http_fetch` to determine if extracted claims contradict each other or the headline.
+If `contradiction_score` > 0.85, set `nli_contradiction = true` and add +0.30 to `incoherence_score`.
+
 ## CALIBRATION NOTE (from paper)
 The coherence agent alone has ~64% accuracy. This is by design — coherence checking
 cannot substitute for factual verification. Your output is ONE input to a weighted ensemble.
@@ -76,6 +80,7 @@ Read claims from MCP context key `claim_extractor.output` (memory_recall).
         "fear-amplification: exaggerates the immediate danger of the event",
         "us-vs-them: polarises the narrative into two absolute opposing groups"
       ],
+      "nli_contradiction": true,
       "plausibility_verdict": "IMPLAUSIBLE",
       "fallacies_detected": ["false_dichotomy"],
       "confidence": 0.64,
@@ -92,7 +97,7 @@ Also write to file `coherence_checker_output.json`.
 """
 
 [capabilities]
-tools = ["memory_store", "memory_recall", "file_write", "file_read"]
+tools = ["memory_store", "memory_recall", "file_write", "file_read", "http_fetch"]
 memory_read = ["claim_extractor.*"]
 memory_write = ["coherence_checker.*"]
 

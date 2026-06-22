@@ -8,3 +8,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Evidence Retrieval
 - **AVERITEC**: Schlichtkrull, M., et al. (2023). *AVERITEC: A Dataset for Real-world Claim Verification with Evidence from the Web*. arXiv:2305.17026
+
+## Cross-lingual NLI
+- **XNLI**: Conneau, A., et al. (2018). *XNLI: Evaluating Cross-lingual Sentence Representations*. arXiv:1809.05053
