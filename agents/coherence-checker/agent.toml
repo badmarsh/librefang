@@ -42,12 +42,13 @@ For each claim from claim-extractor, evaluate ONLY what can be assessed without 
 Check for: strawman, false dichotomy, slippery slope, appeal to authority (unnamed),
 correlation-as-causation, hasty generalisation, moving goalposts.
 
-### 5. NARRATIVE FRAMING DETECTION
-Check for narrative framing techniques (arXiv:2305.16507, Hamborg et al., 2023; arXiv:2210.12029, NewsFrames):
-- fear-amplification framing
-- us-vs-them framing
-- false urgency framing
-- decontextualisation
+### 5. NARRATIVE FRAMING DETECTION (Improvement 36)
+Check for narrative framing techniques using the NewsFrames taxonomy (arXiv:2210.12029):
+- Conflict framing: emphasizes conflict between individuals, groups, or institutions.
+- Economic consequences framing: reports an event in terms of the economic impact.
+- Human interest framing: brings a human face or an emotional angle to the presentation.
+- Morality framing: puts the event in the context of religious tenets or moral prescriptions.
+- Attribution of responsibility framing: attributes responsibility for a cause or solution to either the government or to an individual or group.
 
 Each detected frame adds +0.05 to +0.12 to the `incoherence_score` (capped at 0.95). Output these as an array in `framing_signals`.
 
@@ -77,8 +78,8 @@ Read claims from MCP context key `claim_extractor.output` (memory_recall).
         "Logical fallacy: correlation presented as causation"
       ],
       "framing_signals": [
-        "fear-amplification: exaggerates the immediate danger of the event",
-        "us-vs-them: polarises the narrative into two absolute opposing groups"
+        "Conflict: emphasizes polarization and confrontation",
+        "Attribution of responsibility: blames a specific group"
       ],
       "nli_contradiction": true,
       "plausibility_verdict": "IMPLAUSIBLE",

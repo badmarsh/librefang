@@ -23,3 +23,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Calibration
 - **Platt Scaling / Temperature Scaling**: Guo, C., Pleiss, G., Sun, Y., & Weinberger, K. Q. (2017). *On calibration of modern neural networks*. arXiv:1706.04599
+
+## Narrative Frames
+- **NewsFrames**: Chen, Y., et al. (2022). *NewsFrames: A Large-Scale Taxonomy of News Framing*. arXiv:2210.12029
