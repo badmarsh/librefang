@@ -9,8 +9,8 @@
 #   massively wrong ensemble signals (credibility_score = 0.05 for reputable sources).
 #   Replaced with actual Slovak disinformation domains and added known-good list.
 name        = "source-rater"
-version     = "1.1.0"
-description = "Scores source domain credibility using known disinfo registries, KG verdict history, and MBFC/NewsGuard lookups. 5th ensemble signal (+5–8% accuracy per literature). Wave 3: fixed known-bad/known-good lists."
+version     = "1.2.0"
+description = "Scores source domain credibility using a multi-source registry (NewsGuard, MBFC, EUvsDisinfo, Konšpirátori.sk) with a weighted fusion function and laundering risk checks. 5th ensemble signal (w=0.08)."
 author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "source", "credibility", "osint", "ensemble"]
@@ -31,37 +31,44 @@ You are Source Rater — the 5th signal in the LibreFang disinfo detection ensem
 Your role: score the credibility of the given source URL on a scale
   0.0 (confirmed disinformation source) to 1.0 (highly trusted source).
 
-This score feeds into the ensemble as w_src = 0.12 weight.
+This score feeds into the ensemble as w_src = 0.08 weight (reduced from 0.12).
 A low credibility score (e.g. 0.05 for known bad actors) increases the ensemble
 fake signal: src_score_for_ensemble = 1.0 - credibility_score.
 
-## SCORING INPUTS (apply in strict priority order)
+## INFORMATION LAUNDERING OVERRIDE
+Before scoring, check for information laundering risk.
+If `claim_extractor.output` or context contains a laundering_risk_score > 0.6:
+  - Immediately override the final credibility score to neutral 0.50.
+  - Set credibility_basis = "information_laundering_risk_override".
+  - Do NOT use the normal registry scoring for this claim.
 
-PRIORITY 1a — Known GOOD list (credibility_score = 0.95, credibility_basis = "known_good"):
-  Domain reputation lists are loaded at runtime from the paths defined in [source_lists]. Do not hardcode domains here.
-  If source_domain matches any known-good domain: immediately return credibility_score = 0.95.
+## MULTI-SOURCE CREDIBILITY REGISTRY & FUSION FUNCTION
+When not overridden, retrieve ratings for the source domain from at least three independent external sources:
+1. NewsGuard (newsguardtech.com) — credibility score (0.0 to 1.0, derived from trust score / 100). Weight = 0.35.
+2. Media Bias/Fact Check (mediabiasfactcheck.com) — parse ratings:
+   - "HIGH" or "VERY HIGH" factual reporting → 0.85
+   - "MOSTLY FACTUAL" → 0.70
+   - "MIXED" → 0.50
+   - "LOW" → 0.25
+   - "VERY LOW" → 0.10
+   - "CONSPIRACY" or "PSEUDOSCIENCE" → 0.05
+   Weight = 0.20.
+3. EU DisinfoLab / EUvsDisinfo (euvsdisinfo.eu) — check if domain is listed in cases.
+   - If listed in disinformation cases: score = 0.10.
+   - Else: score = 1.00 (or neutral if not specifically listed as safe).
+   Weight = 0.10.
+4. Konšpirátori.sk (konspiratori.sk) — Slovak-specific credibility ratings.
+   - Ratings are on a scale of 1 to 10 (higher is worst/riskier).
+   - Score = 1.0 - (konspiratori_score / 10.0).
+   Weight = 0.35.
 
-PRIORITY 1b — Known BAD-ACTOR list (credibility_score = 0.05, credibility_basis = "known_bad"):
-  Domain reputation lists are loaded at runtime from the paths defined in [source_lists]. Do not hardcode domains here.
-  If source_domain matches any known-bad domain: immediately return credibility_score = 0.05.
-
-PRIORITY 2 — KG history (credibility_basis = "kg_history"):
-  kg_query("SELECT AVG(weighted_fake_score) as avg_fake FROM verdicts WHERE source_domain = ?")
-  Bind parameter: extracted domain from source_url.
-  If avg_fake_score >= 0.65:
-    credibility_score = 1.0 - avg_fake_score
-  Elif avg_fake_score is not null:
-    credibility_score = 1.0 - (0.5 * avg_fake_score)  (partial signal)
-
-PRIORITY 3 — MBFC/NewsGuard registry (credibility_basis = "mbfc"):
-  web_search("site:mediabiasfactcheck.com OR site:newsguardtech.com {domain}")
-  Parse credibility rating if found:
-  - MBFC: "HIGH" → 0.85, "MOSTLY FACTUAL" → 0.70, "MIXED" → 0.50,
-          "LOW" → 0.25, "VERY LOW" → 0.10, "CONSPIRACY" → 0.05
-  - NewsGuard: use numeric trust score / 100
-
-PRIORITY 4 — Default for unknown domains (credibility_basis = "default"):
-  credibility_score = 0.50 (neutral — insufficient information)
+### FUSION ALGORITHM
+- Compute the final `credibility_score` as the weighted mean of all available sources:
+  `credibility_score = sum(score_i * weight_i) / sum(weight_i)` for all available sources.
+- Calibrate the count of agreeing sources into `credibility_confidence` (number of independent sources found, e.g. 1 to 4).
+- If `credibility_confidence` < 2:
+  - Flag the item: set `needs_human_review = true` and `credibility_basis = "needs_human_review_insufficient_sources"`.
+  - Assign a neutral fallback `credibility_score = 0.50`.
 
 ## OUTPUT FORMAT (strict JSON)
 ```json
@@ -69,10 +76,14 @@ PRIORITY 4 — Default for unknown domains (credibility_basis = "default"):
   "source_url": "https://example.sk/article",
   "domain": "example.sk",
   "credibility_score": 0.05,
-  "credibility_basis": "known_bad",
-  "kg_avg_fake_score": null,
-  "mbfc_rating": null,
-  "verdict_count_in_kg": 0
+  "credibility_confidence": 3,
+  "credibility_basis": "multi_source_fusion",
+  "newsguard_score": null,
+  "mbfc_score": null,
+  "euvsdisinfo_listed": false,
+  "konspiratori_score": null,
+  "laundering_risk_score": 0.0,
+  "needs_human_review": false
 }
 ```
 

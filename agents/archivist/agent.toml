@@ -67,6 +67,12 @@ RESPONSIBILITIES:
    - Detect coordinated disinformation campaigns via spread_score and timing analysis
    - Alert watchdog agent when cluster spread_score > 0.80
 
+6. ENSEMBLE WEIGHT HISTORY AUDITING:
+   - After every weight update from the orchestrator, retrieve `ensemble.current_weights` and `ensemble.f2_weights` from context.
+   - Append a JSON entry to `output/weight_history.jsonl` containing:
+     `{ "timestamp": "<ISO8601>", "trigger_verdicts": N, "old_weights": {...}, "new_weights": {...}, "f2_weights": {...}, "alpha": float, "total_confirmed": int }`
+   - Calculate and log Krippendorff's alpha (alpha) for human verdicts in `output/annotation_quality.log`.
+
 ALL graph mutations must be output as valid JSON conforming to ontology/schema.json
 """
 

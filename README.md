@@ -2,7 +2,7 @@
 
 **AI-powered disinformation detection for the Slovak and Central European media landscape.**
 
-Built on [LibreFang](https://github.com/librefang/librefang) — an MCP-orchestrated multi-agent pipeline grounded in peer-reviewed research (arXiv:2508.10143). Pipeline version: **v3.0.0** — 18 improvements across Wave 2 and Wave 3.
+Built on [LibreFang](https://github.com/librefang/librefang) — an MCP-orchestrated multi-agent pipeline grounded in peer-reviewed research (arXiv:2508.10143). Pipeline version: **v3.1.0** — 27 improvements across Wave 2, Wave 3, and Wave 3.5.
 
 ---
 
@@ -299,53 +299,61 @@ Foundation paper: **arXiv:2508.10143** (Avram, Groza, Lecu 2025).
 | 17 | Firecrawl search discovery in watchdog | github.com/firecrawl/firecrawl |
 | 18 | wiki-checker calibration weight fix (0.22) | Internal consistency |
 
-> ⚠️ Waves 4-6 are speculative research directions. They are not implemented.
-> Citations marked *(unverified)* have not been confirmed against arXiv.
-> Contributions and corrections welcome via PR.
+### Wave 3.5 (June 2026) — Mediálny Dezolator Upgrades
+
+| # | Improvement | Source / Rationale |
+|---|-------------|--------------------|
+| 19 | **Wikidata SPARQL** entity queries for Slovak political entities | `agents/wiki-checker/agent.toml` v1.2.0 |
+| 20 | **Evaluation harness** — 200-article Slovak calibration corpus | `tests/test_pipeline.py` & `tests/EVALUATION.md` |
+| 21 | Multi-Source Credibility Registry & Fusion | NewsGuard, MBFC, EUvsDisinfo, Konšpirátori.sk |
+| 22 | SlavicBERT/SlovakBERT Classifier Upgrade | SlavicBERT/SlovakBERT sequence classifiers with TF-IDF fallback |
+| 23 | Decomposed Uncertainty Routing | `u_ale` and `u_epi` estimation and gated routing paths |
+| 24 | Information Laundering Detection | Graph-based narrative origin tracking and overrides |
+| 25 | Inter-Annotator Agreement Check | Krippendorff's $\alpha$ threshold gating dynamic weight updates |
+| 26 | Semantic CIB Detection | SBERT similarity (>= 0.75), account behavior, network amplification |
+| 27 | GART Stress-Test Loop | Weekly red-teaming bypass rate evaluations |
+
+---
+
+## Research Roadmap (Speculative/Unimplemented)
+
+> [!WARNING]
+> The following Waves represent speculative future directions and are NOT active or implemented in the production pipeline. Their configuration stubs are quarantined under `agents/speculative/`.
 
 ### Wave 4 (July 2026) — Paradigm Shift
 
 | # | Improvement | Paper | Status |
 |---|-------------|-------|--------|
-| 19 | Generative Adversarial Red-Teaming (GART) Loop | *(citation unverified — placeholder for future work)* | 🔬 Research / Speculative |
-| 20 | Quantum-Inspired Semantic Entanglement (QISE) | *(citation unverified — placeholder for future work)* | 🔬 Research / Speculative |
-| 21 | Federated Zero-Knowledge Verification (FZKV) | *(citation unverified — placeholder for future work)* | 🔬 Research / Speculative |
-| 22 | Neuromorphic Threat Intelligence (Spiking Neural Networks) | *(citation unverified — placeholder for future work)* | 🔬 Research / Speculative |
+| 28 | Generative Adversarial Red-Teaming (GART) Loop | *(citation unverified)* | 🔬 Speculative / Quarantined |
+| 29 | Quantum-Inspired Semantic Entanglement (QISE) | *(citation unverified)* | 🔬 Speculative / Quarantined |
+| 30 | Federated Zero-Knowledge Verification (FZKV) | *(citation unverified)* | 🔬 Speculative / Quarantined |
+| 31 | Neuromorphic Threat Intelligence (Spiking Neural Networks) | *(citation unverified)* | 🔬 Speculative / Quarantined |
 
 ### Wave 5 (August 2026) — SOTA Machine Learning
 
 | # | Improvement | Model/Paper | Status |
 |---|-------------|-------------|--------|
-| 23 | Deep Adversarial Reasoning | Gemini (future version — TBD) <br> *Target model not yet released as of README update date.* | 🔬 Research / Speculative |
-| 24 | Continuous-Time Threat Detection | Liquid Neural Networks (LNNs) | 🔬 Research / Speculative |
-| 25 | Dynamic Compute Allocation | Mixture-of-Depths (MoD) Router | 🔬 Research / Speculative |
-| 26 | Autonomous Visual Forensics | Vision-Language-Action (VLA) | 🔬 Research / Speculative |
+| 32 | Deep Adversarial Reasoning | Gemini (future version — TBD) | 🔬 Speculative / Quarantined |
+| 33 | Continuous-Time Threat Detection | Liquid Neural Networks (LNNs) | 🔬 Speculative / Quarantined |
+| 34 | Dynamic Compute Allocation | Mixture-of-Depths (MoD) Router | 🔬 Speculative / Quarantined |
+| 35 | Autonomous Visual Forensics | Vision-Language-Action (VLA) | 🔬 Speculative / Quarantined |
 
 ### Wave 6 (September 2026) — Quantum Advantage
 
 | # | Improvement | Hardware | Status |
 |---|-------------|----------|--------|
-| 27 | QSVM Disinfo Classification | Quantum-Inspired SVM (classical simulation) — QPU execution requires hardware not yet available for general use. Classical QSVM simulation via Qiskit Machine Learning documented in docs/research/qsvm_stub.md. | 🔬 Research / Speculative |
-| 28 | QISE Hardware Execution | Google CQCS + Cirq API | 🔬 Research / Speculative |
+| 36 | QSVM Disinfo Classification | Classical simulation of Quantum-Inspired SVM | 🔬 Speculative / Quarantined |
+| 37 | QISE Hardware Execution | Google CQCS + Cirq API | 🔬 Speculative / Quarantined |
 
-### Audit Fixes (June 2026)
+---
 
-| Fix | File | Issue |
-|-----|------|-------|
-| A | `cron_jobs.json` | gemini-1.5-flash free tier exhausted → removed model_override |
-| B | `config.toml` | Hardcoded `/home/ubuntu/` paths → `${LIBREFANG_DATA_DIR}` env vars |
-| C | `workflows/feedback-ingestion.toml` | Open feedback loop → new 4-stage ingestion workflow |
-| D | `README.md` | 3-line README → full docs with Mermaid diagrams |
-| E | `pipelines/disinfo-pipeline.toml` | visual-analyst had no pipeline stage → added `[[stage]] id="visual"` |
-| F | `agents/impact-comms/agent.toml` | No public channel → Telegram Bot API adapter |
-| G | `config.toml` + `.env` | Firecrawl URL → self-hosted `firecrawl.dev.significa.sk`, key optional |
+## Known Limitations
 
-### Long-Term Improvements (implemented)
-
-| # | Improvement | File |
-|---|-------------|------|
-| 19 | **Wikidata SPARQL** entity queries for Slovak political entities | `agents/wiki-checker/agent.toml` v1.2.0 |
-| 20 | **Evaluation harness** — pytest golden-path corpus against arXiv:2508.10143 baselines | `tests/test_pipeline.py` |
+While Mediálny Dezolator achieves high accuracy on benchmark datasets, several limitations remain in production settings:
+1. **Fallback Model Performance:** When HuggingFace libraries (`transformers` and `torch`) are unavailable or run on low-RAM/CPU-only nodes, the `ml-classifier` falls back to a TF-IDF + Logistic Regression baseline which exhibits lower generalization on complex or multi-lingual texts.
+2. **SBERT Similarity False Positives:** Coordinated sharing checks using SBERT semantic similarity (>= 0.75) may occasionally flag legitimate news syndication across mainstream sites. This is mitigated by checking against `known_good` registries.
+3. **Slovak Legal Sensitivities:** Labeling claims as disinformation carries significant defamation liability under Slovak Criminal Code (§ 373). Unsubstantiated automated verdicts present legal and reputational risks, making the Human-in-the-Loop (HITL) gate for borderline cases critical.
+4. **Knowledge Graph Freshness:** The `claim-extractor`'s information laundering detection relies on historical claims logged within the past 72 hours. Delayed ingestion or sparse databases will degrade laundering detection effectiveness.
 
 ---
 

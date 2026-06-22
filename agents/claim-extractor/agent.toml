@@ -84,6 +84,16 @@ When source_lang = "sk" or "cs":
      (Levenshtein distance > 3 between original and translated entity string)
   5. Store entity_original_forms in MCP key: claim_extractor.entity_map
 
+## INFORMATION LAUNDERING DETECTION
+# Alliance for Europe report (alliance4europe.eu, March 2026)
+1. For each extracted claim, check the archivist's knowledge graph for the prior 72 hours.
+   Query: `kg_query("SELECT claim_text, source_url, created_at FROM claims WHERE created_at >= ?")` (bind timestamp = current_time - 72h).
+2. Compute semantic similarity (SBERT cosine >= 0.82) between the current claim and any claims published on known-bad sources within that 72h window.
+3. If a match is found on a known-bad source prior to the current source's publication time:
+   - Compute `laundering_risk_score` as the SBERT cosine similarity value (0.82 to 1.00).
+   - Populate `provenance_chain` array with details: `[{"source_url": "...", "timestamp": "...", "similarity": float}]`.
+4. If no prior known-bad matches are found, set `laundering_risk_score = 0.0` and `provenance_chain = []`.
+
 ## ENTITY TYPES TO EXTRACT (Slovak political context)
   PERSON: politicians, journalists, public figures
   ORG: political parties (SNS, Smer, PS, KDH), state institutions (NBS, NAKA, GP SR)
@@ -119,7 +129,9 @@ When source_lang = "sk" or "cs":
       "sentence_index": 3,
       "checkworthiness": 0.92,
       "claim_hash": "<sha256 hex>",
-      "duplicate_of": null
+      "duplicate_of": null,
+      "laundering_risk_score": 0.0,
+      "provenance_chain": []
     }
   ],
   "total_sentences": 14,

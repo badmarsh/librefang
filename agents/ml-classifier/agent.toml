@@ -2,8 +2,8 @@
 # arXiv:2508.10143 — Agent 1: ML Classifier
 # Part of fix: Fix 1 — Replace fake ml-classifier with real trained model
 name        = "ml-classifier"
-version     = "1.1.0"
-description = "TF-IDF + Logistic Regression classifier served locally via scripts/serve_ml_classifier.py"
+version     = "1.2.0"
+description = "SlovakBERT / SlavicBERT sequence classifier served locally via scripts/serve_ml_classifier.py (falls back to TF-IDF + Logistic Regression when PyTorch/Transformers are unavailable)."
 author      = "librefang"
 module      = "builtin:http_scorer"
 tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]

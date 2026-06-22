@@ -64,10 +64,10 @@ Checked against ensemble.current_weights first — prefer adaptive weights if th
 
 Default weights:
   w_ml    = 0.26   (ml-classifier,        e ≈ 0.18)
-  w_wiki  = 0.22   (wiki-checker,         e ≈ 0.22)
+  w_wiki  = 0.26   (wiki-checker,         e ≈ 0.22)
   w_coh   = 0.16   (coherence-checker,    e ≈ 0.36)
   w_trip  = 0.24   (triplet-fact-checker, e ≈ 0.12)
-  w_src   = 0.12   (source-rater,         new signal)
+  w_src   = 0.08   (source-rater,         new signal)
   SUM     = 1.00
 
 Final fake score per claim:
@@ -98,58 +98,58 @@ If triplet_fact_checker.search_quality_flag = true:
 
 ## IMPROVEMENT 5 — STRUCTURED UNCERTAINTY QUANTIFICATION
 # arXiv:2306.13063 (Kadavath et al., "Language Models (Mostly) Know What They Know")
+# Kendall & Gal, "What Uncertainties Do We Need?" (arXiv:1703.04977)
 
 Compute three uncertainty components for each verdict:
 
-1. ALEATORY uncertainty (irreducible — data noise):
-   u_ale = std_dev of agent scores = sqrt(Σ w_i * (score_i - P_fake)²)
+1. ALEATORY uncertainty (irreducible data noise, representing ambiguous/satirical/opinionated content):
+   u_ale = variance across agent scores = sum(w_i * (score_i - P_fake)²)
 
-2. EPISTEMIC uncertainty (reducible — model disagreement):
-   u_epi = max(agent_scores) - min(agent_scores)
-   Normalize: u_epi_norm = u_epi / 1.0
+2. EPISTEMIC uncertainty (reducible lack of evidence, e.g. too recent, no sources found):
+   u_epi = 1.0 - (num_sources_found / expected_sources_threshold)
+   - Calibrated per agent type (expected_sources_threshold = 5).
+   - If num_sources_found is not explicitly given, count the unique sources in triplet_fact_checker.output.
 
 3. CALIBRATION FLAG:
-   If u_epi_norm > 0.40: set needs_human_review = true
-   (agents disagree strongly — automated confidence is unreliable)
+   If u_ale > 0.15 or u_epi > 0.35: set needs_human_review = true
+   (strongly contested or low-evidence claims require human oversight)
 
-Confidence in output = 1.0 - (0.6 * u_ale + 0.4 * u_epi_norm)
+Confidence in output = 1.0 - (0.6 * u_ale + 0.4 * u_epi)
 
 Disagreement pairs (include all pairs with delta > 0.20):
   For each pair (agent_a, agent_b): delta = |score_a - score_b|
 
-## IMPROVEMENT 13 — INSTANCE-HARDNESS DYNAMIC ROUTING
+## IMPROVEMENT 13 — DECOMPOSED UNCERTAINTY DYNAMIC ROUTING
 # DRES (Farhangian et al., 2025) — FFarhangian/FakeNewsDetection_DRES
-# Per-claim difficulty estimation replaces static all-claims-equal approach.
+# Kendall & Gal (arXiv:1703.04977)
 
-After computing P_fake and uncertainty for each claim, compute hardness index:
-  H = u_epi_norm * (1.0 - max(agent_confidence_scores))
+After computing P_fake and uncertainty (u_ale, u_epi) for each claim, route based on the DECOMPOSED uncertainty:
 
-  Where max(agent_confidence_scores) = highest confidence value among the 5 agents.
+1. LOW BOTH (u_ale <= 0.15 AND u_epi <= 0.35) — Easy Claim:
+   - routing_path = "ensemble_fast"
+   - Action: Verdict stands as-is. Fast-path publication tier.
 
-Routing decision based on H:
-  H < 0.25  (easy claim):
-    routing_path = "ensemble_fast"
-    Action: verdict stands as-is. No additional agents triggered.
-    ~60% of claims expected to fall here — reduces inquisitor load significantly.
+2. HIGH ALEATORY ONLY (u_ale > 0.15 AND u_epi <= 0.35) — Ambiguous wording/satire:
+   - routing_path = "ambiguous_hitl"
+   - Action: Route directly to writer with HITL flag: needs_human_review = true.
+   - Set annotation = "AMBIGUOUS — human judgment required".
 
-  0.25 <= H < 0.55  (medium difficulty):
-    routing_path = "targeted_verify"
-    Action: trigger inquisitor with limit=3 sources (fast targeted check).
-    Set needs_deferred_review = true if verdict is DISINFORMATION.
+3. HIGH EPISTEMIC ONLY (u_epi > 0.35 AND u_ale <= 0.15) — Low evidence:
+   - routing_path = "targeted_verify" (if 0.35 < u_epi <= 0.60) or "deep_verify" (if u_epi > 0.60)
+   - Action: Trigger inquisitor agent for additional source retrieval (limit=3 or limit=10).
 
-  H >= 0.55  (hard claim):
-    routing_path = "deep_verify"
-    Action: trigger full inquisitor (10-source adversarial fact-check).
-    Set needs_human_review = true regardless of u_epi_norm threshold.
+4. HIGH BOTH (u_ale > 0.15 AND u_epi > 0.35) — Borderline and low evidence:
+   - routing_path = "debate"
+   - Action: Trigger adversarial mini-debate (arbiter judge), then route to HITL.
 
-Include hardness_index and routing_path in every verdict output.
+Include hardness_index (computed as: H = u_epi * (1.0 - max_agent_conf)) and routing_path in every verdict output.
 
 ## IMPROVEMENT 14 — ADVERSARIAL MINI-DEBATE
 # Debate-to-Detect (hanshenmesen, ACL 2024) — github.com/hanshenmesen/Debate-to-Detect
 # Multi-agent adversarial debate improves accuracy on borderline claims.
 
-Trigger condition: u_epi_norm > 0.35 AND 0.35 <= P_fake <= 0.69
-  (claim is genuinely contested between agents)
+Trigger condition: routing_path == "debate" OR (u_epi > 0.35 AND 0.35 <= P_fake <= 0.69)
+  (claim is genuinely contested between agents and has low evidence)
 
 Mini-debate protocol:
   1. Read ml_classifier top_signals as Affirmative argument (FOR fake):

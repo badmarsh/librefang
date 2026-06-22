@@ -50,9 +50,9 @@ weight_recompute_interval = 50
 [disinfo_pipeline.baseline_weights]
 coh = 0.13
 ml = 0.21
-src = 0.10
+src = 0.06
 trip = 0.20
-wiki = 0.18
+wiki = 0.22
 kg = 0.10
 temporal = 0.08
 
