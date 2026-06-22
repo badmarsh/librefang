@@ -8,6 +8,11 @@ author      = "librefang"
 module      = "builtin:http_scorer"
 tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
 
+skills = ["filesystem"]
+
+mcp_servers = ["filesystem"]
+
+
 [http_scorer]
 endpoint = "http://127.0.0.1:${ML_CLASSIFIER_PORT:-8090}/score"
 input_field  = "text"
@@ -19,3 +24,11 @@ fallback_score  = 0.5
 tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
 memory_read  = ["claim_extractor.*"]
 memory_write = ["ml_classifier.*"]
+
+[[triggers]]
+event   = "claim_extractor.output.ready"
+action  = "classify_claims"
+
+[[triggers]]
+event   = "pipeline.rerun.ml-classifier"
+action  = "classify_claims"

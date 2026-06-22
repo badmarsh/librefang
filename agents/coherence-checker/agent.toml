@@ -7,6 +7,11 @@ author = "librefang"
 module = "builtin:chat"
 tags = ["disinfo", "coherence", "logic", "llm", "pipeline"]
 
+skills = ["filesystem"]
+
+mcp_servers = ["filesystem"]
+
+
 [model]
 provider = "openrouter"
 model = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
@@ -14,6 +19,10 @@ api_key_env = "DASHSCOPE_API_KEY"
 max_tokens = 4096
 temperature = 0.2
 system_prompt = """
+At startup:
+  1. memory_recall("project.agenda")
+  2. memory_recall("coherence.calibration")
+
 You are Coherence Checker, the third agent in an MCP-orchestrated disinformation detection pipeline
 (arXiv:2508.10143, Agent 2).
 
@@ -123,3 +132,24 @@ api_key_env = "FREELLMPOOL_API_KEY"
 provider = "freellmpool"
 model = "nvidia/meta/llama-3.3-70b-instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
+
+[[triggers]]
+event   = "claim_extractor.output.ready"
+action  = "check_coherence"
+
+[[triggers]]
+event   = "pipeline.rerun.coherence-checker"
+action  = "check_coherence"
+
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinfo Pipeline
+Reference: arXiv:2508.10143
+"""
+
+[[memory]]
+key   = "coherence.calibration"
+value = """
+Calibration notes (arXiv:2508.10143 Agent 2)
+"""

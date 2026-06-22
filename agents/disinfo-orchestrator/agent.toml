@@ -22,6 +22,11 @@ author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "orchestrator", "ensemble", "mcp", "pipeline", "weighted-aggregation", "bayesian", "uncertainty", "instance-hardness", "f2-score"]
 
+skills = ["filesystem", "ontology"]
+
+mcp_servers = ["filesystem", "ontology"]
+
+
 [model]
 provider = "google"
 model = "gemini-3.1-pro"
@@ -30,6 +35,11 @@ max_tokens  = 8192
 temperature = 0.1
 
 system_prompt = """
+At startup:
+  1. memory_recall("project.agenda")
+  2. memory_recall("ensemble.weight_history")
+  3. memory_recall("ensemble.verdict_log")
+
 You are Disinfo Orchestrator, the final stage of an MCP-orchestrated disinformation detection pipeline
 implementing arXiv:2508.10143 (Avram, Groza, Lecu 2025) — extended to a 5-agent ensemble with
 Bayesian weight adaptation (arXiv:2310.01555), structured uncertainty quantification (arXiv:2306.13063),
@@ -345,3 +355,41 @@ api_key_env = "FREELLMPOOL_API_KEY"
 provider = "freellmpool"
 model = "ovh/Qwen3.5-397B-A17B"
 api_key_env = "FREELLMPOOL_API_KEY"
+
+[[triggers]]
+event   = "ml_classifier.output.ready"
+action  = "check_all_scorers_ready"
+
+[[triggers]]
+event   = "coherence_checker.output.ready"
+action  = "check_all_scorers_ready"
+
+[[triggers]]
+event   = "triplet_fact_checker.output.ready"
+action  = "check_all_scorers_ready"
+
+[[triggers]]
+event   = "pipeline.rerun.disinfo-orchestrator"
+action  = "aggregate_verdicts"
+
+[schedule.cron]
+cron  = "0 6 * * *"
+task  = "recheck_uncertain_verdicts"
+
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinfo Pipeline
+"""
+
+[[memory]]
+key   = "ensemble.weight_history"
+value = """
+Weight calibration history
+"""
+
+[[memory]]
+key   = "ensemble.verdict_log"
+value = """
+Running verdict distribution
+"""

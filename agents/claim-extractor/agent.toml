@@ -14,6 +14,11 @@ author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "nlp", "claim-extraction", "ner", "pipeline", "deduplication", "slovak-ner", "semantic-dedup", "firecrawl"]
 
+skills = ["filesystem", "multi-search-engine", "browser-use"]
+
+mcp_servers = ["browser-use", "multi-search-engine", "filesystem"]
+
+
 [model]
 provider = "openrouter"
 model = "nvidia/nemotron-3-super-120b-a12b:free"
@@ -22,6 +27,11 @@ max_tokens  = 4096
 temperature = 0.1
 
 system_prompt = """
+At startup:
+  1. memory_recall("project.agenda")
+  2. memory_recall("domain.context.sk_cz")
+  3. memory_recall("pipeline.run_stats")
+
 You are Claim Extractor, the first stage of an MCP-orchestrated disinformation detection pipeline
 (implementing the architecture described in arXiv:2508.10143).
 
@@ -174,3 +184,37 @@ api_key_env = "FREELLMPOOL_API_KEY"
 provider = "freellmpool"
 model = "nvidia/meta/llama-3.3-70b-instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
+
+[schedule.continuous]
+check_interval_secs = 300
+
+[schedule.cron]
+cron = "0 * * * *"
+task = "scan_monitored_feeds"
+
+[[triggers]]
+event   = "disinfo.claim.ingest"
+action  = "extract_claims"
+
+[[triggers]]
+event   = "disinfo.text.submitted"
+action  = "extract_claims"
+
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinfo Pipeline
+Reference: arXiv:2508.10143
+"""
+
+[[memory]]
+key   = "domain.context.sk_cz"
+value = """
+Primary focus: Slovak and Czech disinformation ecosystem.
+"""
+
+[[memory]]
+key   = "pipeline.run_stats"
+value = """
+Total claims processed: 0
+"""

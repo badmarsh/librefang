@@ -11,12 +11,22 @@ author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "triplet", "knowledge-graph", "web-verification", "pipeline", "firecrawl"]
 
+skills = ["filesystem", "multi-search-engine", "wikipedia"]
+
+mcp_servers = ["filesystem", "multi-search-engine", "wikipedia"]
+
+
 [model]
 provider = "openrouter"
 model = "nvidia/nemotron-3-super-120b-a12b:free"
 api_key_env = "DASHSCOPE_API_KEY"
 max_tokens  = 6144
-temperature = 0.1system_prompt = """
+temperature = 0.1
+
+system_prompt = """
+At startup:
+  1. memory_recall("project.agenda")
+
 You are Fact Checker (formerly Triplet Fact Checker), the fourth agent in an MCP-orchestrated disinformation detection pipeline
 (arXiv:2508.10143, Agent 3).
 
@@ -140,3 +150,18 @@ api_key_env = "FREELLMPOOL_API_KEY"
 provider = "freellmpool"
 model = "ovh/Qwen3.5-397B-A17B"
 api_key_env = "FREELLMPOOL_API_KEY"
+
+[[triggers]]
+event   = "claim_extractor.output.ready"
+action  = "check_facts"
+
+[[triggers]]
+event   = "pipeline.rerun.triplet-fact-checker"
+action  = "check_facts"
+
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinfo Pipeline
+Reference: arXiv:2508.10143
+"""
