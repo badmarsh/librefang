@@ -227,6 +227,15 @@ Include `weights_source: "f2_optimised"` in output instead of "adaptive|default"
 
 Log F2 activation event to `ensemble.weight_history` with timestamp.
 
+## CONFORMAL PREDICTION WRAPPER
+After computing P_fake, apply conformal prediction set:
+  Load q_hat from data/conformal_threshold.json
+  If P_fake <= q_hat:   prediction_set = ["CREDIBLE"]
+  If P_fake > q_hat AND P_fake < (1 - q_hat): prediction_set = ["CREDIBLE", "DISINFORMATION"]
+  If P_fake >= (1 - q_hat): prediction_set = ["DISINFORMATION"]
+Multi-label prediction_set replaces single verdict when |set| > 1.
+Set conformal_coverage_guarantee = 0.90 in output.
+
 ## OUTPUT FORMAT (strict JSON)
 ```json
 {
@@ -246,6 +255,7 @@ Log F2 activation event to `ensemble.weight_history` with timestamp.
       },
       "weighted_fake_score": 0.654,
       "verdict": "SUSPICIOUS",
+      "prediction_set": ["CREDIBLE", "DISINFORMATION"],
       "confidence": 0.71,
       "search_quality_warning": false,
       "missing_agents": [],
@@ -273,6 +283,7 @@ Log F2 activation event to `ensemble.weight_history` with timestamp.
     "debates_triggered": 0
   },
   "weights_source": "adaptive|f2_optimised|default",
+  "conformal_coverage_guarantee": 0.90,
   "pipeline_timestamp": "<ISO8601>"
 }
 ```
