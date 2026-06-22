@@ -80,10 +80,18 @@ memory_recall("claim_extractor.output") → full claim batch with source_url and
    - lexical_signal = max(pairwise_bleu_scores) if above threshold, else 0.0
    - Normalise: lexical_signal = min(lexical_signal, 1.0)
 
-3. CROSS-DOMAIN AMPLIFICATION (weight = 0.25):
-   - Signal fires if the claim appears on BOTH Slovak-language sources AND
-     Russian-language sources (slavyangrad.ru or .ru TLD sources)
-   - cross_domain_signal = 1.0 if both SK and RU sources present, else 0.0
+3. CROSS-DOMAIN AMPLIFICATION (tiered logic):
+   Evaluate cross-domain amplification using a tiered approach.
+   TIER A — Strong coordination signal (weight = 0.25):
+     Fires if content appears on ≥2 sources from the known_bad list AND at least one of those sources has amplified the same claim within temporal_window_hours.
+     cross_domain_signal_A = 1.0 if triggered.
+   TIER B — Moderate cross-domain signal (weight = 0.12):
+     Fires if content appears on a source matching `.ru` domain suffix that is NOT in the known_good list AND the Slovak-side source is not quoting/debunking the content. (Detect debunking context using keywords from debunk_keywords: "falošné", "nepravdivé", "dementi", "hoax", "fact-check", "overenie", "false", "debunk", "disproven", "refuted").
+     cross_domain_signal_B = 1.0 if triggered.
+   TIER C — Informational flag only (weight = 0.0):
+     Fires if content appears on a source matching `.ru` domain suffix that IS in known_good (e.g., Meduza).
+     Set cross_domain_info = true in output, but this does NOT add to the composite score.
+   Combined: cross_domain_signal = 0.25 * cross_domain_signal_A + 0.12 * cross_domain_signal_B
 
 4. NOVEL ENTITY INJECTION (weight = 0.20):
    - Check if claim introduces a named entity not in KG within past 7 days:

@@ -10,6 +10,10 @@ temporal_window_hours = 2
 # Wave 3 — Improvement 16: Multi-window CIB detection
 temporal_windows = [2, 12, 72]
 temporal_window_weights = [0.40, 0.35, 0.25]
+cross_domain_tier_a_weight = 0.25
+cross_domain_tier_b_weight = 0.12
+# Tier C generates cross_domain_info = true but has no weight contribution.
+debunk_keywords = ["falošné", "nepravdivé", "dementi", "hoax", "fact-check", "overenie", "false", "debunk", "disproven", "refuted"]
 
 [circuit_breaker]
 alert_channel = "proactive-agent"
@@ -39,6 +43,10 @@ weight_adaptation_enabled = true
 weight_deviation_threshold = 0.08
 weight_recompute_interval = 50
 
+# WARNING: these weights come from arXiv:2508.10143 (general multilingual corpus).
+# They have NOT been validated on Slovak-language claims.
+# Run scripts/calibrate_weights.py once you have >= 50 labelled verdicts.
+# See docs/calibration_guide.md.
 [disinfo_pipeline.baseline_weights]
 coh = 0.13
 ml = 0.21
@@ -152,3 +160,6 @@ chat_id_env = "TELEGRAM_CHAT_ID"
 # Only confirmed DISINFORMATION verdicts with confidence >= 0.80 auto-post
 min_confidence = 0.80
 verdict_filter = ["DISINFORMATION"]
+
+[agents.queue_monitor]
+enabled = true
