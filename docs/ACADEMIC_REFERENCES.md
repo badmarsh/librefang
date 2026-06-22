@@ -14,3 +14,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Hallucination Detection
 - **SelfCheckGPT**: Manakul, P., Liusie, A., & Gales, M. J. F. (2023). *SelfCheckGPT: Zero-Resource Black-Box Hallucination Detection for Generative Large Language Models*. arXiv:2303.08896
+
+## Temporal Graph Networks (CIB)
+- **TGN**: Rossi, E., et al. (2020). *Temporal Graph Networks for Deep Learning on Dynamic Graphs*. arXiv:2006.10637
