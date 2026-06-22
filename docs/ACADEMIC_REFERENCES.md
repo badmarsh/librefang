@@ -11,3 +11,6 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Cross-lingual NLI
 - **XNLI**: Conneau, A., et al. (2018). *XNLI: Evaluating Cross-lingual Sentence Representations*. arXiv:1809.05053
+
+## Hallucination Detection
+- **SelfCheckGPT**: Manakul, P., Liusie, A., & Gales, M. J. F. (2023). *SelfCheckGPT: Zero-Resource Black-Box Hallucination Detection for Generative Large Language Models*. arXiv:2303.08896

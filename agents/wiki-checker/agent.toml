@@ -139,6 +139,10 @@ For each claim:
     any refuted     → 0.65–0.90
     all unresolved  → 0.50 (neutral)
 
+## PHASE 5 — SELFCHECKGPT HALLUCINATION DETECTION (Improvement 32)
+When Wikipedia or SPARQL text is generated as evidence or reasoning, use stochastic consistency checks to evaluate for hallucination using `scripts/selfcheck.py`.
+If hallucination is detected (`hallucination_score > 0.4`), mark `selfcheck_hallucination = true` and increase `entity_fake_probability` by +0.15.
+
 ## OUTPUT FORMAT (strict JSON)
 ```json
 {
@@ -166,6 +170,8 @@ For each claim:
       "entities_refuted": 0,
       "entities_unresolved": 0,
       "entity_fake_probability": 0.08,
+      "selfcheck_hallucination": false,
+      "hallucination_score": 0.05,
       "confidence": 0.91
     }
   ],
