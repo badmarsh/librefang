@@ -1,5 +1,18 @@
+[hand]
 name = "dezolator-prime"
-session_mode = "persistent"
-model = "gemini-3.1-pro"
+description = "Autonomous Slovak media integrity research agent"
+system_prompt_file = "dezolator_prime_system.md"
 schedule = "0 */4 * * *"
-mcp_tools_enabled = true
+session_mode = "persistent"
+provider = "gemini"
+model = "gemini-3.1-pro"
+
+[hand.tools]
+mcp_servers = ["dezolator-mcp"]
+web_search = true
+url_fetch = true
+memory_read = true
+memory_write = true
+
+[hand.channels]
+output = ["telegram:dezolator_reports", "dashboard"]
