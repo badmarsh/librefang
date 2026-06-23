@@ -145,7 +145,7 @@ fn tool_result_from_typed(tool_use_id: &str, result: TypedToolResult) -> ToolRes
 pub async fn execute_tool_raw(
     tool_use_id: &str,
     tool_name: &str,
-    input: &librefang_types::taint::TaintedValue<&serde_json::Value>,
+    input: &serde_json::Value,
     ctx: &ToolExecContext<'_>,
 ) -> ToolResult {
     let tool_name = normalize_tool_name(tool_name);
@@ -267,7 +267,7 @@ pub async fn execute_tool_raw(
                 allowed.push(dl);
             }
             if let Some(violation) = check_absolute_path_inside_workspace(
-                input.value.get("path").and_then(|v| v.as_str()),
+                input.get("path").and_then(|v| v.as_str()),
                 *workspace_root,
                 &allowed,
             ) {
@@ -282,7 +282,7 @@ pub async fn execute_tool_raw(
             // editor (#3313).
             if let (Some(k), Some(sid)) = (kernel, session_id) {
                 if let Some(client) = k.acp_fs_client(*sid) {
-                    let Some(path_str) = input.value.get("path").and_then(|v| v.as_str()) else {
+                    let Some(path_str) = input.get("path").and_then(|v| v.as_str()) else {
                         return ToolResult::error(
                             tool_use_id.to_string(),
                             "Missing 'path' parameter".to_string(),
@@ -313,7 +313,7 @@ pub async fn execute_tool_raw(
                 }
             }
             let extra_refs: Vec<&Path> = allowed.iter().map(|p| p.as_path()).collect();
-            let raw_input_path = input.value.get("path").and_then(|v| v.as_str());
+            let raw_input_path = input.get("path").and_then(|v| v.as_str());
             let resolved_for_dedup = raw_input_path
                 .and_then(|p| resolve_file_path_ext(p, *workspace_root, &extra_refs).ok());
 
@@ -354,7 +354,7 @@ pub async fn execute_tool_raw(
             // local-fs path; this is the missing pre-ACP guard.
             let writable = named_ws_prefixes_writable(*kernel, *caller_agent_id);
             if let Some(violation) = check_absolute_path_inside_workspace(
-                input.value.get("path").and_then(|v| v.as_str()),
+                input.get("path").and_then(|v| v.as_str()),
                 *workspace_root,
                 &writable,
             ) {
@@ -367,13 +367,13 @@ pub async fn execute_tool_raw(
             // dirty-state tracking) instead of the local fs (#3313).
             if let (Some(k), Some(sid)) = (kernel, session_id) {
                 if let Some(client) = k.acp_fs_client(*sid) {
-                    let Some(path_str) = input.value.get("path").and_then(|v| v.as_str()) else {
+                    let Some(path_str) = input.get("path").and_then(|v| v.as_str()) else {
                         return ToolResult::error(
                             tool_use_id.to_string(),
                             "Missing 'path' parameter".to_string(),
                         );
                     };
-                    let Some(content) = input.value.get("content").and_then(|v| v.as_str()) else {
+                    let Some(content) = input.get("content").and_then(|v| v.as_str()) else {
                         return ToolResult::error(
                             tool_use_id.to_string(),
                             "Missing 'content' parameter".to_string(),
@@ -480,7 +480,20 @@ pub async fn execute_tool_raw(
             None => Err(ToolError::MissingParameter("url")),
             Some(url) => {
                 // Taint check: block URLs containing secrets/PII from being exfiltrated
-                if let Some(violation) = check_taint_net_fetch(url) {
+                let tainted_url = librefang_types::taint::TaintedValue::new(
+                    url,
+                    { let mut s = std::collections::HashSet::new(); s.insert(librefang_types::taint::TaintLabel::UntrustedAgent); s },
+                    "llm_tool_call"
+                );
+                if let Some(violation) = check_taint_net_fetch(&tainted_url) {
+                    if let Some(k) = ctx.kernel {
+                        k.audit_log().record(
+                            ctx.caller_agent_id.unwrap_or("system"),
+                            librefang_runtime_audit::AuditAction::TaintSinkBlocked,
+                            format!("tool=net_fetch violation={violation}"),
+                            "denied",
+                        );
+                    }
                     return ToolResult {
                         tool_use_id: tool_use_id.to_string(),
                         content: format!("Taint violation: {violation}"),
@@ -489,15 +502,28 @@ pub async fn execute_tool_raw(
                     };
                 }
                 let method = input["method"].as_str().unwrap_or("GET");
-                let headers = input.value.get("headers").and_then(|v| v.as_object());
+                let headers = input.get("headers").and_then(|v| v.as_object());
                 let body = input["body"].as_str();
                 // Body-side taint check: the URL scan handles query
                 // strings, but POST/PUT callers can stuff credentials
                 // into the request body instead.
                 if let Some(body_text) = body {
+                    let tainted_body = librefang_types::taint::TaintedValue::new(
+                        body_text,
+                        { let mut s = std::collections::HashSet::new(); s.insert(librefang_types::taint::TaintLabel::UntrustedAgent); s },
+                        "llm_tool_call"
+                    );
                     if let Some(violation) =
-                        check_taint_outbound_text(body_text, &TaintSink::net_fetch())
+                        check_taint_outbound_text(&tainted_body, &TaintSink::net_fetch())
                     {
+                        if let Some(k) = ctx.kernel {
+                            k.audit_log().record(
+                                ctx.caller_agent_id.unwrap_or("system"),
+                                librefang_runtime_audit::AuditAction::TaintSinkBlocked,
+                                format!("tool=net_fetch violation={violation}"),
+                                "denied",
+                            );
+                        }
                         return ToolResult {
                             tool_use_id: tool_use_id.to_string(),
                             content: format!("Taint violation: {violation}"),
@@ -512,7 +538,11 @@ pub async fn execute_tool_raw(
                 if let Some(headers_map) = headers {
                     for (name, value) in headers_map {
                         if let Some(vs) = value.as_str() {
-                            let tainted_vs = input.clone().map(|_| vs);
+                            let tainted_vs = librefang_types::taint::TaintedValue::new(
+                                vs,
+                                { let mut s = std::collections::HashSet::new(); s.insert(librefang_types::taint::TaintLabel::UntrustedAgent); s },
+                                "llm_tool_call"
+                            );
                             if let Some(violation) =
                                 check_taint_outbound_header(name, &tainted_vs, &TaintSink::net_fetch())
                             {
@@ -588,7 +618,7 @@ pub async fn execute_tool_raw(
                     };
                 }
             }
-            if let Some(headers_map) = input.value.get("headers").and_then(|v| v.as_object()) {
+            if let Some(headers_map) = input.get("headers").and_then(|v| v.as_object()) {
                 for (name, value) in headers_map {
                     if let Some(vs) = value.as_str() {
                         if let Some(violation) =
@@ -628,7 +658,7 @@ pub async fn execute_tool_raw(
             }
             let writable = named_ws_prefixes_writable(*kernel, *caller_agent_id);
             if let Some(violation) = check_absolute_path_inside_workspace(
-                input.value.get("dest_path").and_then(|v| v.as_str()),
+                input.get("dest_path").and_then(|v| v.as_str()),
                 *workspace_root,
                 &writable,
             ) {
@@ -747,7 +777,20 @@ pub async fn execute_tool_raw(
 
             // Skip heuristic taint patterns for Full exec policy (e.g. hand agents that need curl)
             if !is_full_exec {
-                if let Some(violation) = check_taint_shell_exec(command) {
+                let tainted_command = librefang_types::taint::TaintedValue::new(
+                    command,
+                    { let mut s = std::collections::HashSet::new(); s.insert(librefang_types::taint::TaintLabel::UntrustedAgent); s },
+                    "llm_tool_call"
+                );
+                if let Some(violation) = check_taint_shell_exec(&tainted_command) {
+                    if let Some(k) = ctx.kernel {
+                        k.audit_log().record(
+                            ctx.caller_agent_id.unwrap_or("system"),
+                            librefang_runtime_audit::AuditAction::TaintSinkBlocked,
+                            format!("tool=shell_exec violation={violation}"),
+                            "denied",
+                        );
+                    }
                     return ToolResult {
                         tool_use_id: tool_use_id.to_string(),
                         content: format!("Taint violation: {violation}"),
@@ -812,7 +855,7 @@ pub async fn execute_tool_raw(
                     // entries. We append them to the base command so the classifier
                     // can tokenise everything together.
                     let mut full_command = command.to_string();
-                    if let Some(args_arr) = input.value.get("args").and_then(|a| a.as_array()) {
+                    if let Some(args_arr) = input.get("args").and_then(|a| a.as_array()) {
                         for v in args_arr {
                             if let Some(s) = v.as_str() {
                                 full_command.push(' ');
@@ -1423,7 +1466,7 @@ pub async fn execute_tool_raw(
 pub async fn execute_tool(
     tool_use_id: &str,
     tool_name: &str,
-    input: &librefang_types::taint::TaintedValue<&serde_json::Value>,
+    input: &serde_json::Value,
     kernel: Option<&Arc<dyn KernelHandle>>,
     allowed_tools: Option<&[String]>,
     caller_agent_id: Option<&str>,
@@ -1481,12 +1524,12 @@ pub async fn execute_tool(
     // When the LLM's response is cut off mid-JSON (max_tokens exceeded), the
     // driver marks the input with __args_truncated. Return a helpful error
     // so the LLM can retry with smaller content.
-    if input.value
+    if input
         .get(crate::drivers::openai::TRUNCATED_ARGS_KEY)
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
     {
-        let error_msg = input.value["__error"].as_str().unwrap_or(
+        let error_msg = input["__error"].as_str().unwrap_or(
             "Tool call arguments were truncated. Try smaller content or split into multiple calls.",
         );
         return ToolResult {
@@ -1516,7 +1559,7 @@ pub async fn execute_tool(
         && exec_policy.is_some_and(|p| {
             p.safe_bins_skip_approval
                 && p.mode == librefang_types::config::ExecSecurityMode::Allowlist
-                && input.value["command"].as_str().is_some_and(|cmd| {
+                && input["command"].as_str().is_some_and(|cmd| {
                     let bases = crate::subprocess_sandbox::extract_all_commands(cmd);
                     !bases.is_empty()
                         && bases.iter().all(|b| p.safe_bins.iter().any(|sb| sb == b))
