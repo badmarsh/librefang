@@ -745,3 +745,8 @@ debounce_ms = 500
 # totp_issuer = "LibreFang"                # Issuer name shown in authenticator app
 # totp_grace_period_secs = 300             # Skip TOTP re-verification within this window (0 = always require)
 # totp_tools = ["shell_exec"]              # Only these tools require TOTP (empty = all tools in require_approval)
+
+# ── Hands ────────────────────────────────────────────────────
+[hands.dezolator-prime]
+enabled = true
+

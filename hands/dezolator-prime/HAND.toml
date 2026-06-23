@@ -1,0 +1,5 @@
+name = "dezolator-prime"
+session_mode = "persistent"
+model = "gemini-3.1-pro"
+schedule = "0 */4 * * *"
+mcp_tools_enabled = true
