@@ -1,6 +1,9 @@
 # LibreFang agent manifest
 # Improvement 4: Coordinated Inauthentic Behaviour (CIB) Detector
-# arXiv:2302.07934 (Nizzoli et al., "Coordinated Inauthentic Behavior", 2023)
+# References:
+# - Nizzoli et al. (ICWSM 2021) arXiv:2008.08370
+# - Cresci et al. (WebSci 2022) doi:10.1145/3501247.3531543
+# - Nizzoli et al. dataset doi:10.5281/zenodo.4647893
 # GitHub: stanfordnlp/coordinated-sharing-behavior
 #
 # Wave 4 — Improvement 33: Temporal Graph Network (TGN)
@@ -168,3 +171,15 @@ it reads cib_detector.* as supplementary context for the ensemble decision.
 The Shodan enrichment data should be included in cib_detector.evidence
 so the orchestrator can reference infrastructure evidence in its rationale.
 """
+
+[cib.coordination_index]
+method = "continuous_spectrum"    # Nizzoli et al. 2021
+superspreader_similarity_threshold = 0.70
+propagation_graph_enabled = true
+edge_weight_features = ["posting_rate", "content_overlap_sbert", "repost_timing_delta_seconds"]
+
+[cib.propaganda_fusion]
+propaganda_score_weight = 0.30   # fused into cib_score
+coordination_score_weight = 0.70
+# cib_score_final = propaganda_score_weight * propaganda_score
+#                 + coordination_score_weight * cib_score

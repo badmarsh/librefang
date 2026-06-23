@@ -115,3 +115,12 @@ provider = "openrouter"
 model = "nvidia/nemotron-3-ultra-550b-a55b:free"
 api_key_env = "OPENROUTER_API_KEY"
 
+[source.trust_model]
+aggregation_method = "weighted_bayesian_consensus"
+registry_sources = ["newsguard", "mbfc", "euvsDisinfo", "konspiratori_sk", "media_bias_fact_check"]
+trust_decay_enabled = true
+trust_decay_halflife_days = 90
+# Reference: Falcone & Castelfranchi (2001) "Social Trust: A Cognitive Approach." Springer.
+# Reference: "Addressing Misinformation ... Multiagent Trust Modeling" (MDPI Information 2020)
+# Note: Credibility is treated as a continuous Bayesian prior, not a binary flag.
+

@@ -5,6 +5,32 @@ All notable changes to LibreFang will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Calendar Versioning](https://calver.org/) (YYYY.M.DD).
 
+## [4.0.0] - 2026-06-23
+
+### Fixed — Academic Citations (CITATION_AUDIT Wave 4)
+- **Improvement 1**: Replaced UNVERIFIED arXiv:2310.01555 with Opitz & Maclin (1999) JAIR + Hoeting et al. (1999) Stat.Sci. Bayesian Model Averaging references.
+- **Improvement 2**: Replaced MISMATCHED arXiv:2305.14325 (debate paper) with correct Reimers & Gurevych SBERT paper (arXiv:1908.10084). Moved debate paper to its correct Improvement 14 slot.
+- **Improvement 3**: Replaced UNVERIFIED arXiv:2401.17786 with Falcone & Castelfranchi (2001) Social Trust + MDPI trust modelling.
+- **Improvement 4**: Replaced MISMATCHED cosmology arXiv with Nizzoli et al. ICWSM 2021 (arXiv:2008.08370) + Cresci et al. WebSci 2022 + Zenodo dataset doi:10.5281/zenodo.4647893.
+- **Improvement 7**: Replaced UNVERIFIED arXiv:2305.09586 with Ardevop-sk/sk-bert-ner, Raychani NLP repo, SlovakBERT CoNLL2003-SK-NER (F1=0.829).
+- **Improvement 9**: Replaced UNVERIFIED arXiv:2209.05056 with DeepPavlov/Slavic-BERT-NER + Conneau et al. XLM-R (arXiv:1911.02116).
+- **Improvement 14**: Anchored to Du et al. ICML 2024 (arXiv:2305.14325) + Ding et al. 2025 (arXiv:2503.23329).
+
+### Added — Agent Enhancements
+- **cib-detector**: Continuous coordination-spectrum scoring (Nizzoli ICWSM 2021) + propaganda–coordination fusion (Cresci WebSci 2022).
+- **ml-classifier**: SlovakBERT CoNLL2003-SK-NER (F1=0.829) + DeepPavlov Slavic-BERT-NER config; graceful TF-IDF fallback.
+- **wiki-checker**: XLM-R cross-lingual embedding config; Wikidata political-entity class list extended; v1.3.0.
+- **visual-analyst**: Deepfake-Eval-2024 benchmark floor (AUC≥0.65); audio-visual fusion flags; multimodal survey references; v0.4.0.
+- **disinfo-orchestrator**: Automated decision-rule optimization (Ding et al. 2025); debate grounding updated to Du et al. ICML 2024.
+- **source-rater**: Weighted Bayesian consensus trust model (Falcone & Castelfranchi 2001); trust decay half-life 90 days.
+- **inquisitor**: Sampling-consistency confidence elicitation (Xiong et al. NeurIPS 2023, arXiv:2306.13063); u_ale = variance, u_epi = entropy over N=10 samples.
+
+### Added — New Capabilities
+- **agents/cross-domain-evaluator/**: Domain-shift robustness harness (Ding et al. arXiv:2503.23329); disabled by default.
+- **scripts/eval_deepfake.py**: AUC evaluation harness vs. Deepfake-Eval-2024 (arXiv:2503.02857).
+- **agents/cross-lingual-aligner/**: Slavic NER + XLM-R embeddings + multilingual SBERT config; v0.2.0.
+- **config.toml [mcp.contracts]**: Contract-driven MCP observability (IEEE 2026 doi:10.1109/ACCESS.2026.11476405).
+
 ## [2026.6.22] - 2026-06-22
 
 _1 PR from 1 contributor since v2026.6.22-beta.21._

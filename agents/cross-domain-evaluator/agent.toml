@@ -1,0 +1,20 @@
+[agent]
+name = "cross-domain-evaluator"
+version = "0.1.0"
+description = """
+Evaluates pipeline robustness across domain shifts (politics, health, economics, climate) using automated decision-rule probing.
+Triggers weight recalibration when cross-domain accuracy drops below threshold.
+Ref: Ding et al. (2025) arXiv:2503.23329
+"""
+enabled = false        # activate after calibration corpus is ready
+trigger = "weekly_gart OR manual"
+
+[evaluation]
+domains = ["politics", "health", "economics", "climate", "sport"]
+accuracy_drop_threshold_pct = 8.0
+recalibration_trigger = "disinfo-orchestrator.decision_rules.rule_search"
+report_path = "output/cross_domain_eval.json"
+
+[meta]
+paper = "arXiv:2503.23329"
+authors = "Ding et al. (2025)"

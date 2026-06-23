@@ -9,7 +9,7 @@
 #     GitHub: FFarhangian/FakeNewsDetection_DRES
 #     Per-claim difficulty index routes easy/medium/hard claims to appropriate review paths.
 #   Improvement 14: Adversarial Mini-Debate for Borderline Claims
-#     GitHub: hanshenmesen/Debate-to-Detect (ACL 2024)
+#     Reference: Du et al. ICML 2024 (arXiv:2305.14325)
 #     When epistemic_uncertainty > 0.35, trigger ml-classifier vs triplet-fact-checker debate
 #     arbitrated by the existing arbiter agent. Debate verdict adjusts P_fake by +/-0.08.
 #   Improvement 15: F2-Score Optimised Weight Recomputation
@@ -247,3 +247,15 @@ For each uncertain verdict: emit pipeline.rerun.triplet-fact-checker
 and pipeline.rerun.wiki-checker to gather fresh evidence.
 Re-aggregate and update verdict if confidence improves by > 0.10.
 """
+
+[orchestrator.decision_rules]
+optimization_method = "automated_rule_search"  # Ding et al. 2025
+cross_domain_adaptation = true
+rule_search_trigger = "accuracy_drop_pct > 5"  # vs. calibration corpus
+# Reference: Ding et al. arXiv:2503.23329
+#            Du et al. (ICML 2024) arXiv:2305.14325 (debate grounding)
+
+[orchestrator.debate]
+grounding_paper = "arXiv:2305.14325"   # Du et al. — multiagent debate
+debate_rounds = 2
+arbiter_confidence_threshold = 0.75

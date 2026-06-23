@@ -251,3 +251,20 @@ See [Comparison](https://docs.librefang.ai/getting-started/comparison#16-securit
 ---
 
 <p align="center">MIT License</p>
+
+---
+
+## Mediálny Dezolator
+Pipeline version: **v4.0.0** — 31 improvements across Waves 2–4.
+
+### Wave 4 — Citation Repair & Academic Uplift
+| Improvement | Replaced Citation |
+|---|---|
+| **1: Bayesian weight adaptation** | Opitz & Maclin (1999) JAIR + Hoeting et al. (1999) Stat.Sci. |
+| **2: Semantic claim deduplication** | Reimers & Gurevych (2019) arXiv:1908.10084 |
+| **3: Source credibility** | Falcone & Castelfranchi (2001) + Horne et al. (2019) |
+| **4: CIB detector** | Nizzoli et al. ICWSM 2021 (arXiv:2008.08370) + Cresci et al. 2022 |
+| **7: Slovak NER entity preservation** | Ardevop-sk/sk-bert-ner + Raychani + ju-bezdek/slovakbert-conll2003-sk-ner |
+| **9: Cross-lingual aligner** | DeepPavlov/Slavic-BERT-NER + Conneau et al. XLM-R (arXiv:1911.02116) |
+| **14: Adversarial mini-debate** | Du et al. ICML 2024 (arXiv:2305.14325) + Ding et al. 2025 (arXiv:2503.23329) |
+

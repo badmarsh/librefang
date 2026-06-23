@@ -86,6 +86,25 @@ decay_rate = 0.05
 healthcheck_path = "/health"
 prometheus_port = 9100
 
+[observability]
+prometheus_port = 9100
+health_port = 4200
+mcp_schema_mismatch_alert = true
+mcp_mediation_latency_p95_ms_threshold = 25.0
+
+[mcp.contracts]
+enabled = true
+schema_validation = true
+semantic_version_negotiation = true
+capability_descriptors = true
+telemetry_structured = true
+failure_isolation = true
+p95_latency_overhead_ms = 18.4   # per paper Table 3
+schema_drift_detection = true
+# Reference: "Operationalizing Multi-Agent Interoperability via
+#   Contract-Driven MCP" IEEE 2026
+#   doi:10.1109/ACCESS.2026.11476405
+
 [network]
 listen_addr = "127.0.0.1:4200"
 

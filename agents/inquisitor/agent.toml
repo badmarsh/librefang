@@ -1,6 +1,6 @@
 name        = "inquisitor"
 version     = "0.3.0"
-description = "Deep fact-checker: delegates fast scoring to disinfo pipeline agents, reserves adversarial/archival verification for low-confidence claims (0.45–0.75 zone)."
+description = "Deep fact-checker: delegates fast scoring to disinfo pipeline agents, reserves adversarial/archival verification for low-confidence claims (0.45–0.75 zone). Uncertainty sampling grounded in Xiong et al. (NeurIPS 2023) arXiv:2306.13063."
 author      = "librefang"
 module      = "builtin:chat"
 tags        = ["osint", "fact-check", "verification", "reasoning", "debunk", "disinfo-pipeline"]
@@ -37,3 +37,12 @@ api_key_env = "NVIDIA_API_KEY"
 provider = "nvidia"
 model = "nvidia/llama-3.3-nemotron-super-49b-v1"
 api_key_env = "NVIDIA_API_KEY"
+
+[inquisitor.uncertainty]
+confidence_elicitation = "sampling_consistency"  # Xiong et al.
+n_samples = 10       # for deep_verify path
+n_samples_targeted = 3
+overconfidence_correction = true
+u_ale_estimation = "variance_of_samples"
+u_epi_estimation = "entropy_of_sample_distribution"
+# Reference: Xiong et al. (NeurIPS 2023) arXiv:2306.13063

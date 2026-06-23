@@ -32,3 +32,12 @@ action  = "classify_claims"
 [[triggers]]
 event   = "pipeline.rerun.ml-classifier"
 action  = "classify_claims"
+
+[classifier.bert]
+primary_model = "gerulata/slovakbert"
+ner_model = "ju-bezdek/slovakbert-conll2003-sk-ner"
+slavic_ner_model = "DeepPavlov/bert-base-slavic-ner"
+fallback_model = "tfidf_logistic_regression"
+fallback_trigger = "transformers_unavailable OR ram_mb < 4096"
+sequence_classification_max_length = 512
+# References: arXiv:1908.10084 (SBERT), sk-bert-ner GitHub 2020

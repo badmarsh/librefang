@@ -4,7 +4,7 @@
 # arXiv:2401.12671 (Schlichtkrull et al., "AVeriTeC: Real-world claim verification")
 # GitHub: facebookresearch/MLAMA
 name        = "cross-lingual-aligner"
-version     = "1.0.0"
+version     = "0.2.0"
 description = "Generates multilingual query variants (SK/CZ/DE/EN) for each claim to maximise evidence retrieval across Slovak, Czech, and German Wikipedia and web sources."
 author      = "librefang"
 module      = "builtin:chat"
@@ -38,3 +38,28 @@ provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
+[aligner.ner]
+slavic_ner_model = "DeepPavlov/bert-base-slavic-ner"
+  # Covers: BG, CS, PL, RU — BSNLP-2019
+  # Ref: github.com/deeppavlov/Slavic-BERT-NER
+slovak_ner_model = "ju-bezdek/slovakbert-conll2003-sk-ner"
+  # F1=0.829 on CoNLL2003-SK
+  # Ref: dataloop.ai/library/model/ju-bezdek_slovakbert-conll2003-sk-ner
+hungarian_ner_model = "SZTAKI-HLT/hubert-base-cc"
+  # Placeholder for HU coverage
+
+[aligner.embeddings]
+xlmr_model = "xlm-roberta-base"
+  # Conneau et al. (ACL 2020) arXiv:1911.02116
+sentence_embedding_model = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  # Reimers & Gurevych (EMNLP 2019) arXiv:1908.10084
+supported_languages = ["sk", "cs", "de", "en", "ru", "hu"]
+
+[aligner.wikidata]
+sparql_endpoint = "https://query.wikidata.org/sparql"
+q_id_cache_ttl_hours = 24
+political_entity_classes = ["Q5", "Q7278", "Q4164871", "Q9135"]
+  # person, political party, political position, government
+
+[meta.references]
+papers = ["arXiv:1911.02116", "github.com/deeppavlov/Slavic-BERT-NER", "arXiv:1908.10084"]

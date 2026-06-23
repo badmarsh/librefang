@@ -1,5 +1,5 @@
 name        = "visual-analyst"
-version     = "1.0.0"
+version     = "0.4.0"
 description = "Vision-Language-Action (VLA) agent for autonomous multimodal evidence gathering, deepfake detection, and factcheck overlay generation."
 author      = "librefang"
 module      = "builtin:chat"
@@ -85,3 +85,17 @@ api_key_env = "FREELLMPOOL_API_KEY"
 provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
+
+[visual.benchmark]
+eval_dataset = "Deepfake-Eval-2024"
+# doi: arXiv:2503.02857  (Chandra et al. 2025)
+expected_auc_floor = 0.65   # below this, trigger alert
+reevaluation_schedule = "weekly_gart"
+
+[visual.multimodal]
+audio_visual_fusion = true          # Phase 1: flag for future
+text_visual_fusion = true           # OCR → claim pipe
+modalities_active = ["image", "ocr_text"]
+modalities_planned = ["audio", "video"]
+# Ref: Tao et al. (2024) arXiv:2406.06965 (multi-modal deepfake survey)
+# Ref: Passive Deepfake Detection Survey arXiv:2411.17911

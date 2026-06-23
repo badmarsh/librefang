@@ -10,7 +10,7 @@
 #     entities (party membership, positions held, office dates) — dramatically more precise
 #     than text-search Wikipedia for SK political entity coverage.
 name        = "wiki-checker"
-version     = "1.2.0"
+version     = "1.3.0"
 description = "Verifies named entities against Wikipedia and Wikidata SPARQL. Wave 3: Firecrawl-backed fetching, corrected weight (0.22). Improvement 19: Wikidata SPARQL for Slovak political entity precision."
 author      = "librefang"
 module      = "builtin:chat"
@@ -43,4 +43,15 @@ api_key_env = "FREELLMPOOL_API_KEY"
 provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
+
+[wiki.cross_lingual]
+xlmr_model = "xlm-roberta-base"
+slavic_ner_backend = "DeepPavlov/bert-base-slavic-ner"
+wikidata_languages = ["sk", "cs", "de", "en", "ru", "hu"]
+entity_linking_fallback = "exact_string_match"
+# Reference: Conneau et al. (ACL 2020) arXiv:1911.02116
+#            DeepPavlov/Slavic-BERT-NER github.com/deeppavlov/Slavic-BERT-NER
+
+[meta.references]
+papers = ["arXiv:1911.02116", "github.com/deeppavlov/Slavic-BERT-NER"]
 
