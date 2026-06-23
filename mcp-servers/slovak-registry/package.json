@@ -1,0 +1,20 @@
+{
+  "name": "slovak-registry-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Slovak company registry (orsr.sk) and beneficial ownership (rpvs.gov.sk). Used by source-rater agent for dynamic ownership_flag scoring.",
+  "type": "module",
+  "main": "slovak-registry-mcp.js",
+  "scripts": {
+    "start": "node slovak-registry-mcp.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["mcp", "slovakia", "orsr", "rpvs", "media-ownership", "disinformation"],
+  "author": "Medialny Dezolator",
+  "license": "MIT"
+}

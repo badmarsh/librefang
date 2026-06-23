@@ -1,0 +1,57 @@
+{
+  "run_date": "2026-06-23",
+  "results": {
+    "dennikn": [
+      {
+        "id": "dn-001",
+        "source": "dennikn.sk",
+        "headline": "Sud rozhodol: stat musi vyplatit odskodne rodinam obeti COVID-19",
+        "raw": "",
+        "parsed": null,
+        "status": 200
+      },
+      {
+        "id": "dn-002",
+        "source": "dennikn.sk",
+        "headline": "Slovensko zaostava v obnovitelnych zdrojoch energie",
+        "raw": "",
+        "parsed": null,
+        "status": 200
+      },
+      {
+        "id": "dn-003",
+        "source": "dennikn.sk",
+        "headline": "Prokuratura obzalovala exprimatora z korupcie pri mestskych zakazkach",
+        "raw": "",
+        "parsed": null,
+        "status": 200
+      }
+    ],
+    "hlavnespravy": [
+      {
+        "id": "hs-001",
+        "source": "hlavnespravy.sk",
+        "headline": "WHO pripravuje pandemicku zmluvu - Slovensko pride o suverenitu",
+        "raw": "",
+        "parsed": null,
+        "status": 200
+      },
+      {
+        "id": "hs-002",
+        "source": "hlavnespravy.sk",
+        "headline": "Brusel planuje zdanit maso - dan moze dosiahnut 300 percent",
+        "raw": "",
+        "parsed": null,
+        "status": 200
+      },
+      {
+        "id": "hs-003",
+        "source": "hlavnespravy.sk",
+        "headline": "Chemtrails nad Slovenskom: vedci potvrdzuju rozprasyovanie chemikalii",
+        "raw": "",
+        "parsed": null,
+        "status": 200
+      }
+    ]
+  }
+}
