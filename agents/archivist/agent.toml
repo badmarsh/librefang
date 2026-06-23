@@ -260,7 +260,7 @@ api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+model = "nvidia/nemotron-3-super-120b-a12b"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
@@ -272,6 +272,24 @@ api_key_env = "FREELLMPOOL_API_KEY"
 provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CENTRAL MEMORY CONTROLLER — Session 4 (2026-06-23)
+# Letta/MemGPT pattern: centralised arbitration prevents conflicting KG writes.
+# When any agent emits memory.write.requested, archivist arbitrates and commits.
+# ─────────────────────────────────────────────────────────────────────────────
+[[triggers]]
+event  = "memory.write.requested"
+action = "arbitrate_and_write"
+
+[[triggers]]
+event  = "verdict.final.published"
+action = "ingest_verdict_to_kg"
+
+[[triggers]]
+event  = "source.credibility.update_requested"
+action = "update_source_credibility"
 
 [schedule.cron]
 cron         = "0 8 * * 0"    # Sundays 08:00

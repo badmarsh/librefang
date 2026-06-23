@@ -14,7 +14,7 @@ mcp_servers = ["filesystem"]
 
 [model]
 provider    = "freellmpool"
-model       = "nvidia/nvidia/llama-3.3-nemotron-super-49b-v1"
+model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
 api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 4096
 temperature = 0.0

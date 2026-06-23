@@ -106,7 +106,7 @@ api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/nvidia/nemotron-3-super-120b-a12b"
+model = "nvidia/nemotron-3-super-120b-a12b"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
