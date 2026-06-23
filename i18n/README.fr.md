@@ -6,7 +6,7 @@
 <h3 align="center">Système d'exploitation libre pour agents — Libre comme dans liberté</h3>
 
 <p align="center">
-  Agent OS open-source écrit en Rust. 24 crates. 2 100+ tests. Zéro avertissement clippy.
+  Agent OS open-source écrit en Rust. 30 crates. 2 100+ tests. Zéro avertissement clippy.
 </p>
 
 <p align="center">
@@ -109,7 +109,7 @@ Créer le vôtre : définissez `HAND.toml` + prompt système + `SKILL.md`. [Guid
 
 ## Architecture
 
-24 crates Rust + xtask, conception modulaire du noyau.
+30 crates Rust + xtask, conception modulaire du noyau.
 
 ```
 librefang-kernel            Orchestration, workflows, métering, RBAC, scheduler, budget
@@ -134,6 +134,13 @@ librefang-runtime-mcp       Client MCP (Model Context Protocol) pour le runtime 
 librefang-kernel-handle     Trait KernelHandle pour les appelants in-process vers le kernel de LibreFang
 librefang-kernel-router     Moteur de routage Hand/Template pour le kernel de LibreFang
 librefang-kernel-metering   Métering des coûts et application des quotas pour le kernel de LibreFang
+librefang-subprocess        Utilitaires d'exécution de sous-processus et IPC
+librefang-runtime-audit     Journalisation d'audit et suivi des teintes pour le runtime
+librefang-runtime-media     Traitement et conversion de médias pour le runtime
+librefang-runtime-sandbox-docker Sandbox basé sur Docker pour le runtime
+librefang-rl-export         Export de paires de préférences RLHF/DPO et endpoints
+librefang-memory-wiki       Stratégies de compaction et coffre de connaissances wiki
+librefang-acp               Adaptateur serveur de Protocole Client Agent
 xtask                       Automatisation de build
 ```
 > **OFP wire est plaintext-by-design.** L'authentification mutuelle HMAC-SHA256 + HMAC

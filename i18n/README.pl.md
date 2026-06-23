@@ -6,7 +6,7 @@
 <h3 align="center">Wolnościowy System Operacyjny Agentów — Wolny, a nie tylko darmowy (Free as in Freedom)</h3>
 
 <p align="center">
-  Agentowy system operacyjny (Agent OS) typu open-source napisany w języku Rust. 24 paczek (crates). Ponad 2100 testów. Zero ostrzeżeń lintera Clippy.
+  Agentowy system operacyjny (Agent OS) typu open-source napisany w języku Rust. 30 paczek (crates). Ponad 2100 testów. Zero ostrzeżeń lintera Clippy.
 </p>
 
 <p align="center">
@@ -107,7 +107,7 @@ Zbuduj własnego: zdefiniuj `HAND.toml` + prompt systemowy + `SKILL.md`. [Przewo
 
 ## Architektura
 
-24 paczek (crates) w Rust + xtask, modułowa architektura jądra (kernel).
+30 paczek (crates) w Rust + xtask, modułowa architektura jądra (kernel).
 
 ```
 librefang-kernel            Orkiestracja, przepływy pracy, opomiarowanie, RBAC, scheduler, budżet
@@ -132,6 +132,13 @@ librefang-runtime-mcp       Klient MCP (Model Context Protocol) dla środowiska 
 librefang-kernel-handle     Trait KernelHandle dla wywołań wewnątrzprocesowych (in-process) do kernela LibreFang
 librefang-kernel-router     Silnik routingu Hand/Template dla kernela LibreFang
 librefang-kernel-metering   Pomiar kosztów i egzekwowanie limitów (quota) dla kernela LibreFang
+librefang-subprocess        Narzędzia do uruchamiania podprocesów i IPC
+librefang-runtime-audit     Logowanie audytu i śledzenie skażenia dla środowiska uruchomieniowego
+librefang-runtime-media     Przetwarzanie i konwersja mediów dla środowiska uruchomieniowego
+librefang-runtime-sandbox-docker Sandbox oparty na Dockerze dla środowiska uruchomieniowego
+librefang-rl-export         Eksport par preferencji RLHF/DPO i endpointy
+librefang-memory-wiki       Strategie kompakcji i magazyn wiedzy wiki
+librefang-acp               Adapter serwera protokołu klienta agenta
 xtask                       Automatyzacja budowania
 ```
 > **OFP wire to plaintext-by-design.** Wzajemne uwierzytelnianie HMAC-SHA256 + HMAC

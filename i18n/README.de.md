@@ -6,7 +6,7 @@
 <h3 align="center">Freies Agenten-Betriebssystem — Libre bedeutet Freiheit</h3>
 
 <p align="center">
-  Open-Source Agent OS in Rust. 24 Crates. 2.100+ Tests. Null Clippy-Warnungen.
+  Open-Source Agent OS in Rust. 30 Crates. 2.100+ Tests. Null Clippy-Warnungen.
 </p>
 
 <p align="center">
@@ -106,7 +106,7 @@ Eigene Hands erstellen: `HAND.toml` + System-Prompt + `SKILL.md` definieren. [An
 
 ## Architektur
 
-24 Rust-Crates + xtask, modulares Kernel-Design.
+30 Rust-Crates + xtask, modulares Kernel-Design.
 
 ```
 librefang-kernel            Orchestrierung, Workflows, Metering, RBAC, Scheduler, Budget
@@ -131,6 +131,13 @@ librefang-runtime-mcp       MCP (Model Context Protocol) Client für die LibreFa
 librefang-kernel-handle     KernelHandle-Trait für In-Process-Aufrufer in den LibreFang-Kernel
 librefang-kernel-router     Hand/Template-Routing-Engine für den LibreFang-Kernel
 librefang-kernel-metering   Kostenmessung und Durchsetzung von Quoten für den LibreFang-Kernel
+librefang-subprocess        Subprocess-Ausführung und IPC-Hilfsprogramme
+librefang-runtime-audit     Audit-Protokollierung und Taint-Tracking für die Runtime
+librefang-runtime-media     Medienverarbeitung und -konvertierung für die Runtime
+librefang-runtime-sandbox-docker Docker-basiertes Sandboxing für die Runtime
+librefang-rl-export         RLHF/DPO Präferenzpaar-Export und Endpunkte
+librefang-memory-wiki       Komprimierungsstrategien und Wiki-Wissensspeicher
+librefang-acp               Agent Client Protocol Serveradapter
 xtask                       Build-Automatisierung
 ```
 > **OFP wire is plaintext-by-design.** HMAC-SHA256 mutual auth + per-message

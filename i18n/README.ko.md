@@ -6,7 +6,7 @@
 <h3 align="center">자유로운 에이전트 운영체제 — Libre는 자유를 의미합니다</h3>
 
 <p align="center">
-  Rust로 구축된 오픈소스 Agent OS. 24개 크레이트. 2,100+ 테스트. clippy 경고 제로.
+  Rust로 구축된 오픈소스 Agent OS. 30개 크레이트. 2,100+ 테스트. clippy 경고 제로.
 </p>
 
 <p align="center">
@@ -107,7 +107,7 @@ librefang hand list                  # 모든 Hands 보기
 
 ## 아키텍처
 
-24개 Rust 크레이트 + xtask, 모듈러 커널 설계.
+30개 Rust 크레이트 + xtask, 모듈러 커널 설계.
 
 ```
 librefang-kernel            오케스트레이션, 워크플로, 미터링, RBAC, 스케줄러, 예산
@@ -132,6 +132,13 @@ librefang-runtime-mcp       런타임용 MCP(Model Context Protocol) 클라이�
 librefang-kernel-handle     커널로의 인프로세스(in-process) 호출자를 위한 KernelHandle trait
 librefang-kernel-router     커널용 Hand/Template 라우팅 엔진
 librefang-kernel-metering   커널에 대한 비용 측정 및 할당량(quota) 적용
+librefang-subprocess        서브프로세스 실행 및 IPC 유틸리티
+librefang-runtime-audit     런타임 감사 로깅 및 taint 추적
+librefang-runtime-media     런타임 미디어 처리 및 변환
+librefang-runtime-sandbox-docker 런타임을 위한 Docker 기반 샌드박스
+librefang-rl-export         RLHF/DPO 선호도 쌍 내보내기 및 엔드포인트
+librefang-memory-wiki       압축 전략 및 위키 지식 저장소
+librefang-acp               에이전트 클라이언트 프로토콜 서버 어댑터
 xtask                       빌드 자동화
 ```
 > **OFP wire는 plaintext-by-design입니다.** HMAC-SHA256 상호 인증 + 메시지별

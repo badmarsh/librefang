@@ -6,7 +6,7 @@
 <h3 align="center">自由なエージェントオペレーティングシステム — Libre は自由を意味する</h3>
 
 <p align="center">
-  Rust で構築されたオープンソース Agent OS。24 クレート。2,100+ テスト。clippy 警告ゼロ。
+  Rust で構築されたオープンソース Agent OS。30 クレート。2,100+ テスト。clippy 警告ゼロ。
 </p>
 
 <p align="center">
@@ -107,7 +107,7 @@ librefang hand list                  # 全 Hands を表示
 
 ## アーキテクチャ
 
-24 の Rust クレート + xtask、モジュラーカーネル設計。
+30 の Rust クレート + xtask、モジュラーカーネル設計。
 
 ```
 librefang-kernel            オーケストレーション、ワークフロー、計量、RBAC、スケジューラ、予算
@@ -132,6 +132,13 @@ librefang-runtime-mcp       ランタイム向けのMCP（Model Context Protocol
 librefang-kernel-handle     カーネルへのインプロセス呼び出し元のためのKernelHandle trait
 librefang-kernel-router     カーネル向けのHand/Templateルーティングエンジン
 librefang-kernel-metering   カーネル向けのコスト計量、クォータ適用
+librefang-subprocess        サブプロセス実行とIPCユーティリティ
+librefang-runtime-audit     ランタイムの監査ログとtaintトラッキング
+librefang-runtime-media     ランタイムのメディア処理と変換
+librefang-runtime-sandbox-docker Dockerベースのランタイムサンドボックス
+librefang-rl-export         RLHFとDPO優先ペアのエクスポートとエンドポイント
+librefang-memory-wiki       コンパクション戦略とWikiナレッジ格納庫
+librefang-acp               エージェントクライアントプロトコルサーバーアダプター
 xtask                       ビルド自動化
 ```
 > **OFP wire は plaintext-by-design です。** HMAC-SHA256 相互認証 + メッセージごとの

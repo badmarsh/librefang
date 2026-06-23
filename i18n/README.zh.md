@@ -6,7 +6,7 @@
 <h3 align="center">自由的 Agent 操作系统 — Libre 意味着自由</h3>
 
 <p align="center">
-  使用 Rust 构建的开源 Agent OS。24 个 crate。2,100+ 测试。零 clippy 警告。
+  使用 Rust 构建的开源 Agent OS。30 个 crate。2,100+ 测试。零 clippy 警告。
 </p>
 
 <p align="center">
@@ -107,7 +107,7 @@ librefang hand list                  # 查看所有 Hands
 
 ## 架构
 
-24 个 Rust crate + xtask，模块化内核设计。
+30 个 Rust crate + xtask，模块化内核设计。
 
 ```
 librefang-kernel            编排、工作流、计量、RBAC、调度、预算
@@ -132,6 +132,13 @@ librefang-runtime-mcp       运行时的 MCP（Model Context Protocol）客户�
 librefang-kernel-handle     内核进行进程内调用的 KernelHandle trait
 librefang-kernel-router     内核的 Hand/Template 路由引擎
 librefang-kernel-metering   内核的成本计量和配额执行
+librefang-subprocess        子进程执行和IPC工具
+librefang-runtime-audit     运行时审计日志记录和污点追踪
+librefang-runtime-media     运行时媒体处理和转换
+librefang-runtime-sandbox-docker 运行时的Docker沙盒
+librefang-rl-export         RLHF/DPO偏好对导出和端点
+librefang-memory-wiki       压缩策略和Wiki知识库
+librefang-acp               智能体客户端协议服务器适配器
 xtask                       构建自动化
 ```
 > **OFP wire 是 plaintext-by-design。** HMAC-SHA256 双向认证 + 每条消息的

@@ -6,7 +6,7 @@
 <h3 align="center">Операційна система вільних агентів — Free as in Freedom</h3>
 
 <p align="center">
-  Агентська ОС з відкритим кодом, написана на Rust. 24 крейти. 2100+ тестів. Нуль попереджень clippy.
+  Агентська ОС з відкритим кодом, написана на Rust. 30 крейтів. 2100+ тестів. Нуль попереджень clippy.
 </p>
 
 <p align="center">
@@ -107,7 +107,7 @@ librefang hand list                  # Переглянути всі встан�
 
 ## Архітектура
 
-24 крейти Rust + xtask, модульний дизайн ядра (kernel).
+30 крейтів Rust + xtask, модульний дизайн ядра (kernel).
 
 ```
 librefang-kernel            Оркестрація, воркфлоу, облік витрат, RBAC, планувальник, бюджет
@@ -132,6 +132,13 @@ librefang-runtime-mcp       Клієнт MCP (Model Context Protocol) для р�
 librefang-kernel-handle     Трейт KernelHandle для викликів ядра LibreFang всередині процесу
 librefang-kernel-router     Рушій маршрутизації Hands/Темплейтів для ядра LibreFang
 librefang-kernel-metering   Облік витрат, застосування квот для ядра LibreFang
+librefang-subprocess        Утиліти для запуску підпроцесів та IPC
+librefang-runtime-audit     Журналювання аудиту та відстеження taint для середовища виконання
+librefang-runtime-media     Обробка та конвертація медіа для середовища виконання
+librefang-runtime-sandbox-docker Пісочниця на базі Docker для середовища виконання
+librefang-rl-export         Експорт пар переваг RLHF/DPO та кінцеві точки
+librefang-memory-wiki       Стратегії ущільнення та сховище знань wiki
+librefang-acp               Адаптер сервера протоколу клієнта агента
 xtask                       Автоматизація збірки
 ```
 
