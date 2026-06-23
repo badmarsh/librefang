@@ -16,11 +16,11 @@ module      = "builtin:chat"
 tags        = ["disinfo", "source", "credibility", "osint", "ensemble"]
 
 [model]
-provider = "openrouter"
-model = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key_env = "DASHSCOPE_API_KEY"
+provider    = "freellmpool"
+model       = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+max_tokens  = 4096
 temperature = 0.0
-max_tokens  = 1024
 [source_lists]
 known_good_path = "data/source_lists/known_good.txt"
 known_bad_path  = "data/source_lists/known_bad.txt"

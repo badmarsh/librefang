@@ -1,12 +1,19 @@
-# LibreFang Source Lists — v1.0.0 — last updated: 2026-06-22
+# LibreFang Source Lists — v1.1.0 — last updated: 2026-06-23
 # Maintenance: edit this file and bump the version comment.
 # Sources: IRI, EUvsDisinfo, GLOBSEC (see docs/source_list_methodology.md)
+#
+# NOTE: hlavnespravy.sk removed from this list.
+# It will be scored dynamically via the multi-source registry fusion
+# (NewsGuard + MBFC + EUvsDisinfo + Konšpirátori.sk) alongside dennikn.sk
+# so the comparison is evidence-based rather than pre-judged.
 
-hlavnespravy.sk
+# Confirmed Slovak/CZ disinformation sites (pre-rated via Konšpirátori.sk + EUvsDisinfo)
 infovojna.sk
 parlamentnelisty.sk
 kontrfakt.sk
 zem-vek.sk
+
+# Confirmed foreign disinformation / state propaganda outlets
 slavyangrad.ru
 aeronet.cz
 ac24.cz

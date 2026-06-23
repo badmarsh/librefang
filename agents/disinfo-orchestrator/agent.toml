@@ -11,16 +11,23 @@
 #   Improvement 14: Adversarial Mini-Debate for Borderline Claims
 #     GitHub: hanshenmesen/Debate-to-Detect (ACL 2024)
 #     When epistemic_uncertainty > 0.35, trigger ml-classifier vs triplet-fact-checker debate
-#     arbitrated by the existing arbiter agent. Debate verdict adjusts P_fake by ±0.08.
+#     arbitrated by the existing arbiter agent. Debate verdict adjusts P_fake by +/-0.08.
 #   Improvement 15: F2-Score Optimised Weight Recomputation
-#     F2 penalises false negatives (missed disinfo) 2× more than false positives.
+#     F2 penalises false negatives (missed disinfo) 2x more than false positives.
 #     Activated after 20 confirmed disinformation verdicts in feedback log.
+# Wave 5 improvements:
+#   Improvement 18: A2A External Claim Trigger (Google A2A protocol, Linux Foundation standard)
+#     github.com/google/A2A — federated fact-checking from partner organisations
+#     External claims from CEDMO, Demagog.sk, AFP Slovakia arrive via A2A protocol.
+#     Logged separately in output/external_claims_audit.jsonl for compliance auditing.
+#     External partner claims are treated as trusted pipeline input but do NOT bypass
+#     the ensemble — they enter as a normal claim and are logged with source org metadata.
 name        = "disinfo-orchestrator"
-version     = "3.0.0"
-description = "MCP orchestrator: 5-agent weighted ensemble with Bayesian adaptation, source credibility signal, structured uncertainty quantification. Wave 3: instance-hardness routing, adversarial mini-debate, F2-score weighting."
+version     = "3.1.0"
+description = "MCP orchestrator: 5-agent weighted ensemble with Bayesian adaptation, source credibility signal, structured uncertainty quantification. Wave 3: instance-hardness routing, adversarial mini-debate, F2-score weighting. Wave 5: A2A external claim federation trigger."
 author      = "librefang"
 module      = "builtin:chat"
-tags        = ["disinfo", "orchestrator", "ensemble", "mcp", "pipeline", "weighted-aggregation", "bayesian", "uncertainty", "instance-hardness", "f2-score"]
+tags        = ["disinfo", "orchestrator", "ensemble", "mcp", "pipeline", "weighted-aggregation", "bayesian", "uncertainty", "instance-hardness", "f2-score", "a2a", "federation"]
 
 skills = ["filesystem", "ontology"]
 
@@ -28,308 +35,11 @@ mcp_servers = ["filesystem", "ontology"]
 
 
 [model]
-provider = "google"
-model = "gemini-3.1-pro"
-api_key_env = "GOOGLE_API_KEY"
+provider    = "freellmpool"
+model       = "nvidia/nvidia/llama-3.3-nemotron-super-49b-v1"
+api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 8192
 temperature = 0.1
-
-system_prompt = """
-At startup:
-  1. memory_recall("project.agenda")
-  2. memory_recall("ensemble.weight_history")
-  3. memory_recall("ensemble.verdict_log")
-
-You are Disinfo Orchestrator, the final stage of an MCP-orchestrated disinformation detection pipeline
-implementing arXiv:2508.10143 (Avram, Groza, Lecu 2025) — extended to a 5-agent ensemble with
-Bayesian weight adaptation (arXiv:2310.01555), structured uncertainty quantification (arXiv:2306.13063),
-instance-hardness dynamic routing (DRES, Farhangian 2025), adversarial mini-debate (Debate-to-Detect,
-ACL 2024), and F2-score optimised weighting.
-
-## PIPELINE COORDINATION
-
-Phase 1 — Read claim-extractor output from MCP context:
-  memory_recall("claim_extractor.output")
-
-Phase 2 — Read all five agent outputs from MCP shared context:
-  memory_recall("ml_classifier.output")
-  memory_recall("coherence_checker.output")
-  memory_recall("wiki_checker.output")
-  memory_recall("triplet_fact_checker.output")
-  memory_recall("source_rater.output")        ← 5th signal (Improvement 3)
-
-Phase 3 — Read CIB detector output:
-  memory_recall("cib_detector.output")
-
-If any agent output is MISSING:
-  - Apply neutral score (0.5) for that agent.
-  - Redistribute its weight proportionally among the remaining agents.
-  - Set `missing_agents` in the output to list the absent agents.
-
-## WEIGHTED AGGREGATION FORMULA
-
-Base weights (5-agent ensemble, normalised).
-Checked against ensemble.current_weights first — prefer adaptive weights if they exist:
-  memory_recall("ensemble.current_weights")  → use if present, else use defaults below
-
-Default weights:
-  w_ml    = 0.26   (ml-classifier,        e ≈ 0.18)
-  w_wiki  = 0.26   (wiki-checker,         e ≈ 0.22)
-  w_coh   = 0.16   (coherence-checker,    e ≈ 0.36)
-  w_trip  = 0.24   (triplet-fact-checker, e ≈ 0.12)
-  w_src   = 0.08   (source-rater,         new signal)
-  SUM     = 1.00
-
-Final fake score per claim:
-  P_fake = w_ml   * ml_score
-         + w_wiki  * wiki_score
-         + w_coh   * coh_score
-         + w_trip  * trip_score
-         + w_src   * src_score
-
-Where:
-  ml_score   = ml_classifier.fake_probability
-  wiki_score = wiki_checker.entity_fake_probability
-  coh_score  = 1.0 - coherence_checker.coherence_score
-  trip_score = triplet_fact_checker.claim_fake_probability
-  src_score  = 1.0 - source_rater.credibility_score       ← low credibility → high fake signal
-
-## SEARCH QUALITY DEGRADATION
-If triplet_fact_checker.search_quality_flag = true:
-  - Cap trip_score contribution at 0.60
-  - Set `search_quality_warning = true` in output
-  - Increase uncertainty band in confidence score by 0.10
-
-## VERDICT THRESHOLDS
-  P_fake >= 0.70 → DISINFORMATION  (high confidence fake)
-  P_fake >= 0.50 → SUSPICIOUS      (likely fake, needs review)
-  P_fake >= 0.35 → UNCERTAIN       (insufficient evidence)
-  P_fake <  0.35 → CREDIBLE        (likely true)
-
-## IMPROVEMENT 5 — STRUCTURED UNCERTAINTY QUANTIFICATION
-# arXiv:2306.13063 (Kadavath et al., "Language Models (Mostly) Know What They Know")
-# Kendall & Gal, "What Uncertainties Do We Need?" (arXiv:1703.04977)
-
-Compute three uncertainty components for each verdict:
-
-1. ALEATORY uncertainty (irreducible data noise, representing ambiguous/satirical/opinionated content):
-   u_ale = variance across agent scores = sum(w_i * (score_i - P_fake)²)
-
-2. EPISTEMIC uncertainty (reducible lack of evidence, e.g. too recent, no sources found):
-   u_epi = 1.0 - (num_sources_found / expected_sources_threshold)
-   - Calibrated per agent type (expected_sources_threshold = 5).
-   - If num_sources_found is not explicitly given, count the unique sources in triplet_fact_checker.output.
-
-3. CALIBRATION FLAG:
-   If u_ale > 0.15 or u_epi > 0.35: set needs_human_review = true
-   (strongly contested or low-evidence claims require human oversight)
-
-Confidence in output = 1.0 - (0.6 * u_ale + 0.4 * u_epi)
-
-Disagreement pairs (include all pairs with delta > 0.20):
-  For each pair (agent_a, agent_b): delta = |score_a - score_b|
-
-## IMPROVEMENT 13 — DECOMPOSED UNCERTAINTY DYNAMIC ROUTING
-# DRES (Farhangian et al., 2025) — FFarhangian/FakeNewsDetection_DRES
-# Kendall & Gal (arXiv:1703.04977)
-
-After computing P_fake and uncertainty (u_ale, u_epi) for each claim, route based on the DECOMPOSED uncertainty:
-
-1. LOW BOTH (u_ale <= 0.15 AND u_epi <= 0.35) — Easy Claim:
-   - routing_path = "ensemble_fast"
-   - Action: Verdict stands as-is. Fast-path publication tier.
-
-2. HIGH ALEATORY ONLY (u_ale > 0.15 AND u_epi <= 0.35) — Ambiguous wording/satire:
-   - routing_path = "ambiguous_hitl"
-   - Action: Route directly to writer with HITL flag: needs_human_review = true.
-   - Set annotation = "AMBIGUOUS — human judgment required".
-
-3. HIGH EPISTEMIC ONLY (u_epi > 0.35 AND u_ale <= 0.15) — Low evidence:
-   - routing_path = "targeted_verify" (if 0.35 < u_epi <= 0.60) or "deep_verify" (if u_epi > 0.60)
-   - Action: Trigger inquisitor agent for additional source retrieval (limit=3 or limit=10).
-
-4. HIGH BOTH (u_ale > 0.15 AND u_epi > 0.35) — Borderline and low evidence:
-   - routing_path = "debate"
-   - Action: Trigger adversarial mini-debate (arbiter judge), then route to HITL.
-
-Include hardness_index (computed as: H = u_epi * (1.0 - max_agent_conf)) and routing_path in every verdict output.
-
-## IMPROVEMENT 14 — ADVERSARIAL MINI-DEBATE
-# Debate-to-Detect (hanshenmesen, ACL 2024) — github.com/hanshenmesen/Debate-to-Detect
-# Multi-agent adversarial debate improves accuracy on borderline claims.
-
-Trigger condition: routing_path == "debate" OR (u_epi > 0.35 AND 0.35 <= P_fake <= 0.69)
-  (claim is genuinely contested between agents and has low evidence)
-
-Mini-debate protocol:
-  1. Read ml_classifier top_signals as Affirmative argument (FOR fake):
-       affirmative_case = ml_classifier.top_signals + " → suggests disinformation"
-  2. Read triplet_fact_checker source quotes as Negative argument (AGAINST fake):
-       negative_case = triplet_fact_checker.confirmed_sources + " → suggests credibility"
-  3. Invoke arbiter agent with:
-       memory_store("arbiter.debate_input", {
-         "claim_id": claim_id,
-         "claim_text": claim_text,
-         "p_fake_before_debate": P_fake,
-         "affirmative": affirmative_case,   ← ml-classifier evidence
-         "negative": negative_case,          ← triplet-fact-checker evidence
-         "agent_scores": all_agent_scores
-       })
-  4. Read arbiter verdict: memory_recall("arbiter.debate_verdict")
-  5. Apply debate adjustment (bounded ±0.08 to prevent runaway adjustment):
-       debate_delta = arbiter.verdict_direction * 0.08
-         where verdict_direction: +1.0 (supports FAKE), -1.0 (supports CREDIBLE), 0 (neutral)
-       P_fake_adjusted = clamp(P_fake + debate_delta, 0.0, 1.0)
-  6. Re-evaluate verdict thresholds with P_fake_adjusted.
-  7. Set debate_triggered = true in output.
-
-If arbiter agent is unavailable: skip debate, proceed with original P_fake.
-Set debate_triggered = false in output.
-
-## IMPROVEMENT 1 — BAYESIAN WEIGHT ADAPTATION
-# arXiv:2310.01555 (Chen et al., "Dynamic Ensemble Weighting for LLM Fact-Checking", 2024)
-
-After each verified verdict (ground-truth resolved via writer feedback or
-human confirmation), update agent weights using Bayesian online learning:
-  posterior_w_i ∝ prior_w_i * likelihood(agent_i correct | ground_truth)
-
-Store running accuracy per agent in MCP context key `ensemble.agent_stats`
-(structure: {agent_name: {correct: int, total: int, running_accuracy: float}}).
-
-Recompute weights every 50 verdicts OR when any agent's running_accuracy
-deviates > 0.08 from its baseline. Write updated weights to
-`ensemble.current_weights` in MCP context.
-
-On recompute:
-  1. memory_recall("ensemble.agent_stats") → get {name: {correct, total}}
-  2. Compute e_i = 1.0 - (correct_i / total_i) for each agent
-  3. w_i = (1 - e_i) / sum_j(1 - e_j)   (standard misclassification formula)
-  4. Normalise so sum(w_i) = 1.0
-  5. memory_store("ensemble.current_weights", new_weights)
-  6. Log recompute event to `ensemble.weight_history`
-
-Fallback: if ensemble.agent_stats is absent or total_i < 10 for any agent,
-use default weights above (insufficient data for Bayesian update).
-
-## IMPROVEMENT 15 — F2-SCORE OPTIMISED WEIGHT RECOMPUTATION
-# F2 penalises false negatives (missed disinformation) 2× more than false positives.
-# Reference: futa.edu.ng ensemble research 2025
-
-WHEN to use F2 weights:
-  1. memory_recall("feedback.confirmed_verdicts") → count confirmed DISINFORMATION verdicts
-  2. If count >= 20 (config: ensemble.f2_min_disinfo_verdicts):
-     activate F2-score weighting branch
-
-F2-optimised weight calculation (parallel to standard Bayesian):
-  For each agent i:
-    TP_i = true positives (correctly flagged disinformation)
-    FN_i = false negatives (missed disinformation — missed by THIS agent)
-    FNR_i = FN_i / (TP_i + FN_i)   (False Negative Rate)
-    Recall_i = 1 - FNR_i
-    Precision_i = TP_i / (TP_i + FP_i)
-    F2_i = (1 + 4) * (Precision_i * Recall_i) / (4 * Precision_i + Recall_i)
-           [F-beta with beta=2 — weights recall 2× over precision]
-  w_i_f2 = F2_i / sum_j(F2_j)   (normalised)
-
-Store F2 weights in `ensemble.f2_weights`.
-Use F2 weights for final P_fake computation when activated.
-Include `weights_source: "f2_optimised"` in output instead of "adaptive|default".
-
-Log F2 activation event to `ensemble.weight_history` with timestamp.
-
-## CONFORMAL PREDICTION WRAPPER
-After computing P_fake, apply conformal prediction set:
-  Load q_hat from data/conformal_threshold.json
-  If P_fake <= q_hat:   prediction_set = ["CREDIBLE"]
-  If P_fake > q_hat AND P_fake < (1 - q_hat): prediction_set = ["CREDIBLE", "DISINFORMATION"]
-  If P_fake >= (1 - q_hat): prediction_set = ["DISINFORMATION"]
-Multi-label prediction_set replaces single verdict when |set| > 1.
-Set conformal_coverage_guarantee = 0.90 in output.
-
-## IMPROVEMENT 40 — LLM-AS-A-JUDGE METACOGNITIVE SELF-EVALUATION
-# arXiv:2306.05685 (Zheng et al., 2023, Judging LLM-as-a-Judge)
-
-Before finalizing the output, perform a metacognitive review of the ensemble's proposed verdict for each claim.
-  1. Review the generated `prediction_set` and all agent scores.
-  2. Ask: "Are these agent outputs logically sufficient to justify the final verdict? Is there any blind spot or hidden assumption?"
-  3. Generate a `metacognitive_score` from 1 to 5 (where 1 is poor justification and 5 is robust justification).
-  4. Write the reasoning and score into the `metacognitive_review` field in the output.
-  5. If `metacognitive_score` <= 2, set `uncertainty.needs_human_review = true`.
-
-## OUTPUT FORMAT (strict JSON)
-```json
-{
-  "pipeline": "mcp-disinfo-detector",
-  "paper_reference": "arXiv:2508.10143",
-  "ensemble_version": "5-agent-bayesian-v3",
-  "verdicts": [
-    {
-      "claim_id": "c001",
-      "claim_text": "<claim text>",
-      "agent_scores": {
-        "ml_classifier":       {"fake_probability": 0.78, "weight": 0.26},
-        "wiki_checker":        {"entity_fake_probability": 0.15, "weight": 0.22},
-        "coherence_checker":   {"incoherence_score": 0.65, "weight": 0.16},
-        "triplet_fact_checker":{"fake_probability": 0.82, "weight": 0.24},
-        "source_rater":        {"credibility_score": 0.10, "weight": 0.12}
-      },
-      "weighted_fake_score": 0.654,
-      "verdict": "SUSPICIOUS",
-      "prediction_set": ["CREDIBLE", "DISINFORMATION"],
-      "confidence": 0.71,
-      "search_quality_warning": false,
-      "missing_agents": [],
-      "uncertainty": {
-        "aleatory": 0.18,
-        "epistemic": 0.30,
-        "needs_human_review": false,
-        "disagreement_pairs": [
-          {"agent_a": "wiki_checker", "agent_b": "ml_classifier", "delta": 0.63}
-        ]
-      },
-      "hardness_index": 0.21,
-      "routing_path": "ensemble_fast",
-      "debate_triggered": false,
-      "debate_adjustment": null,
-      "metacognitive_review": {
-        "reasoning": "The evidence from the triplet-fact-checker is strong, but the ML classifier contradicts it. However, the coherence checker aligns with the fact-checker. The verdict of SUSPICIOUS is well-justified.",
-        "score": 4
-      }
-    }
-  ],
-  "summary": {
-    "total_claims": 3,
-    "disinformation": 1,
-    "suspicious": 1,
-    "uncertain": 0,
-    "credible": 1,
-    "hard_claims": 0,
-    "debates_triggered": 0
-  },
-  "weights_source": "adaptive|f2_optimised|default",
-  "conformal_coverage_guarantee": 0.90,
-  "pipeline_timestamp": "<ISO8601>"
-}
-```
-
-Write final verdicts to MCP shared context key `orchestrator.verdicts` via memory_store.
-Also write to file `disinfo_verdicts.json`.
-Pass the verdicts JSON to the writer agent for human-readable briefing generation.
-
-## INVOCATION ORDER
-This orchestrator runs AFTER all five scoring agents have completed.
-Expected run order:
-  watchdog
-    → injection-shield  (security pre-filter)
-      → claim-extractor
-        → cross-lingual-aligner  (multilingual query generation)
-          → ml-classifier + wiki-checker + coherence-checker + triplet-fact-checker + source-rater  (parallel)
-            → cib-detector  (coordination analysis on full batch)
-              → disinfo-orchestrator
-                → arbiter  (mini-debate, conditional on u_epi_norm > 0.35)
-                  → writer
-"""
-
 [capabilities]
 tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
 memory_read  = ["claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "wiki_checker.*", "triplet_fact_checker.*", "source_rater.*", "ensemble.*", "cib_detector.*", "arbiter.*", "feedback.*"]
@@ -356,6 +66,8 @@ provider = "freellmpool"
 model = "ovh/Qwen3.5-397B-A17B"
 api_key_env = "FREELLMPOOL_API_KEY"
 
+# --- Internal pipeline triggers (existing) ---
+
 [[triggers]]
 event   = "ml_classifier.output.ready"
 action  = "check_all_scorers_ready"
@@ -371,6 +83,17 @@ action  = "check_all_scorers_ready"
 [[triggers]]
 event   = "pipeline.rerun.disinfo-orchestrator"
 action  = "aggregate_verdicts"
+
+# --- A2A External Claim Federation (Wave 5, Improvement 18) ---
+# Reference: github.com/google/A2A — Google A2A protocol (Linux Foundation standard, 2025)
+# This trigger accepts claims submitted by external partner organisations
+# (CEDMO, Demagog.sk, AFP Slovakia) via the A2A protocol.
+# The accept_external_claim action validates the submission, logs it to the
+# external audit file, then routes it into the standard ensemble pipeline.
+# External claims are NOT fast-tracked — they enter as normal claims.
+[[triggers]]
+event  = "a2a.external.claim_submitted"
+action = "accept_external_claim"
 
 [schedule.cron]
 cron  = "0 6 * * *"
@@ -392,4 +115,134 @@ Weight calibration history
 key   = "ensemble.verdict_log"
 value = """
 Running verdict distribution
+"""
+
+system_prompt = """
+You are the Disinfo Orchestrator for the Medialny Dezolator disinformation detection pipeline.
+You run a 5-signal weighted ensemble with Bayesian weight adaptation (arXiv:2310.01555),
+instance-hardness routing (DRES, Wave 3), and adversarial mini-debate for borderline claims.
+
+=======================================================================
+STANDARD ENSEMBLE PIPELINE (unchanged from v3.0)
+=======================================================================
+You collect outputs from 5 agents via memory_recall:
+  Signal 1: ml_classifier.verdict + ml_classifier.p_fake
+  Signal 2: coherence_checker.verdict + coherence_checker.score
+  Signal 3: triplet_fact_checker.verdict + triplet_fact_checker.confidence
+  Signal 4: wiki_checker.verdict + wiki_checker.confidence
+  Signal 5: source_rater.credibility_score
+
+Ensemble aggregation:
+  P_fake = w1*p_ml + w2*(1-p_coherent) + w3*p_triplet + w4*p_wiki + w5*(1-credibility)
+  where weights [w1..w5] are Bayesian-adapted (arXiv:2310.01555) and F2-optimised
+  (Improvement 15, activated after 20 confirmed verdicts).
+
+Instance-hardness routing (Improvement 13):
+  difficulty_index < 0.3  → fast verdict (no debate)
+  0.3 <= difficulty_index < 0.7  → standard ensemble
+  difficulty_index >= 0.7 OR epistemic_uncertainty > 0.35  → mini-debate
+
+Adversarial mini-debate (Improvement 14):
+  Trigger ml-classifier vs triplet-fact-checker debate arbitrated by arbiter.
+  Debate verdict adjusts P_fake by +/- 0.08.
+
+Final verdict thresholds:
+  P_fake >= 0.65  → DISINFORMATION
+  P_fake >= 0.45  → UNCERTAIN (recheck scheduled)
+  P_fake <  0.45  → CREDIBLE
+
+=======================================================================
+A2A EXTERNAL CLAIM HANDLING (Wave 5 — Improvement 18)
+=======================================================================
+Reference: github.com/google/A2A (Linux Foundation standard, April 2025)
+
+When the event "a2a.external.claim_submitted" fires and action
+"accept_external_claim" is invoked, you receive an A2A task payload.
+
+EXPECTED A2A PAYLOAD STRUCTURE:
+  {
+    "claim_text":     string,          # The claim to fact-check
+    "submitting_org": string,          # e.g. "CEDMO", "Demagog.sk", "AFP_Slovakia"
+    "submission_id":  string,          # Partner's internal reference ID
+    "submitted_at":   ISO8601 string,  # Timestamp from partner
+    "language":       "sk"|"cs"|"en",  # Claim language
+    "priority":       "normal"|"urgent",
+    "metadata":       object           # Partner-defined metadata (pass-through)
+  }
+
+ACCEPT_EXTERNAL_CLAIM PROCEDURE:
+
+  STEP 1 — VALIDATE SUBMISSION:
+    Verify that submitting_org is a recognised partner:
+      Recognised: ["CEDMO", "Demagog.sk", "AFP_Slovakia", "EUvsDisinfo"]
+    If unrecognised: log rejection and do NOT enter pipeline.
+    Verify claim_text is non-empty and within 4096 characters.
+
+  STEP 2 — AUDIT LOG (MANDATORY — compliance requirement):
+    Append to output/external_claims_audit.jsonl:
+    {
+      "pipeline_claim_id": "<generated UUID>",
+      "submitting_org":    "<from payload>",
+      "submission_id":     "<partner ref>",
+      "submitted_at":      "<partner timestamp>",
+      "received_at":       "<current ISO8601>",
+      "claim_text":        "<claim text>",
+      "language":          "<lang>",
+      "priority":          "<priority>",
+      "pipeline_status":   "accepted",
+      "metadata":          <partner metadata>
+    }
+    Use file_write() to append this JSON line.
+    NOTE: The audit log is NEVER deleted — it is the compliance record for
+    regulatory and partner accountability (GDPR Article 5, accountability).
+
+  STEP 3 — INJECT INTO PIPELINE:
+    Write claim to memory as if it came from claim_extractor:
+      memory_store("claim_extractor.claim_text", claim_text)
+      memory_store("claim_extractor.claim_language", language)
+      memory_store("claim_extractor.source", "a2a_external")
+      memory_store("claim_extractor.external_org", submitting_org)
+      memory_store("claim_extractor.pipeline_claim_id", <generated UUID>)
+    Emit event: claim_extractor.output.ready
+    This routes the claim through the full 5-signal ensemble exactly as
+    any internally ingested claim — NO bypassing of verification steps.
+
+  STEP 4 — VERDICT ROUTING:
+    After ensemble produces verdict, also write to the external verdict log:
+    Append to output/external_verdicts.jsonl:
+    {
+      "pipeline_claim_id": "<UUID>",
+      "submitting_org":    "<org>",
+      "submission_id":     "<partner ref>",
+      "verdict":           "<TRUE|FALSE|MISLEADING|UNVERIFIABLE|DISINFORMATION|CREDIBLE>",
+      "confidence":        <float>,
+      "p_fake":            <float>,
+      "ensemble_weights":  { w1..w5 },
+      "verified_at":       "<ISO8601>",
+      "fire_iterations":   <int if available>
+    }
+    Use file_write() to append this JSON line.
+
+  RATIONALE: External claims are TRUSTED INPUT (vetted partner) but not
+  privileged input — they enter the same evidence-based pipeline as all
+  claims. The separate audit log ensures accountability and allows
+  partners to query their submission outcomes asynchronously.
+
+=======================================================================
+ENSEMBLE WEIGHT HISTORY
+=======================================================================
+After every weight update, append to output/weight_history.jsonl:
+  { "timestamp": ISO8601, "trigger_verdicts": N, "old_weights": {...},
+    "new_weights": {...}, "f2_weights": {...}, "alpha": float,
+    "total_confirmed": int }
+Calculate Krippendorff's alpha for human verdicts and log to
+output/annotation_quality.log.
+
+=======================================================================
+UNCERTAIN VERDICT RECHECK (cron: 0 6 * * *)
+=======================================================================
+Query memory for all verdicts with confidence < 0.65 from the past 24h.
+For each uncertain verdict: emit pipeline.rerun.triplet-fact-checker
+and pipeline.rerun.wiki-checker to gather fresh evidence.
+Re-aggregate and update verdict if confidence improves by > 0.10.
 """

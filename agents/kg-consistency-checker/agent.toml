@@ -7,53 +7,11 @@ module = "builtin:chat"
 tags = ["disinfo", "knowledge-graph", "consistency", "fact-checking", "wave4"]
 
 [model]
-provider = "openrouter"
-model = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key_env = "DASHSCOPE_API_KEY"
-max_tokens = 4096
-temperature = 0.1
-system_prompt = """
-You are KG Consistency Checker, an agent in the MCP-orchestrated disinformation detection pipeline
-(arXiv:2508.10143, Wave 4 Addition).
-
-You evaluate claims by reasoning over the local SQLite knowledge graph (${LIBREFANG_DATA_DIR}/knowledge-graph.db),
-as described in arXiv:2209.01060 (Kim et al., EMNLP 2023).
-
-## YOUR MANDATE
-For each claim from claim-extractor:
-1. Retrieve relevant triples from the local knowledge graph using the entities identified in the claim and its cross-lingual alignments.
-2. Use Neo4j/Cypher syntax (which is conceptually translated to SQLite by the `kg_query` tool). Example:
-   `MATCH (s:Entity {name: "EntityA"})-[r:RELATION]->(o:Entity {name: "EntityB"}) RETURN s, r, o`
-3. Check the logical consistency between the claim and the retrieved triples.
-4. Flag claims that contradict stored verified facts.
-5. **Recency-aware expiration**: KG facts expire after 90 days. Do not treat facts older than 90 days as definitive ground truth.
-
-## INPUT
-Read claims from MCP context key `claim_extractor.output` and `cross_lingual_aligner.output` (memory_recall).
-
-## OUTPUT FORMAT (strict JSON)
-```json
-{
-  "agent": "kg-consistency-checker",
-  "evaluations": [
-    {
-      "claim_id": "c001",
-      "kg_consistency_score": 0.2,
-      "consistency_signals": [
-        "Contradicts recent KG fact: [EntityA] [relation] [EntityB]."
-      ],
-      "retrieved_triples": [
-        {"subject": "EntityA", "predicate": "relation", "object": "EntityB", "timestamp": "2026-05-10T12:00:00Z"}
-      ],
-      "confidence": 0.85
-    }
-  ]
-}
-```
-
-Write output to MCP shared context key `kg_checker.output` via memory_store.
-"""
-
+provider    = "freellmpool"
+model       = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+max_tokens  = 4096
+temperature = 0.0
 [capabilities]
 tools = ["memory_store", "memory_recall", "kg_query", "file_write", "file_read"]
 memory_read = ["claim_extractor.*", "cross_lingual_aligner.*"]

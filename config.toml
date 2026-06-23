@@ -25,7 +25,7 @@ quarantine_threshold_per_window = 20
 quarantine_window_minutes = 10
 
 [claim_extractor]
-embedding_model = "nvidia/nemotron-3-super-120b-a12b:free"
+embedding_model = "kilo/nvidia/nemotron-3-super-120b-a12b:free"
 entity_translation_flag_threshold = 3
 preserve_original_entities = true
 semantic_dedup_enabled = true
@@ -34,9 +34,9 @@ semantic_dedup_window_hours = 72
 slovak_ner_mode = true
 
 [default_model]
-api_key_env = "NVIDIA_API_KEY"
-model = "nvidia/llama-3.1-nemotron-70b-instruct"
-provider = "nvidia"
+api_key_env = "FREELLMPOOL_API_KEY"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+provider = "freellmpool"
 
 [disinfo_pipeline]
 weight_adaptation_enabled = true
@@ -93,31 +93,25 @@ listen_addr = "127.0.0.1:4200"
 # Set LIBREFANG_OUTPUT_DIR in .env to override (default: ~/.librefang/output)
 dir = "${LIBREFANG_OUTPUT_DIR}"
 
+[provider.nvidia]
+api_key_env = "NVIDIA_API_KEY"
+
 [provider.openrouter]
 api_key_env = "OPENROUTER_API_KEY"
 
 [provider.freellmpool]
 api_key_env = "FREELLMPOOL_API_KEY"
 
-[provider.qwen]
-api_key_env = "DASHSCOPE_API_KEY"
-
-[provider.qwen-code]
-api_key_env = "DASHSCOPE_API_KEY"
-
-# Wave 3 — Improvement 11/17: Firecrawl self-hosted instance
-# Instance: https://firecrawl.dev.significa.sk/ (API key optional on this instance)
-# Docs: https://docs.firecrawl.dev/
+# Firecrawl self-hosted instance (API key optional)
+# Instance: https://firecrawl.dev.significa.sk/
 [provider.firecrawl]
 api_key_env = "FIRECRAWL_API_KEY"
 api_key_optional = true
 
 [provider_urls]
--cf = "http://127.0.0.1:8085/v1"
 freellmpool = "http://127.0.0.1:8085/v1"
+nvidia = "https://integrate.api.nvidia.com/v1"
 openrouter = "https://openrouter.ai/api/v1"
-qwen = "http://127.0.0.1:8085/v1"
-qwen-code = "http://127.0.0.1:8085/v1"
 firecrawl = "https://firecrawl.dev.significa.sk"
 
 [security]

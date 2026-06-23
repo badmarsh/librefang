@@ -1,0 +1,246 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://librefang.local/ontology/schema.json",
+  "title": "Medialny Dezolator Knowledge Graph Schema",
+  "description": "Temporal KG schema with Zep/Graphiti bi-temporal validity pattern (github.com/getzep/graphiti). Valid_from/valid_until on all nodes and edges. NEVER overwrite — always close old record and create new.",
+  "version": "2.0.0",
+  "updated": "2026-06-23",
+
+  "definitions": {
+
+    "TemporalMeta": {
+      "description": "Bi-temporal validity fields required on ALL nodes and edges",
+      "type": "object",
+      "required": ["valid_from", "created_at"],
+      "properties": {
+        "valid_from": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this fact became true in the world (domain time)"
+        },
+        "valid_until": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When this fact ceased to be true. null = currently valid (open interval)"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this record was written to the KG (system time)"
+        },
+        "expired_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When this record was superseded by a newer version. null = current record"
+        },
+        "supersedes_id": {
+          "type": ["string", "null"],
+          "description": "ID of the previous record this one replaces (for audit chain)"
+        }
+      }
+    },
+
+    "MutationOp": {
+      "description": "Temporal operation metadata on each mutation",
+      "type": "object",
+      "required": ["op", "temporal_op"],
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": ["node_upsert", "edge_upsert", "node_close", "edge_close"],
+          "description": "KG operation type"
+        },
+        "temporal_op": {
+          "type": "string",
+          "enum": ["create", "close", "upsert"],
+          "description": "create=new record, close=set valid_until/expired_at on old record, upsert=rare non-temporal update"
+        }
+      }
+    },
+
+    "SourceNode": {
+      "description": "Media source / outlet node. Credibility score is TEMPORAL — ownership and editorial quality change over time.",
+      "allOf": [{ "$ref": "#/definitions/TemporalMeta" }],
+      "type": "object",
+      "required": ["id", "url", "outlet", "credibility_score", "valid_from", "created_at"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "url": { "type": "string", "format": "uri" },
+        "outlet": { "type": "string" },
+        "credibility_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Weighted avg: accuracy_history=0.5, bias_score=0.3, ownership_flag=0.2. ALWAYS update via close+create, never direct overwrite."
+        },
+        "bias_label": {
+          "type": "string",
+          "enum": ["left", "center-left", "center", "center-right", "right", "pro-kremlin", "state-media", "unknown"]
+        },
+        "owner": { "type": "string" },
+        "owner_type": {
+          "type": "string",
+          "enum": ["private", "public", "state", "oligarch-linked", "foreign", "unknown"]
+        },
+        "country": { "type": "string", "description": "ISO 3166-1 alpha-2 country code" },
+        "language": { "type": "string", "description": "BCP 47 language tag, e.g. sk, cs, en" }
+      }
+    },
+
+    "ActorNode": {
+      "description": "A person, organisation, or bot account that creates or amplifies claims.",
+      "allOf": [{ "$ref": "#/definitions/TemporalMeta" }],
+      "type": "object",
+      "required": ["id", "name", "type", "valid_from", "created_at"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "name": { "type": "string" },
+        "aliases": { "type": "array", "items": { "type": "string" } },
+        "type": {
+          "type": "string",
+          "enum": ["person", "organisation", "bot", "state-actor", "media-outlet", "unknown"]
+        },
+        "credibility_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "country": { "type": "string" },
+        "affiliation": { "type": "string" },
+        "political_alignment": { "type": "string" }
+      }
+    },
+
+    "ClaimNode": {
+      "description": "An atomic factual claim extracted from a source. valid_from = date_made.",
+      "allOf": [{ "$ref": "#/definitions/TemporalMeta" }],
+      "type": "object",
+      "required": ["id", "text", "fingerprint", "date_made", "valid_from", "created_at"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "text": { "type": "string" },
+        "fingerprint": { "type": "string", "description": "SHA-256 or semantic embedding hash for dedup" },
+        "verdict": {
+          "type": "string",
+          "enum": ["TRUE", "FALSE", "MISLEADING", "UNVERIFIABLE", "PENDING"]
+        },
+        "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "p_fake": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "date_made": { "type": "string", "format": "date-time", "description": "When the claim was originally made" },
+        "date_verified": { "type": ["string", "null"], "format": "date-time" },
+        "language": { "type": "string" },
+        "fire_iterations": { "type": ["integer", "null"], "description": "FIRE retrieval iterations used to verify" }
+      }
+    },
+
+    "NarrativeClusterNode": {
+      "description": "A group of semantically related claims forming a disinformation campaign. valid_from = first_seen. Close with valid_until when campaign ends.",
+      "allOf": [{ "$ref": "#/definitions/TemporalMeta" }],
+      "type": "object",
+      "required": ["id", "label", "first_seen", "valid_from", "created_at"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "label": { "type": "string" },
+        "first_seen": { "type": "string", "format": "date-time" },
+        "last_seen": { "type": "string", "format": "date-time" },
+        "spread_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Alert watchdog when > 0.80. Close cluster when < 0.10 for 7 days."
+        },
+        "claim_count": { "type": "integer", "minimum": 0 },
+        "dominant_language": { "type": "string" }
+      }
+    },
+
+    "ActorMadeClaimEdge": {
+      "description": "Actor -> Claim edge. valid_from = date_made (when the actor made the claim).",
+      "allOf": [{ "$ref": "#/definitions/TemporalMeta" }],
+      "type": "object",
+      "required": ["from_id", "to_id", "relation", "date_made", "valid_from", "created_at"],
+      "properties": {
+        "from_id": { "type": "string", "description": "Actor node ID" },
+        "to_id": { "type": "string", "description": "Claim node ID" },
+        "relation": { "type": "string", "const": "MADE" },
+        "date_made": { "type": "string", "format": "date-time" },
+        "platform": { "type": "string", "description": "Where the claim was made" }
+      }
+    },
+
+    "ClaimBelongsToClusterEdge": {
+      "description": "Claim -> NarrativeCluster edge. valid_from = when claim was assigned to cluster.",
+      "allOf": [{ "$ref": "#/definitions/TemporalMeta" }],
+      "type": "object",
+      "required": ["from_id", "to_id", "relation", "assigned_at", "valid_from", "created_at"],
+      "properties": {
+        "from_id": { "type": "string", "description": "Claim node ID" },
+        "to_id": { "type": "string", "description": "NarrativeCluster node ID" },
+        "relation": { "type": "string", "const": "BELONGS_TO" },
+        "assigned_at": { "type": "string", "format": "date-time" },
+        "similarity_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      }
+    },
+
+    "ClaimEvidenceEdge": {
+      "description": "Claim -> Source evidence edge (SUPPORTED_BY or REFUTED_BY).",
+      "allOf": [{ "$ref": "#/definitions/TemporalMeta" }],
+      "type": "object",
+      "required": ["from_id", "to_id", "relation", "valid_from", "created_at"],
+      "properties": {
+        "from_id": { "type": "string", "description": "Claim node ID" },
+        "to_id": { "type": "string", "description": "Source node ID" },
+        "relation": { "type": "string", "enum": ["SUPPORTED_BY", "REFUTED_BY"] },
+        "evidence_text": { "type": "string" },
+        "source_url": { "type": "string", "format": "uri" }
+      }
+    },
+
+    "ClaimAmplifiedByEdge": {
+      "description": "Claim -> Actor amplification edge.",
+      "allOf": [{ "$ref": "#/definitions/TemporalMeta" }],
+      "type": "object",
+      "required": ["from_id", "to_id", "relation", "valid_from", "created_at"],
+      "properties": {
+        "from_id": { "type": "string", "description": "Claim node ID" },
+        "to_id": { "type": "string", "description": "Actor node ID" },
+        "relation": { "type": "string", "const": "AMPLIFIED_BY" },
+        "platform": { "type": "string" },
+        "amplification_count": { "type": "integer" }
+      }
+    },
+
+    "KGMutation": {
+      "description": "Top-level wrapper for any KG mutation output by the Archivist.",
+      "type": "object",
+      "required": ["op", "type", "temporal_op", "data"],
+      "properties": {
+        "op": { "type": "string", "enum": ["node_upsert", "edge_upsert", "node_close", "edge_close"] },
+        "type": {
+          "type": "string",
+          "enum": ["Source", "Actor", "Claim", "NarrativeCluster", "MADE", "BELONGS_TO", "SUPPORTED_BY", "REFUTED_BY", "AMPLIFIED_BY"]
+        },
+        "temporal_op": { "type": "string", "enum": ["create", "close", "upsert"] },
+        "data": {
+          "oneOf": [
+            { "$ref": "#/definitions/SourceNode" },
+            { "$ref": "#/definitions/ActorNode" },
+            { "$ref": "#/definitions/ClaimNode" },
+            { "$ref": "#/definitions/NarrativeClusterNode" },
+            { "$ref": "#/definitions/ActorMadeClaimEdge" },
+            { "$ref": "#/definitions/ClaimBelongsToClusterEdge" },
+            { "$ref": "#/definitions/ClaimEvidenceEdge" },
+            { "$ref": "#/definitions/ClaimAmplifiedByEdge" }
+          ]
+        }
+      }
+    }
+  },
+
+  "type": "array",
+  "items": { "$ref": "#/definitions/KGMutation" },
+
+  "notes": {
+    "temporal_pattern": "Zep/Graphiti bi-temporal pattern (github.com/getzep/graphiti). Domain time via valid_from/valid_until. System time via created_at/expired_at.",
+    "update_rule": "NEVER overwrite scored fields. Always: (1) close old record with valid_until=now, (2) create new record with valid_from=now, (3) link via supersedes_id.",
+    "query_pattern": "To get the active record: WHERE valid_until IS NULL. To get historical value at time T: WHERE valid_from <= T AND (valid_until IS NULL OR valid_until >= T).",
+    "credibility_audit": "All credibility score changes logged to output/credibility_history.jsonl with old_score, new_score, reason, trigger_verdict_id.",
+    "schema_version": "2.0.0 (2026-06-23) — added temporal validity to all node types and edges (Wave 5)"
+  }
+}

@@ -1,17 +1,21 @@
-# LibreFang Source Lists — v1.0.0 — last updated: 2026-06-22
+# LibreFang Source Lists — v1.1.0 — last updated: 2026-06-23
 # Maintenance: edit this file and bump the version comment.
 # Sources: IRI, EUvsDisinfo, GLOBSEC (see docs/source_list_methodology.md)
+#
+# NOTE: Slovak media intentionally omitted from this list.
+# dennikn.sk vs hlavnespravy.sk comparison requires both to be scored
+# via the live multi-source registry (NewsGuard + MBFC + EUvsDisinfo + Konšpirátori.sk)
+# without any pre-baked bias. Only international reference anchors retained here.
 
-dennikn.sk
-sme.sk
-aktuality.sk
-pravda.sk
-hnonline.sk
-idnes.cz
-irozhlas.cz
-ct24.cz
-rtvs.sk
-euractiv.sk
+# International wire services & public broadcasters (neutral reference anchors)
 bbc.com
 reuters.com
 apnews.com
+afp.com
+dw.com
+euronews.com
+
+# Czech public media (used as CEE regional reference)
+idnes.cz
+irozhlas.cz
+ct24.cz

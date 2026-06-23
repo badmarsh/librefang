@@ -23,12 +23,11 @@ skills = [
 ]
 
 [model]
-provider = "openrouter"
-model = "nvidia/nemotron-3-super-120b-a12b:free"
-api_key_env = "DASHSCOPE_API_KEY"
+provider    = "freellmpool"
+model       = "ovh/Mistral-Small-3.2-24B-Instruct-2506"
+api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 4096
-temperature = 0.2
-
+temperature = 0.1
 [memory]
 # Improvement 6: Episodic ring buffer — arXiv:2304.03442 (Park et al., "Generative Agents", Stanford)
 episodic_buffer_size  = 200    # ring buffer of last 200 processed item fingerprints
