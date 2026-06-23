@@ -28,6 +28,7 @@ mod tool_name {
     pub const AGENT_LIST: &str = "agent_list";
     pub const AGENT_KILL: &str = "agent_kill";
     pub const MEMORY_STORE: &str = "memory_store";
+    pub const MEMORY_ADD: &str = "memory_add";
     pub const MEMORY_RECALL: &str = "memory_recall";
     pub const MEMORY_LIST: &str = "memory_list";
     pub const WIKI_GET: &str = "wiki_get";
@@ -125,6 +126,7 @@ pub const ALWAYS_NATIVE_TOOLS: &[&str] = &[
     tool_name::TOOL_LOAD,
     tool_name::TOOL_SEARCH,
     tool_name::MEMORY_STORE,
+    tool_name::MEMORY_ADD,
     tool_name::MEMORY_RECALL,
     tool_name::MEMORY_LIST,
     tool_name::WEB_SEARCH,
@@ -368,6 +370,18 @@ use instead of web_fetch + file_write (which round-trips the entire body through
                         "agent_id": { "type": "string", "description": "The target agent's UUID or name" }
                     },
                     "required": ["agent_id"]
+                }),
+            },
+            ToolDefinition {
+                name: tool_name::MEMORY_ADD.to_string(),
+                description: "Proactively embed and store text into the system's vector memory. Use this to permanently store important facts, verdicts, or summaries.".to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string", "description": "The exact text to embed and store" },
+                        "category": { "type": "string", "description": "The category to file this memory under (e.g., 'disinfo_verdict', 'fact')" }
+                    },
+                    "required": ["text"]
                 }),
             },
             ToolDefinition {

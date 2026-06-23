@@ -56,6 +56,7 @@ fn api_v1_routes() -> Router<Arc<AppState>> {
         .merge(routes::system::router())
         .merge(routes::task_queue::router())
         .merge(routes::memory::router())
+        .merge(routes::claims::router())
         .merge(routes::workflows::router())
         .merge(routes::skills::router())
         .merge(routes::network::router())

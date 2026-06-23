@@ -13,7 +13,7 @@ skills = [
   "answeroverflow",
   "browser-use",
   "multi-search-engine",
-  "filesystem",
+  "clawdbot-filesystem-1-0-2",
 ]
 
 [model]
@@ -30,11 +30,6 @@ api_key_env = "FREELLMPOOL_API_KEY"
 [[fallback_models]]
 provider = "freellmpool"
 model = "nvidia/meta/llama-3.1-8b-instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
-
-[[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Qwen3.5-9B"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
