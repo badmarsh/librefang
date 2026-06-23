@@ -341,6 +341,8 @@ pub struct PeerConfig {
     /// SECURITY (#3876): Optional cumulative LLM token cap per peer per hour.
     /// `None` means unlimited. Default: None.
     pub max_llm_tokens_per_peer_per_hour: Option<u64>,
+    /// OFP Wire framing configuration.
+    pub wire_config: crate::WireConfig,
 }
 
 impl Default for PeerConfig {
@@ -352,6 +354,7 @@ impl Default for PeerConfig {
             shared_secret: String::new(),
             max_messages_per_peer_per_minute: 60,
             max_llm_tokens_per_peer_per_hour: None,
+            wire_config: crate::WireConfig::default(),
         }
     }
 }
@@ -1608,6 +1611,7 @@ pub async fn write_message_authenticated(
     let len_bytes = (total_len as u32).to_be_bytes();
 
     writer.write_all(&len_bytes).await?;
+    writer.write_all(&[0u8]).await?; // Mode = 0
     writer.write_all(&json_bytes).await?;
     writer.write_all(mac_bytes).await?;
     writer.flush().await?;
@@ -1649,7 +1653,7 @@ async fn read_message_bounded(
     peer_node_id: &str,
     max_size: u32,
 ) -> Result<WireMessage, WireError> {
-    let mut header = [0u8; 4];
+    let mut header = [0u8; 5];
     match reader.read_exact(&mut header).await {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -1704,7 +1708,7 @@ pub async fn read_message_authenticated_observed(
     session_key: &str,
     peer_node_id: &str,
 ) -> Result<WireMessage, WireError> {
-    let mut header = [0u8; 4];
+    let mut header = [0u8; 5];
     match reader.read_exact(&mut header).await {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {

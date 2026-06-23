@@ -105,7 +105,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af62fb84df2af0f933d8f5fd78b843fa5eb0ec5a48fa1b528c41951d0bbe36c"
 dependencies = [
  "agent-client-protocol-derive",
- "agent-client-protocol-schema",
+ "agent-client-protocol-schema 0.12.0",
  "anyhow",
  "futures",
  "futures-concurrency",
@@ -131,6 +131,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "agent-client-protocol-schema"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f9f70c0a60a589f06e6025e748472c3903c08222c0fefc27b1f79eaf595d248"
+dependencies = [
+ "anyhow",
+ "derive_more 2.1.1",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "strum",
 ]
 
 [[package]]
@@ -1078,6 +1092,17 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chacha20"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3613f74bd2eac03dad61bd53dbe620703d4371614fe0bc3b9f04dd36fe4e818"
+dependencies = [
+ "cfg-if",
+ "cipher 0.4.4",
+ "cpufeatures 0.2.17",
+]
+
+[[package]]
+name = "chacha20"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f8d983286843e49675a4b7a2d174efe136dc93a18d69130dd18198a6c167601"
@@ -1086,6 +1111,19 @@ dependencies = [
  "cipher 0.5.2",
  "cpufeatures 0.3.0",
  "rand_core 0.10.0",
+ "zeroize",
+]
+
+[[package]]
+name = "chacha20poly1305"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10cd79432192d1c0f4e1a0fef9527696cc039165d729fb41b3f4f4f354c2dc35"
+dependencies = [
+ "aead 0.5.2",
+ "chacha20 0.9.1",
+ "cipher 0.4.4",
+ "poly1305 0.8.0",
  "zeroize",
 ]
 
@@ -1148,6 +1186,7 @@ checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
  "crypto-common 0.1.7",
  "inout 0.1.4",
+ "zeroize",
 ]
 
 [[package]]
@@ -1299,6 +1338,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "conformance-acp"
+version = "0.1.0"
+dependencies = [
+ "agent-client-protocol",
+ "agent-client-protocol-schema 0.11.1",
+ "librefang-acp",
+ "librefang-api",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -4546,6 +4597,7 @@ dependencies = [
  "librefang-llm-driver",
  "librefang-llm-drivers",
  "librefang-memory",
+ "librefang-rl-export",
  "librefang-runtime",
  "librefang-skills",
  "librefang-telemetry",
@@ -4990,6 +5042,7 @@ dependencies = [
 name = "librefang-rl-export"
 version = "2026.6.22-beta.22"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "librefang-http",
@@ -5251,6 +5304,7 @@ version = "2026.6.22-beta.22"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "chacha20poly1305",
  "chrono",
  "dashmap",
  "ed25519-dalek 2.2.0",
@@ -7111,6 +7165,17 @@ dependencies = [
 
 [[package]]
 name = "poly1305"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8159bd90725d2df49889a078b54f4f79e87f1f8a8444194cdca81d38f5393abf"
+dependencies = [
+ "cpufeatures 0.2.17",
+ "opaque-debug",
+ "universal-hash 0.5.1",
+]
+
+[[package]]
+name = "poly1305"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a00baa632505d05512f48a963e16051c54fda9a95cc9acea1a4e3c90991c4a2e"
@@ -7646,7 +7711,7 @@ version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
- "chacha20",
+ "chacha20 0.10.0",
  "getrandom 0.4.2",
  "rand_core 0.10.0",
 ]
@@ -9339,12 +9404,12 @@ dependencies = [
  "aes 0.9.1",
  "aes-gcm 0.11.0-rc.4",
  "cbc 0.2.1",
- "chacha20",
+ "chacha20 0.10.0",
  "cipher 0.5.2",
  "ctr 0.10.1",
  "ctutils",
  "des",
- "poly1305",
+ "poly1305 0.9.0",
  "ssh-encoding",
  "zeroize",
 ]

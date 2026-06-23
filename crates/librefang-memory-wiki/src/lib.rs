@@ -57,6 +57,6 @@ pub use frontmatter::{Frontmatter, ProvenanceEntry};
 pub use librefang_types::config::{MemoryWikiIngestFilter, MemoryWikiRenderMode};
 pub use render::RenderMode;
 pub use vault::{
-    BacklinkEntry, MemoryWikiConfig, MemoryWikiMode, SearchHit, WikiPage, WikiVault,
-    WikiWriteOutcome,
+    BacklinkEntry, CompactionPolicy, MemoryWikiConfig, MemoryWikiMode, MergeStrategy, SearchHit,
+    WikiPage, WikiVault, WikiWriteOutcome,
 };

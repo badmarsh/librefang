@@ -58,6 +58,23 @@ pub mod peer;
 pub mod registry;
 pub mod trusted_peers;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncryptionMode {
+    None,
+    ChaCha20Poly1305,
+}
+
+impl Default for EncryptionMode {
+    fn default() -> Self {
+        EncryptionMode::None
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WireConfig {
+    pub encryption: EncryptionMode,
+}
+
 pub use message::{WireMessage, WireRequest, WireResponse};
 pub use peer::{PeerConfig, PeerNode};
 pub use registry::{PeerEntry, PeerRegistry, RemoteAgent};

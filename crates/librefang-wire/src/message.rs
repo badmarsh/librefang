@@ -197,19 +197,22 @@ pub struct RemoteAgentInfo {
 /// Current protocol version.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-/// Encode a wire message to bytes (4-byte big-endian length + JSON).
+/// Encode a wire message to bytes (4-byte big-endian length + 1-byte mode + JSON).
 pub fn encode_message(msg: &WireMessage) -> Result<Vec<u8>, serde_json::Error> {
     let json = serde_json::to_vec(msg)?;
     let len = json.len() as u32;
-    let mut bytes = Vec::with_capacity(4 + json.len());
+    let mut bytes = Vec::with_capacity(5 + json.len());
     bytes.extend_from_slice(&len.to_be_bytes());
+    bytes.push(0); // Mode: 0 = Plaintext
     bytes.extend_from_slice(&json);
     Ok(bytes)
 }
 
-/// Decode the length prefix from a 4-byte header.
-pub fn decode_length(header: &[u8; 4]) -> u32 {
-    u32::from_be_bytes(*header)
+/// Decode the length prefix from a 5-byte header.
+pub fn decode_length(header: &[u8; 5]) -> u32 {
+    let mut len_bytes = [0u8; 4];
+    len_bytes.copy_from_slice(&header[0..4]);
+    u32::from_be_bytes(len_bytes)
 }
 
 /// Parse a JSON body into a WireMessage.

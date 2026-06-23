@@ -67,6 +67,19 @@ pub struct WikiWriteOutcome {
     pub merged_with_external_edit: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum MergeStrategy {
+    Summarise,
+    Evict,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionPolicy {
+    pub max_entries: usize,
+    pub max_age_days: u32,
+    pub merge_strategy: MergeStrategy,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHit {
     pub topic: String,
@@ -491,6 +504,90 @@ impl WikiVault {
         atomic_write(&backlinks_path, &backlinks_raw)?;
 
         let _ = compile_state;
+        Ok(())
+    }
+
+    /// Compact the wiki vault according to the given policy.
+    pub async fn compact(&self, policy: &CompactionPolicy) -> WikiResult<()> {
+        let _lock = self.write_lock.lock().unwrap();
+        let mut state = self.load_compile_state()?;
+
+        let now = std::time::SystemTime::now();
+        let mut to_compact = Vec::new();
+
+        let get_mtime = |topic: &str| -> u128 {
+            state.pages.get(topic)
+                .and_then(|ps| ps.mtime_ns.parse::<u128>().ok())
+                .unwrap_or(0)
+        };
+
+        let mut sorted_pages: Vec<String> = state.pages.keys().cloned().collect();
+        sorted_pages.sort_by_key(|t| get_mtime(t));
+
+        // Age based pruning
+        for topic in &sorted_pages {
+            let mtime_ns = get_mtime(topic);
+            let mtime = std::time::UNIX_EPOCH + std::time::Duration::from_nanos(mtime_ns as u64);
+            if let Ok(age) = now.duration_since(mtime) {
+                if age.as_secs() > (policy.max_age_days as u64) * 86400 {
+                    to_compact.push(topic.clone());
+                }
+            }
+        }
+
+        // Count based pruning
+        let remaining_count = sorted_pages.len() - to_compact.len();
+        if remaining_count > policy.max_entries {
+            let excess = remaining_count - policy.max_entries;
+            let mut more = Vec::new();
+            for topic in sorted_pages.iter().filter(|t| !to_compact.contains(*t)).take(excess) {
+                more.push(topic.clone());
+            }
+            to_compact.extend(more);
+        }
+
+        if to_compact.is_empty() {
+            return Ok(());
+        }
+
+        for topic in &to_compact {
+            let path = self.root.join(format!("{}.md", topic));
+            match policy.merge_strategy {
+                MergeStrategy::Evict => {
+                    let _ = fs::remove_file(&path);
+                    state.pages.remove(topic);
+                }
+                MergeStrategy::Summarise => {
+                    if let Ok(Some(mut page)) = read_page_if_present(&path, topic) {
+                        page.body = format!("> [!NOTE]\n> This page was automatically summarised to save space.\n\n{}", page.frontmatter.topic);
+                        if let Ok(rendered) = crate::frontmatter::render(&page.frontmatter, &page.body) {
+                            let _ = atomic_write(&path, rendered.as_bytes());
+
+                            if let Some(ps) = state.pages.get_mut(topic) {
+                                if let Ok(meta) = path.metadata() {
+                                    if let Ok(mtime) = meta.modified() {
+                                        if let Ok(d) = mtime.duration_since(std::time::UNIX_EPOCH) {
+                                            ps.mtime_ns = d.as_nanos().to_string();
+                                        }
+                                    }
+                                }
+                                use sha2::{Digest, Sha256};
+                                let mut hasher = Sha256::new();
+                                hasher.update(rendered.as_bytes());
+                                ps.sha256 = format!("{:x}", hasher.finalize());
+                            }
+                        }
+                    } else {
+                        let _ = fs::remove_file(&path);
+                        state.pages.remove(topic);
+                    }
+                }
+            }
+        }
+
+        self.save_compile_state(&state)?;
+        self.rebuild_index_and_backlinks(&state)?;
+
         Ok(())
     }
 }
@@ -1040,5 +1137,78 @@ mod tests {
         );
         assert!(page.body.contains("original body"));
         assert_eq!(page.frontmatter.provenance.len(), 1);
+    }
+    #[tokio::test]
+    async fn compact_noop_under_limits() {
+        let (vault, _dir) = fresh_vault(RenderMode::Native);
+        vault.write("t1", "body1", provenance("a"), false).unwrap();
+        vault.write("t2", "body2", provenance("a"), false).unwrap();
+
+        let policy = CompactionPolicy {
+            max_entries: 5,
+            max_age_days: 10,
+            merge_strategy: MergeStrategy::Evict,
+        };
+        vault.compact(&policy).await.unwrap();
+
+        assert!(vault.get("t1").is_ok());
+        assert!(vault.get("t2").is_ok());
+    }
+
+    #[tokio::test]
+    async fn compact_evicts_oldest_over_limit() {
+        let (vault, _dir) = fresh_vault(RenderMode::Native);
+        
+        vault.write("t1", "body1", provenance("a"), false).unwrap();
+        // Artificially age t1
+        {
+            let _lock = vault.write_lock.lock().unwrap();
+            let mut state = vault.load_compile_state().unwrap();
+            state.pages.get_mut("t1").unwrap().mtime_ns = "1".to_string(); // Very old
+            vault.save_compile_state(&state).unwrap();
+        }
+
+        vault.write("t2", "body2", provenance("a"), false).unwrap();
+
+        let policy = CompactionPolicy {
+            max_entries: 1,
+            max_age_days: 100000,
+            merge_strategy: MergeStrategy::Evict,
+        };
+        vault.compact(&policy).await.unwrap();
+
+        // t1 should be evicted because it's the oldest and limit is 1
+        assert!(vault.get("t1").is_err());
+        assert!(vault.get("t2").is_ok());
+    }
+
+    #[tokio::test]
+    async fn compact_age_based_pruning() {
+        let (vault, _dir) = fresh_vault(RenderMode::Native);
+        vault.write("t1", "body1", provenance("a"), false).unwrap();
+        
+        {
+            let _lock = vault.write_lock.lock().unwrap();
+            let mut state = vault.load_compile_state().unwrap();
+            let very_old_ns = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos() - (20 * 86400 * 1_000_000_000u128))
+                .to_string();
+            state.pages.get_mut("t1").unwrap().mtime_ns = very_old_ns;
+            vault.save_compile_state(&state).unwrap();
+        }
+
+        vault.write("t2", "body2", provenance("a"), false).unwrap();
+
+        let policy = CompactionPolicy {
+            max_entries: 10,
+            max_age_days: 10,
+            merge_strategy: MergeStrategy::Evict,
+        };
+        vault.compact(&policy).await.unwrap();
+
+        assert!(vault.get("t1").is_err()); // Older than 10 days
+        assert!(vault.get("t2").is_ok());
     }
 }

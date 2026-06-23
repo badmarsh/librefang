@@ -43,6 +43,8 @@
 
 mod atropos;
 pub mod error;
+/// Preference types and models
+pub mod preference;
 mod redact;
 mod retry;
 mod ssrf;

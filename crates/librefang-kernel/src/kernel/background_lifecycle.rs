@@ -991,6 +991,7 @@ impl LibreFangKernel {
             shared_secret: cfg.network.shared_secret.clone(),
             max_messages_per_peer_per_minute: cfg.network.max_messages_per_peer_per_minute,
             max_llm_tokens_per_peer_per_hour: cfg.network.max_llm_tokens_per_peer_per_hour,
+            wire_config: Default::default(),
         };
 
         let registry = PeerRegistry::new();

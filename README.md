@@ -6,7 +6,7 @@
 <h3 align="center">Libre Agent Operating System — Free as in Freedom</h3>
 
 <p align="center">
-  Open-source Agent OS built in Rust. 24 crates. 2,100+ tests. Zero clippy warnings.
+  Open-source Agent OS built in Rust. 29 crates. 2,100+ tests. Zero clippy warnings.
 </p>
 
 <p align="center">
@@ -107,7 +107,7 @@ Build your own: define a `HAND.toml` + system prompt + `SKILL.md`. [Guide](https
 
 ## Architecture
 
-24 Rust crates + xtask, modular kernel design.
+29 Rust crates + xtask, modular kernel design.
 
 ```
 librefang-kernel            Orchestration, workflows, metering, RBAC, scheduler, budget
@@ -132,6 +132,13 @@ librefang-runtime-mcp       MCP (Model Context Protocol) client for LibreFang ru
 librefang-kernel-handle     KernelHandle trait for in-process callers into the LibreFang kernel
 librefang-kernel-router     Hand/Template routing engine for the LibreFang kernel
 librefang-kernel-metering   Cost metering, quota enforcement for the LibreFang kernel
+librefang-subprocess        Subprocess execution utilities and IPC
+librefang-runtime-audit     Audit logging and taint tracking for the runtime
+librefang-runtime-media     Media processing and conversion for the runtime
+librefang-runtime-sandbox-docker Docker-based sandboxing for the runtime
+librefang-rl-export         RLHF/DPO preference pair export and endpoints
+librefang-memory-wiki       Compaction strategies and wiki knowledge vault
+librefang-acp               Agent Client Protocol server adapter
 xtask                       Build automation
 ```
 
