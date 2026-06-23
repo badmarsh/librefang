@@ -712,7 +712,7 @@ pub struct McpBridgeConfig {
     pub base_url: String,
     /// Optional API key for the `X-API-Key` header. Empty disables the header
     /// (matches daemon "no auth configured" mode).
-    pub api_key: Option<String>,
+    pub api_key: Option<librefang_types::config::ZeroizingString>,
 }
 
 impl Default for DriverConfig {

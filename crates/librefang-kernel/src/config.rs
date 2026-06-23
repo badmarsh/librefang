@@ -787,7 +787,7 @@ mod tests {
         drop(f);
 
         let config = load_config(Some(&root)).unwrap();
-        assert_eq!(config.api_key, "my-secret");
+        assert_eq!(config.api_key, "my-secret".into());
         assert_eq!(config.api_listen, "0.0.0.0:9999");
         assert_eq!(config.config_version, CONFIG_VERSION);
 
@@ -1243,7 +1243,7 @@ mod tests {
         let config = load_config(Some(&root))
             .expect("unknown-field forward-compat path must still load successfully");
         assert_eq!(config.log_level, "debug");
-        assert_eq!(config.api_key, "secret");
+        assert_eq!(config.api_key, "secret".into());
     }
 
     /// Regression for #5476: a `[agents.<name>.proactive_memory]` block

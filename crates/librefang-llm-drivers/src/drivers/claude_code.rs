@@ -3176,7 +3176,7 @@ mod tests {
         // registered. See issue #2699.
         let bridge = McpBridgeConfig {
             base_url: "http://127.0.0.1:4545".to_string(),
-            api_key: Some("secret-key".to_string()),
+            api_key: Some("secret-key".to_string().into()),
         };
         let path =
             ClaudeCodeDriver::write_mcp_config(&bridge, Some("agent-1234"), None, None, None)
@@ -3198,7 +3198,7 @@ mod tests {
         // directly.
         let bridge = McpBridgeConfig {
             base_url: "http://127.0.0.1:4545".to_string(),
-            api_key: Some("secret-key".to_string()),
+            api_key: Some("secret-key".to_string().into()),
         };
         let path = ClaudeCodeDriver::write_mcp_config(&bridge, None, None, None, None).unwrap();
         let written = std::fs::read_to_string(&path).unwrap();
@@ -3242,7 +3242,7 @@ mod tests {
         // as before #6117.
         let bridge = McpBridgeConfig {
             base_url: "http://127.0.0.1:4545".to_string(),
-            api_key: Some("k".to_string()),
+            api_key: Some("k".to_string().into()),
         };
         let path =
             ClaudeCodeDriver::write_mcp_config(&bridge, Some("agent-1234"), None, None, None)

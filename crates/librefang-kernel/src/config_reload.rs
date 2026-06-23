@@ -1186,7 +1186,7 @@ mod tests {
     fn test_api_key_hot_reloaded() {
         let a = default_cfg();
         let mut b = default_cfg();
-        b.api_key = "super-secret-key".to_string();
+        b.api_key = "super-secret-key".to_string().into();
         let plan = build_reload_plan(&a, &b);
         assert!(
             !plan.restart_required,
@@ -1212,7 +1212,7 @@ mod tests {
     fn test_network_config_requires_restart() {
         let a = default_cfg();
         let mut b = default_cfg();
-        b.network.shared_secret = "new-secret".to_string();
+        b.network.shared_secret = "new-secret".to_string().into();
         let plan = build_reload_plan(&a, &b);
         assert!(plan.restart_required);
         assert!(plan
@@ -1841,7 +1841,7 @@ mod tests {
     fn test_validate_network_enabled_no_secret() {
         let mut config = default_cfg();
         config.network_enabled = true;
-        config.network.shared_secret = String::new();
+        config.network.shared_secret = String::new().into();
         let err = validate_config_for_reload(&config).unwrap_err();
         assert!(err.iter().any(|e| e.contains("shared_secret")));
     }

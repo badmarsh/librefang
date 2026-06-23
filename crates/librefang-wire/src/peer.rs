@@ -11,6 +11,7 @@
 use crate::keys::{verify_signature, Ed25519KeyPair};
 use crate::message::*;
 use crate::registry::{PeerEntry, PeerRegistry, PeerState};
+use librefang_types::config::ZeroizingString;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -334,7 +335,7 @@ pub struct PeerConfig {
     pub node_name: String,
     /// Pre-shared key for HMAC-SHA256 authentication.
     /// Required — OFP refuses to start without it.
-    pub shared_secret: String,
+    pub shared_secret: ZeroizingString,
     /// SECURITY (#3876): Maximum AgentMessage requests a single OFP peer may
     /// send per minute. `0` disables message rate limiting. Default: 60.
     pub max_messages_per_peer_per_minute: u32,
@@ -349,7 +350,7 @@ impl Default for PeerConfig {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: uuid::Uuid::new_v4().to_string(),
             node_name: "librefang-node".to_string(),
-            shared_secret: String::new(),
+            shared_secret: ZeroizingString::default(),
             max_messages_per_peer_per_minute: 60,
             max_llm_tokens_per_peer_per_hour: None,
         }
@@ -1863,7 +1864,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-1".to_string(),
             node_name: "kernel-1".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
         };
@@ -1878,7 +1879,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-2".to_string(),
             node_name: "kernel-2".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
         };
@@ -1914,7 +1915,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
         };
@@ -1960,7 +1961,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
         };
@@ -1994,7 +1995,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
         };
@@ -2030,7 +2031,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-a".to_string(),
             node_name: "kernel-a".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
         };
@@ -2044,7 +2045,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-b".to_string(),
             node_name: "kernel-b".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
         };
@@ -2307,7 +2308,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0,
             max_llm_tokens_per_peer_per_hour: None,
         };
@@ -2436,7 +2437,7 @@ mod tests {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: node_id.to_string(),
             node_name: node_name.to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string(),
+            shared_secret: "test-secret-for-unit-tests".to_string().into(),
             max_messages_per_peer_per_minute: 0,
             max_llm_tokens_per_peer_per_hour: None,
         }

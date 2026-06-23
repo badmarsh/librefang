@@ -6,6 +6,70 @@ use std::path::PathBuf;
 
 use super::DEFAULT_API_LISTEN;
 
+use zeroize::Zeroizing;
+use std::fmt;
+
+/// A String wrapper that zeroes its memory on drop and redacts its Debug output.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct ZeroizingString(pub Zeroizing<String>);
+
+impl Serialize for ZeroizingString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.as_str().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ZeroizingString {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(|s| ZeroizingString(Zeroizing::new(s)))
+    }
+}
+
+impl fmt::Debug for ZeroizingString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_empty() {
+            write!(f, "\"\"")
+        } else {
+            write!(f, "\"<redacted>\"")
+        }
+    }
+}
+
+impl std::ops::Deref for ZeroizingString {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<String> for ZeroizingString {
+    fn from(s: String) -> Self {
+        ZeroizingString(Zeroizing::new(s))
+    }
+}
+
+impl From<&str> for ZeroizingString {
+    fn from(s: &str) -> Self {
+        ZeroizingString(Zeroizing::new(s.to_string()))
+    }
+}
+
+impl schemars::JsonSchema for ZeroizingString {
+    fn schema_name() -> String {
+        "ZeroizingString".to_string()
+    }
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        String::json_schema(gen)
+    }
+}
+
 /// Hard ceiling on messages persisted per session, enforced by
 /// `librefang_memory::session::SessionStore::save_session` before the
 /// blob is written to SQLite (#5121 / #5138).
@@ -3198,7 +3262,7 @@ pub struct KernelConfig {
     /// API authentication key. When set, all API endpoints (except /api/health)
     /// require a `Authorization: Bearer <key>` header.
     /// If empty, the API is unauthenticated (local development only).
-    pub api_key: String,
+    pub api_key: ZeroizingString,
     /// Controls whether the dashboard read-endpoint allowlist (agents,
     /// config, budget, sessions, approvals, hands, skills, workflows, …)
     /// requires a bearer token.
@@ -3273,13 +3337,13 @@ pub struct KernelConfig {
     /// Example: `dashboard_pass = "vault:dashboard_password"`
     /// then run `librefang vault set dashboard_password`.
     #[serde(default)]
-    pub dashboard_pass: String,
+    pub dashboard_pass: ZeroizingString,
     /// Argon2id hash of the dashboard password (PHC-format string).
     /// When set, the password is verified against this hash instead of
     /// the plaintext `dashboard_pass` value. Populated automatically on
     /// first successful login (transparent upgrade from plaintext).
     #[serde(default)]
-    pub dashboard_pass_hash: String,
+    pub dashboard_pass_hash: ZeroizingString,
     /// Opt-in flag for passkey (WebAuthn/FIDO2) dashboard login (#5981).
     /// Default OFF: when false the `/api/auth/passkey/*` endpoints return
     /// `503 Service Unavailable` and the dashboard hides the passkey UI.
@@ -6254,13 +6318,13 @@ impl Default for KernelConfig {
             memory_wiki: MemoryWikiConfig::default(),
             network: NetworkConfig::default(),
             channels: ChannelsConfig::default(),
-            api_key: String::new(),
+            api_key: ZeroizingString::default(),
             require_auth_for_reads: None,
             external_auth_proxy: false,
             trusted_manifest_signers: Vec::new(),
             dashboard_user: String::new(),
-            dashboard_pass: String::new(),
-            dashboard_pass_hash: String::new(),
+            dashboard_pass: ZeroizingString::default(),
+            dashboard_pass_hash: ZeroizingString::default(),
             passkey_enabled: false,
             passkey_rp_id: String::new(),
             passkey_rp_origin: String::new(),
@@ -6873,7 +6937,7 @@ pub struct NetworkConfig {
     /// Maximum number of connected peers.
     pub max_peers: u32,
     /// Pre-shared secret for OFP HMAC authentication (required when network is enabled).
-    pub shared_secret: String,
+    pub shared_secret: ZeroizingString,
     /// SECURITY (#3876): Maximum number of  requests a single OFP
     /// peer may send per minute before being rate-limited.
     ///
@@ -6903,7 +6967,7 @@ impl Default for NetworkConfig {
             bootstrap_peers: vec![],
             mdns_enabled: true,
             max_peers: 50,
-            shared_secret: String::new(),
+            shared_secret: ZeroizingString::default(),
             max_messages_per_peer_per_minute: 60,
             max_llm_tokens_per_peer_per_hour: None,
         }
