@@ -254,6 +254,9 @@ pub async fn execute_tool_raw(
     }
 
     let result = match tool_name {
+        "memory_add" => tool_memory_add(input, *kernel, *caller_agent_id, *sender_id, *channel)
+            .await
+            .map(|r| r.into()),
         // Filesystem tools
         "file_read" => {
             // SECURITY: Validate the requested path stays inside the

@@ -22,7 +22,7 @@ author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "orchestrator", "ensemble", "mcp", "pipeline", "weighted-aggregation", "bayesian", "uncertainty", "instance-hardness", "f2-score"]
 
-skills = ["filesystem", "ontology"]
+skills = ["clawdbot-filesystem-1-0-2", "ontology"]
 
 mcp_servers = ["filesystem", "ontology"]
 
@@ -313,6 +313,7 @@ Before finalizing the output, perform a metacognitive review of the ensemble's p
 ```
 
 Write final verdicts to MCP shared context key `orchestrator.verdicts` via memory_store.
+Also permanently embed each final verdict by calling the `memory_add` tool with `category="disinfo_verdict"` and `text="<JSON verdict>"`.
 Also write to file `disinfo_verdicts.json`.
 Pass the verdicts JSON to the writer agent for human-readable briefing generation.
 
@@ -331,7 +332,7 @@ Expected run order:
 """
 
 [capabilities]
-tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
+tools        = ["memory_store", "memory_recall", "memory_add", "file_write", "file_read"]
 memory_read  = ["claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "wiki_checker.*", "triplet_fact_checker.*", "source_rater.*", "ensemble.*", "cib_detector.*", "arbiter.*", "feedback.*"]
 memory_write = ["orchestrator.*", "ensemble.*", "arbiter.*"]
 
@@ -351,45 +352,3 @@ provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
-[[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Qwen3.5-397B-A17B"
-api_key_env = "FREELLMPOOL_API_KEY"
-
-[[triggers]]
-event   = "ml_classifier.output.ready"
-action  = "check_all_scorers_ready"
-
-[[triggers]]
-event   = "coherence_checker.output.ready"
-action  = "check_all_scorers_ready"
-
-[[triggers]]
-event   = "triplet_fact_checker.output.ready"
-action  = "check_all_scorers_ready"
-
-[[triggers]]
-event   = "pipeline.rerun.disinfo-orchestrator"
-action  = "aggregate_verdicts"
-
-[schedule.cron]
-cron  = "0 6 * * *"
-task  = "recheck_uncertain_verdicts"
-
-[[memory]]
-key   = "project.agenda"
-value = """
-Project: OpenFang MCP Disinfo Pipeline
-"""
-
-[[memory]]
-key   = "ensemble.weight_history"
-value = """
-Weight calibration history
-"""
-
-[[memory]]
-key   = "ensemble.verdict_log"
-value = """
-Running verdict distribution
-"""
