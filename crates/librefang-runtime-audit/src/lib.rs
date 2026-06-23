@@ -102,6 +102,9 @@ pub enum AuditAction {
     /// carries the URL and agent name. Subsequent `/api/a2a/send` and
     /// `/api/a2a/tasks/.../status` calls to that URL are now permitted.
     A2aTrusted,
+    /// A tainted value attempted to cross an execution boundary into a sink
+    /// that blocks one or more of its labels.
+    TaintSinkBlocked,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -548,6 +551,9 @@ impl AuditLog {
                         "PermissionDenied" => AuditAction::PermissionDenied,
                         "BudgetExceeded" => AuditAction::BudgetExceeded,
                         "RetentionTrim" => AuditAction::RetentionTrim,
+                        "A2aDiscovered" => AuditAction::A2aDiscovered,
+                        "A2aTrusted" => AuditAction::A2aTrusted,
+                        "TaintSinkBlocked" => AuditAction::TaintSinkBlocked,
                         _ => AuditAction::ToolInvoke, // fallback
                     };
                     let seq_raw: i64 = row.get(0)?;

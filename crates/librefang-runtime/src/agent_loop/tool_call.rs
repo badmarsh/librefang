@@ -998,7 +998,15 @@ pub(super) async fn execute_single_tool_call_core(
             event: librefang_types::agent::HookEvent::BeforeToolCall,
             data: serde_json::json!({
                 "tool_name": &tool_call.name,
-                "input": &tool_call.input,
+                "input": &librefang_types::taint::TaintedValue::new(
+                tool_call.input.clone(),
+                {
+                    let mut l = std::collections::HashSet::new();
+                    l.insert(librefang_types::taint::TaintLabel::UntrustedAgent);
+                    l
+                },
+                "llm_tool_call"
+            ),
             }),
         };
         if let Err(reason) = hook_reg.fire(&hook_ctx) {
@@ -1033,7 +1041,15 @@ pub(super) async fn execute_single_tool_call_core(
         tool_runner::execute_tool(
             &tool_call.id,
             &tool_call.name,
-            &tool_call.input,
+            &librefang_types::taint::TaintedValue::new(
+                tool_call.input.clone(),
+                {
+                    let mut l = std::collections::HashSet::new();
+                    l.insert(librefang_types::taint::TaintLabel::UntrustedAgent);
+                    l
+                },
+                "llm_tool_call"
+            ),
             ctx.kernel,
             Some(ctx.available_tool_names),
             Some(ctx.caller_id_str),
@@ -1124,7 +1140,15 @@ pub(super) async fn execute_single_tool_call_core(
             event: librefang_types::agent::HookEvent::TransformToolResult,
             data: serde_json::json!({
                 "tool_name": &tool_call.name,
-                "args": &tool_call.input,
+                "args": &librefang_types::taint::TaintedValue::new(
+                tool_call.input.clone(),
+                {
+                    let mut l = std::collections::HashSet::new();
+                    l.insert(librefang_types::taint::TaintLabel::UntrustedAgent);
+                    l
+                },
+                "llm_tool_call"
+            ),
                 "result": &result.content,
                 "is_error": result.is_error,
             }),

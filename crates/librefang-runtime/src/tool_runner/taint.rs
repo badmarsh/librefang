@@ -18,22 +18,22 @@ use tracing::warn;
 /// Layer 2: Heuristic patterns for injected external data (piped curl, base64, eval)
 ///
 /// This implements the TaintSink::shell_exec() policy from SOTA 2.
-pub(super) fn check_taint_shell_exec(command: &str) -> Option<String> {
+pub(super) fn check_taint_shell_exec(command: &TaintedValue<&str>) -> Option<String> {
     // Layer 1: Block shell metacharacters that enable command injection.
     // Uses the same validator as subprocess_sandbox and docker_sandbox.
-    if let Some(reason) = crate::subprocess_sandbox::contains_shell_metacharacters(command) {
+    if let Some(reason) = crate::subprocess_sandbox::contains_shell_metacharacters(command.value) {
         return Some(format!("Shell metacharacter injection blocked: {reason}"));
     }
 
     // Layer 2: Heuristic patterns for injected external URLs / base64 payloads
     let suspicious_patterns = ["curl ", "wget ", "| sh", "| bash", "base64 -d", "eval "];
     for pattern in &suspicious_patterns {
-        if command.contains(pattern) {
-            let mut labels = HashSet::new();
+        if command.value.contains(pattern) {
+            let mut labels = command.labels.clone();
             labels.insert(TaintLabel::ExternalNetwork);
-            let tainted = TaintedValue::new(command, labels, "llm_tool_call");
+            let tainted = TaintedValue { value: command.value, labels, sources: command.sources.clone() };
             if let Err(violation) = tainted.check_sink(&TaintSink::shell_exec()) {
-                warn!(command = crate::str_utils::safe_truncate_str(command, 80), %violation, "Shell taint check failed");
+                warn!(command = crate::str_utils::safe_truncate_str(command.value, 80), %violation, "Shell taint check failed");
                 return Some(violation.to_string());
             }
         }
@@ -50,8 +50,8 @@ pub(super) fn check_taint_shell_exec(command: &str) -> Option<String> {
 /// checked — an attacker can otherwise bypass the filter with encoding
 /// tricks such as `api%5Fkey=secret` (the server decodes `%5F` to `_`
 /// and receives the real `api_key=secret`).
-pub(super) fn check_taint_net_fetch(url: &str) -> Option<String> {
-    let url_lower = url.to_lowercase();
+pub(super) fn check_taint_net_fetch(url: &TaintedValue<&str>) -> Option<String> {
+    let url_lower = url.value.to_lowercase();
     let mut hit = url_lower.contains("authorization:");
     if !hit {
         hit = SECRET_KEYS
@@ -62,7 +62,7 @@ pub(super) fn check_taint_net_fetch(url: &str) -> Option<String> {
     // Scan 2: percent-decoded query parameter names. Parsing via
     // `url::Url` decodes each name so `api%5Fkey` becomes `api_key`.
     if !hit {
-        if let Ok(parsed) = url::Url::parse(url) {
+        if let Ok(parsed) = url::Url::parse(url.value) {
             for (name, _value) in parsed.query_pairs() {
                 let name_lower = name.to_lowercase();
                 if SECRET_KEYS.iter().any(|k| name_lower.contains(k)) {
@@ -74,11 +74,11 @@ pub(super) fn check_taint_net_fetch(url: &str) -> Option<String> {
     }
 
     if hit {
-        let mut labels = HashSet::new();
+        let mut labels = command.labels.clone();
         labels.insert(TaintLabel::Secret);
-        let tainted = TaintedValue::new(url, labels, "llm_tool_call");
+        let tainted = TaintedValue { value: url.value, labels, sources: url.sources.clone() };
         if let Err(violation) = tainted.check_sink(&TaintSink::net_fetch()) {
-            warn!(url = crate::str_utils::safe_truncate_str(url, 80), %violation, "Net fetch taint check failed");
+            warn!(url = crate::str_utils::safe_truncate_str(url.value, 80), %violation, "Net fetch taint check failed");
             return Some(violation.to_string());
         }
     }
@@ -91,21 +91,21 @@ pub(super) fn check_taint_net_fetch(url: &str) -> Option<String> {
 /// scanner used for bodies.
 pub(super) fn check_taint_outbound_header(
     name: &str,
-    value: &str,
+    value: &TaintedValue<&str>,
     sink: &TaintSink,
 ) -> Option<String> {
     let name_lower = name.trim().to_ascii_lowercase();
     if SECRET_HEADER_NAMES.iter().any(|h| *h == name_lower)
         || SECRET_KEYS.iter().any(|k| *k == name_lower)
     {
-        let mut labels = HashSet::new();
+        let mut labels = command.labels.clone();
         labels.insert(TaintLabel::Secret);
-        let tainted = TaintedValue::new(value, labels, "llm_tool_call");
+        let tainted = TaintedValue { value: value.value, labels, sources: value.sources.clone() };
         if let Err(violation) = tainted.check_sink(sink) {
             warn!(
                 sink = %sink.name,
                 header = %name_lower,
-                value_len = value.len(),
+                value_len = value.value.len(),
                 %violation,
                 "Outbound taint check failed (credential header)"
             );
@@ -178,8 +178,8 @@ fn contains_key_sep(normalized: &str) -> bool {
     false
 }
 
-pub(super) fn check_taint_outbound_text(payload: &str, sink: &TaintSink) -> Option<String> {
-    let lower = payload.to_lowercase();
+pub(super) fn check_taint_outbound_text(payload: &TaintedValue<&str>, sink: &TaintSink) -> Option<String> {
+    let lower = payload.value.to_lowercase();
 
     let mut hit = lower.contains("authorization:");
 
@@ -196,7 +196,7 @@ pub(super) fn check_taint_outbound_text(payload: &str, sink: &TaintSink) -> Opti
     // prefixes (`sk-`, `ghp_`, `xoxp-`) are also flagged regardless
     // of length.
     if !hit {
-        let trimmed = payload.trim();
+        let trimmed = payload.value.trim();
         let well_known_prefix = trimmed.starts_with("sk-")
             || trimmed.starts_with("ghp_")
             || trimmed.starts_with("github_pat_")
@@ -210,15 +210,15 @@ pub(super) fn check_taint_outbound_text(payload: &str, sink: &TaintSink) -> Opti
     }
 
     if hit {
-        let mut labels = HashSet::new();
+        let mut labels = command.labels.clone();
         labels.insert(TaintLabel::Secret);
-        let tainted = TaintedValue::new(payload, labels, "llm_tool_call");
+        let tainted = TaintedValue { value: payload.value, labels, sources: payload.sources.clone() };
         if let Err(violation) = tainted.check_sink(sink) {
             // Never log the payload itself: if the heuristic fired, the
             // payload IS the secret we are trying to contain.
             warn!(
                 sink = %sink.name,
-                payload_len = payload.len(),
+                payload_len = payload.value.len(),
                 %violation,
                 "Outbound taint check failed"
             );
