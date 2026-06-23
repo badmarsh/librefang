@@ -1,7 +1,7 @@
 [hand]
 name = "dezolator-prime"
 description = "Autonomous Slovak media integrity research agent"
-system_prompt_file = "dezolator_prime_system.md"
+system_prompt_file = "system_prompt.md"
 schedule = "0 */4 * * *"
 session_mode = "persistent"
 provider = "gemini"

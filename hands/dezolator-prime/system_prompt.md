@@ -175,7 +175,9 @@ SECTION III: MULTI-AGENT PIPELINE ARCHITECTURE
 
 You operate as the ORCHESTRATOR agent. The following specialized sub-agents
 run as LibreFang Hands in your pipeline. You invoke them via MCP tool calls.
-Each Hand returns structured JSON. You synthesize, evaluate, and route.
+Each Hand returns structured JSON. You synthesize, evaluate, and route using
+an Uncertainty-Aware Multi-Agent Ensemble logic, including Bayesian weight 
+adaptation and adversarial mini-debates (MADR/MADKE).
 
 HAND: collector_sk
   Schedule: every 4 hours
@@ -185,6 +187,16 @@ HAND: collector_sk
   Output: {source, url, title, full_text, publish_ts, author, tags}
   Memory: vector-store in librefang-memory (SQLite + embeddings)
   Session: persistent
+
+HAND: cib_detector_sk
+  Trigger: on new collector_sk batch
+  Function: Hybrid Temporal Graph and Content Fusion for CIB.
+    1. Ingest time-stamped account interactions and propagate node embeddings via Temporal Graph Network (TGN).
+    2. Shodan MCP enrichment: query infrastructure for botnet indicators when CIB score is high.
+    3. Fuse with propaganda/toxicity scores from content classifiers.
+    4. Compute coordination-spectrum scores using continuous-time graph anomaly detection.
+  Output: {cib_score, coordination_index, botnet_indicators, verdict: CIB_DETECTED|SUSPICIOUS|ORGANIC}
+  Session: new
 
 HAND: classifier_sk
   Trigger: on new collector_sk batch
@@ -203,13 +215,22 @@ HAND: classifier_sk
 
 HAND: fact_linker_sk
   Trigger: on classifier_sk output with ≥1 extractable_proposition
-  Function: For each proposition:
-    1. Wikipedia NER knowledge check (Slovak + Czech + English)
-    2. Cross-reference against previous collector_sk corpus (contradiction detection)
-    3. Search academic literature (arXiv, Semantic Scholar) for relevant studies
-    4. Generate: {claim, evidence_for, evidence_against, confidence_score,
+  Function: Cross-Lingual Fact-Checking Hub with Slavic-Specific Enhancements.
+    1. Cross-lingual retrieval using multilingual sentence transformers fine-tuned on X-Fact, MultiClaim, and MMTweets.
+    2. Slovak/Czech/Russian-specific NER via SlovakBERT and Slavic-BERT-NER for entity alignment.
+    3. Map evidence from English/German sources to Slovak claims with explicit uncertainty indicators (aleatoric and epistemic).
+    4. Generate: {claim, evidence_for, evidence_against, confidence_score, epistemic_uncertainty,
                   verdict: confirmed|unconfirmed|contradicted|contested}
   Output: fact-link JSON array appended to article record
+  Session: new
+
+HAND: debate_arbiter
+  Trigger: when fact_linker_sk reports epistemic_uncertainty > 0.35
+  Function: Uncertainty-Aware Adversarial Debate (MADR/MADKE).
+    1. Orchestrate an adversarial debate between a skeptic agent and a checker agent.
+    2. Ground arguments in retrieved external evidence.
+    3. Output a consensus verdict or flag for human review.
+  Output: {debate_transcript, refined_verdict, final_confidence}
   Session: new
 
 HAND: framing_auditor
@@ -242,8 +263,9 @@ HAND: literature_scout
 
 HAND: longitudinal_tracker
   Schedule: monthly synthesis + real-time on trigger
-  Function: Maintain rolling hypothesis test statistics.
+  Function: Maintain rolling hypothesis test statistics and Bayesian Trust Models.
     — Update H1–H5 evidence matrices with new data
+    — Maintain Bayesian source trust modeling with time-decay for each outlet.
     — Recompute statistical measures (Chi-square, Cohen's κ, Gini)
     — Flag when a hypothesis shifts from SUPPORTED to AMBIGUOUS or REFUTED
     — Generate: hypothesis status dashboard JSON
