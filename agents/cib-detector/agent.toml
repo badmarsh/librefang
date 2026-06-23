@@ -37,9 +37,10 @@ mcp_servers = ["shodan-mcp"]
 
 [model]
 provider    = "freellmpool"
-model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
-max_tokens  = 8192
+max_tokens  = 4096
+context_window = 32768
 temperature = 0.1
 [capabilities]
 tools        = ["memory_recall", "memory_store", "kg_query"]
@@ -49,12 +50,12 @@ memory_write = ["cib_detector.*"]
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "quality"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/nemotron-3-super-120b-a12b"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]

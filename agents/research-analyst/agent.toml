@@ -8,9 +8,10 @@ tags = ["research", "analysis", "fact-check", "disinfo", "evidence"]
 
 [model]
 provider    = "nvidia"
-model       = "mistralai/mistral-large-3-675b-instruct-2512"
+model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
 api_key_env = "NVIDIA_API_KEY"
-max_tokens  = 16384
+max_tokens  = 8192
+context_window = 131072
 temperature = 0.3
 [capabilities]
 tools = ["web_search", "web_fetch", "memory_store", "memory_recall", "file_write"]

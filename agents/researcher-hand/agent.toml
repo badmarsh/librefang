@@ -22,10 +22,11 @@ cache_context = false
 check_interval_secs = 3600
 
 [model]
-provider    = "nvidia"
-model       = "mistralai/mistral-large-3-675b-instruct-2512"
-api_key_env = "NVIDIA_API_KEY"
-max_tokens  = 16384
+provider    = "openrouter"
+model       = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
+max_tokens  = 8192
+context_window = 131072
 temperature = 0.3
 [Top 5 sources with URLs]
 ```
@@ -506,17 +507,17 @@ heartbeat_interval_secs = 120
 
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "quality"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "nvidia/nemotron-3-super-120b-a12b"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 

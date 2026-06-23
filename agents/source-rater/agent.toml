@@ -16,10 +16,11 @@ module      = "builtin:chat"
 tags        = ["disinfo", "source", "credibility", "osint", "ensemble"]
 
 [model]
-provider    = "freellmpool"
-model       = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
-max_tokens  = 4096
+provider    = "openrouter"
+model       = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
+max_tokens  = 8192
+context_window = 131072
 temperature = 0.0
 [source_lists]
 known_good_path = "data/source_lists/known_good.txt"
@@ -100,17 +101,17 @@ memory_write = ["source_rater.*"]
 
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "quality"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "nvidia/nemotron-3-super-120b-a12b"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 

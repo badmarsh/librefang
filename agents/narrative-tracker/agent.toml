@@ -16,13 +16,14 @@ skills = [
 
 [model]
 provider    = "freellmpool"
-model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
-max_tokens  = 8192
+max_tokens  = 4096
+context_window = 32768
 temperature = 0.3
 [model.fast]
-model = "nvidia/nemotron-3-super-120b-a12b:free"
-max_tokens  = 2048
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+max_tokens  = 4096
 temperature = 0.1
 
 system_prompt = """
@@ -74,12 +75,12 @@ If cib_score >= 0.75: automatically trigger investigator agent with cluster brie
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "quality"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/nemotron-3-super-120b-a12b"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]

@@ -6,9 +6,9 @@ module      = "builtin:quantum"
 tags        = ["qsvm", "quantum", "willow", "classification"]
 
 [model]
-provider = "google"
-model = "willow-qpu"
-api_key_env = "GOOGLE_APPLICATION_CREDENTIALS"
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
 
 capabilities = ["hilbert_space_projection", "topological_error_correction"]
 

@@ -3,7 +3,7 @@ version = "1.0.0"
 description = "Federated Zero-Knowledge Verification (FZKV) agent. Implements arXiv:2605.11223."
 
 [model]
-provider = "local" # Uses local cryptographic libraries instead of LLM
+provider = "freellmpool" # Uses local cryptographic libraries instead of LLM
 
 capabilities = ["snark_verification", "decentralized_trust"]
 

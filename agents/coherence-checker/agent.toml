@@ -14,9 +14,10 @@ mcp_servers = ["filesystem"]
 
 [model]
 provider    = "freellmpool"
-model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 4096
+context_window = 32768
 temperature = 0.0
 [capabilities]
 tools = ["memory_store", "memory_recall", "file_write", "file_read", "http_fetch"]
@@ -26,17 +27,17 @@ memory_write = ["coherence_checker.*"]
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "fast"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/meta/llama-3.1-8b-instruct"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/meta/llama-3.3-70b-instruct"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[triggers]]

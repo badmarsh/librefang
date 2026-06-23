@@ -35,10 +35,11 @@ mcp_servers = ["filesystem", "ontology"]
 
 
 [model]
-provider    = "freellmpool"
+provider    = "nvidia"
 model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
-api_key_env = "FREELLMPOOL_API_KEY"
+api_key_env = "NVIDIA_API_KEY"
 max_tokens  = 8192
+context_window = 131072
 temperature = 0.1
 [capabilities]
 tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
@@ -47,24 +48,24 @@ memory_write = ["orchestrator.*", "ensemble.*", "arbiter.*"]
 
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "quality"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "nvidia"
+model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "nvidia/nemotron-3-super-120b-a12b"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "nvidia"
+model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "nvidia"
+model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "nvidia"
+model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+api_key_env = "NVIDIA_API_KEY"
 
 # --- Internal pipeline triggers (existing) ---
 

@@ -24,6 +24,7 @@ provider    = "freellmpool"
 model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 4096
+context_window = 32768
 temperature = 0.1
 [capabilities]
 tools        = ["firecrawl_scrape", "web_fetch", "memory_store", "memory_recall", "file_write", "embedding", "kg_query"]
@@ -33,17 +34,17 @@ memory_write = ["claim_extractor.*"]
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "fast"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/meta/llama-3.1-8b-instruct"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/meta/llama-3.3-70b-instruct"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [schedule.continuous]

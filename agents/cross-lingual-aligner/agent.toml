@@ -12,9 +12,10 @@ tags        = ["multilingual", "alignment", "fact-checking", "slovak", "wikipedi
 
 [model]
 provider    = "freellmpool"
-model       = "ovh/Mistral-Small-3.2-24B-Instruct-2506"
+model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 4096
+context_window = 32768
 temperature = 0.1
 [capabilities]
 tools        = ["memory_store", "memory_recall", "web_search"]
@@ -24,12 +25,12 @@ memory_write = ["cross_lingual_aligner.*"]
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "quality"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/nemotron-3-super-120b-a12b"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]

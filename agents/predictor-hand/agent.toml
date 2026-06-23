@@ -22,10 +22,11 @@ cache_context = false
 check_interval_secs = 3600
 
 [model]
-provider    = "nvidia"
-model       = "qwen/qwen3.5-397b-a17b"
-api_key_env = "NVIDIA_API_KEY"
-max_tokens  = 16384
+provider    = "freellmpool"
+model       = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+max_tokens  = 4096
+context_window = 32768
 temperature = 0.5
 [Detailed prediction entries with reasoning chains]
 
@@ -357,7 +358,7 @@ When enabled, for each consensus prediction:
 4. If credible contrarian evidence exists, include a contrarian prediction
 5. Always label contrarian predictions clearly with the consensus for comparison
 """
-api_key_env = "OPENROUTER_API_KEY"
+api_key_env = "FREELLMPOOL_API_KEY"
 
 [resources]
 max_memory_bytes = 268435456
@@ -407,12 +408,12 @@ heartbeat_interval_secs = 30
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "quality"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/nemotron-3-super-120b-a12b"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]

@@ -23,10 +23,11 @@ skills = [
 ]
 
 [model]
-provider    = "freellmpool"
-model       = "ovh/Mistral-Small-3.2-24B-Instruct-2506"
-api_key_env = "FREELLMPOOL_API_KEY"
-max_tokens  = 4096
+provider    = "openrouter"
+model       = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
+max_tokens  = 8192
+context_window = 131072
 temperature = 0.1
 [memory]
 # Improvement 6: Episodic ring buffer — arXiv:2304.03442 (Park et al., "Generative Agents", Stanford)
@@ -166,19 +167,19 @@ claim-extractor. Watchdog's only job is triage and handoff.
 
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "fast"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "nvidia/meta/llama-3.1-8b-instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "nvidia/meta/llama-3.3-70b-instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+api_key_env = "OPENROUTER_API_KEY"
 
 [schedule.cron]
 cron = "*/30 * * * *"

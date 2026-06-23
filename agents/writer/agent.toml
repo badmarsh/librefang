@@ -11,7 +11,8 @@ tags = ["writing", "documentation", "reporting", "briefing"]
 provider    = "freellmpool"
 model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
-max_tokens  = 16384
+max_tokens  = 4096
+context_window = 32768
 temperature = 0.5
 [capabilities]
 tools = ["file_read", "file_write", "file_list", "memory_recall"]

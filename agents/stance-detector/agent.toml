@@ -12,6 +12,7 @@ provider    = "freellmpool"
 model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 4096
+context_window = 32768
 temperature = 0.0
 [capabilities]
 tools = ["memory_store", "memory_recall", "file_write", "file_read"]
@@ -20,11 +21,11 @@ memory_write = ["stance_detector.*"]
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "quality"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[fallback_models]]
 provider = "freellmpool"
-model = "nvidia/meta/llama-3.3-70b-instruct"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
