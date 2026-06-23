@@ -225,6 +225,7 @@ impl TestAppState {
 
         Arc::new(AppState {
             kernel,
+            preference_store: None,
             started_at: Instant::now(),
             bridge_manager: arc_swap::ArcSwap::new(std::sync::Arc::new(None)),
             channels_config: tokio::sync::RwLock::new(channels_config),

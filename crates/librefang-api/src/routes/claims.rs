@@ -1,7 +1,7 @@
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
-use std::sync::Arc;
 use crate::routes::AppState;
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use serde::Deserialize;
+use std::sync::Arc;
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new().route("/claims/dedup", axum::routing::post(claim_dedup))
@@ -25,7 +25,12 @@ pub async fn claim_dedup(
 ) -> impl IntoResponse {
     let store = match state.kernel.proactive_memory_store().cloned() {
         Some(s) => s,
-        None => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Proactive memory disabled"})))
+        None => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Proactive memory disabled"})),
+            )
+        }
     };
 
     let limit = 5;
@@ -36,20 +41,28 @@ pub async fn claim_dedup(
             pii_access: false,
             export_allowed: false,
             delete_allowed: false,
-        }
+        },
     );
 
     // Using search_all_with_guard from proactive.rs
     let items = match store.search_all_with_guard(&body.text, limit, &guard).await {
         Ok(items) => items,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "Search failed"})))
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "Search failed"})),
+            )
+        }
     };
 
     for item in items {
         if item.category.as_deref() == Some("disinfo_verdict") {
             // Note: Since search_all_with_guard sorts by cosine similarity but drops the exact score
             // we return the top matching semantic item in the verdict category.
-            return (StatusCode::OK, Json(serde_json::json!({"match": true, "verdict": item})));
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({"match": true, "verdict": item})),
+            );
         }
     }
 

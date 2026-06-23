@@ -33,7 +33,6 @@ use std::path::PathBuf;
 /// exposing the workspace-level `/api/versions` metadata endpoint.
 pub fn router() -> axum::Router<std::sync::Arc<AppState>> {
     axum::Router::new()
-        .route("/versions", axum::routing::get(api_versions))
         .merge(crate::routes::agent_templates::router())
         .merge(crate::routes::tools_sessions::router())
         .merge(crate::routes::approvals::router())

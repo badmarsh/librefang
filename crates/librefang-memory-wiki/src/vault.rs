@@ -516,7 +516,9 @@ impl WikiVault {
         let mut to_compact = Vec::new();
 
         let get_mtime = |topic: &str| -> u128 {
-            state.pages.get(topic)
+            state
+                .pages
+                .get(topic)
                 .and_then(|ps| ps.mtime_ns.parse::<u128>().ok())
                 .unwrap_or(0)
         };
@@ -540,7 +542,11 @@ impl WikiVault {
         if remaining_count > policy.max_entries {
             let excess = remaining_count - policy.max_entries;
             let mut more = Vec::new();
-            for topic in sorted_pages.iter().filter(|t| !to_compact.contains(*t)).take(excess) {
+            for topic in sorted_pages
+                .iter()
+                .filter(|t| !to_compact.contains(*t))
+                .take(excess)
+            {
                 more.push(topic.clone());
             }
             to_compact.extend(more);
@@ -560,7 +566,9 @@ impl WikiVault {
                 MergeStrategy::Summarise => {
                     if let Ok(Some(mut page)) = read_page_if_present(&path, topic) {
                         page.body = format!("> [!NOTE]\n> This page was automatically summarised to save space.\n\n{}", page.frontmatter.topic);
-                        if let Ok(rendered) = crate::frontmatter::render(&page.frontmatter, &page.body) {
+                        if let Ok(rendered) =
+                            crate::frontmatter::render(&page.frontmatter, &page.body)
+                        {
                             let _ = atomic_write(&path, rendered.as_bytes());
 
                             if let Some(ps) = state.pages.get_mut(topic) {
@@ -1158,7 +1166,7 @@ mod tests {
     #[tokio::test]
     async fn compact_evicts_oldest_over_limit() {
         let (vault, _dir) = fresh_vault(RenderMode::Native);
-        
+
         vault.write("t1", "body1", provenance("a"), false).unwrap();
         // Artificially age t1
         {
@@ -1186,14 +1194,15 @@ mod tests {
     async fn compact_age_based_pruning() {
         let (vault, _dir) = fresh_vault(RenderMode::Native);
         vault.write("t1", "body1", provenance("a"), false).unwrap();
-        
+
         {
             let _lock = vault.write_lock.lock().unwrap();
             let mut state = vault.load_compile_state().unwrap();
             let very_old_ns = (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos() - (20 * 86400 * 1_000_000_000u128))
+                .as_nanos()
+                - (20 * 86400 * 1_000_000_000u128))
                 .to_string();
             state.pages.get_mut("t1").unwrap().mtime_ns = very_old_ns;
             vault.save_compile_state(&state).unwrap();

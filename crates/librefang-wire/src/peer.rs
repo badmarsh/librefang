@@ -1864,6 +1864,7 @@ mod tests {
         let handle1 = Arc::new(TestHandle::new());
 
         let config1 = PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-1".to_string(),
             node_name: "kernel-1".to_string(),
@@ -1879,6 +1880,7 @@ mod tests {
         let registry2 = PeerRegistry::new();
         let handle2 = Arc::new(TestHandle::new());
         let config2 = PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-2".to_string(),
             node_name: "kernel-2".to_string(),
@@ -1915,6 +1917,7 @@ mod tests {
         let handle = Arc::new(TestHandle::new());
 
         let config = PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
@@ -1961,6 +1964,7 @@ mod tests {
         let handle = Arc::new(TestHandle::new());
 
         let config = PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
@@ -1995,6 +1999,7 @@ mod tests {
         let handle = Arc::new(TestHandle::new());
 
         let config = PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
@@ -2031,6 +2036,7 @@ mod tests {
         let handle1 = Arc::new(TestHandle::new());
 
         let config1 = PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-a".to_string(),
             node_name: "kernel-a".to_string(),
@@ -2045,6 +2051,7 @@ mod tests {
         let registry2 = PeerRegistry::new();
         let handle2 = Arc::new(TestHandle::new());
         let config2 = PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-b".to_string(),
             node_name: "kernel-b".to_string(),
@@ -2281,10 +2288,10 @@ mod tests {
 
         // Declare a 16 MiB frame (the transport-layer MAX_MESSAGE_SIZE,
         // which the pre-fix code would have allocated) and send no body.
-        client_writer
-            .write_all(&MAX_MESSAGE_SIZE.to_be_bytes())
-            .await
-            .unwrap();
+        let mut header = [0u8; 5];
+        header[0..4].copy_from_slice(&MAX_MESSAGE_SIZE.to_be_bytes());
+        header[4] = 0;
+        client_writer.write_all(&header).await.unwrap();
         client_writer.flush().await.unwrap();
 
         let result = tokio::time::timeout(Duration::from_secs(5), read_message(&mut server_reader))
@@ -2308,6 +2315,7 @@ mod tests {
         let registry = PeerRegistry::new();
         let handle = Arc::new(TestHandle::new());
         let config = PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
@@ -2319,10 +2327,10 @@ mod tests {
 
         let stream = TcpStream::connect(node.local_addr()).await.unwrap();
         let (mut reader, mut writer) = stream.into_split();
-        writer
-            .write_all(&MAX_MESSAGE_SIZE.to_be_bytes())
-            .await
-            .unwrap();
+        let mut header = [0u8; 5];
+        header[0..4].copy_from_slice(&MAX_MESSAGE_SIZE.to_be_bytes());
+        header[4] = 0;
+        writer.write_all(&header).await.unwrap();
         writer.flush().await.unwrap();
 
         // The server must reject from the header alone and close — the
@@ -2437,6 +2445,7 @@ mod tests {
 
     fn test_config(node_id: &str, node_name: &str) -> PeerConfig {
         PeerConfig {
+            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: node_id.to_string(),
             node_name: node_name.to_string(),

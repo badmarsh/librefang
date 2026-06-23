@@ -1370,6 +1370,10 @@ pub async fn build_router(
         }
     };
 
+    let preference_store = Arc::new(librefang_memory::SqlitePreferenceStore::new(
+        kernel.memory_substrate().pool(),
+    ));
+
     let state = Arc::new(AppState {
         kernel: kernel.clone(),
         started_at: Instant::now(),
@@ -1399,6 +1403,7 @@ pub async fn build_router(
         idempotency_store,
         passkey_store,
         passkey_engine,
+        preference_store: Some(preference_store),
     });
 
     // CORS: allow localhost origins by default, plus any configured in cors_origin.

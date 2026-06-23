@@ -6,7 +6,7 @@
 <h3 align="center">Libre Agent Operating System — Free as in Freedom</h3>
 
 <p align="center">
-  Open-source Agent OS built in Rust. 29 crates. 2,100+ tests. Zero clippy warnings.
+  Open-source Agent OS built in Rust. 30 crates. 2,100+ tests. Zero clippy warnings.
 </p>
 
 <p align="center">
@@ -107,7 +107,7 @@ Build your own: define a `HAND.toml` + system prompt + `SKILL.md`. [Guide](https
 
 ## Architecture
 
-29 Rust crates + xtask, modular kernel design.
+30 Rust crates + xtask, modular kernel design.
 
 ```
 librefang-kernel            Orchestration, workflows, metering, RBAC, scheduler, budget

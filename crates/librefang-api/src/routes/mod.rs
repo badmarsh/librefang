@@ -224,4 +224,7 @@ pub struct AppState {
     /// the RP config built successfully at boot; `None` otherwise (the
     /// `/api/auth/passkey/*` routes then answer `503`).
     pub passkey_engine: Option<Arc<crate::passkey::PasskeyEngine>>,
+    /// RL Preference Store backend.
+    pub preference_store:
+        Option<Arc<dyn librefang_rl_export::preference::PreferenceStore + Send + Sync>>,
 }

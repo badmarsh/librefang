@@ -166,7 +166,7 @@ pub(super) async fn tool_memory_add(
         .as_str()
         .ok_or(ToolError::MissingParameter("text"))?;
     let category = input["category"].as_str().unwrap_or("disinfo_verdict");
-    
+
     let client = reqwest::Client::new();
     let payload = serde_json::json!({
         "messages": [
@@ -175,18 +175,21 @@ pub(super) async fn tool_memory_add(
         "category": category,
         "level": "session"
     });
-    
+
     let res = client
         .post("http://127.0.0.1:3000/api/memory")
         .json(&payload)
         .send()
         .await
         .map_err(|e| ToolError::upstream_msg(format!("HTTP error: {e}")))?;
-        
+
     if !res.status().is_success() {
         let err_text = res.text().await.unwrap_or_default();
         return Err(ToolError::upstream_msg(format!("API error: {err_text}")));
     }
-    
-    Ok(format!("Successfully embedded and stored text in proactive memory category '{}'", category))
+
+    Ok(format!(
+        "Successfully embedded and stored text in proactive memory category '{}'",
+        category
+    ))
 }

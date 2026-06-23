@@ -2299,6 +2299,7 @@ mod tests {
             idempotency_store,
             passkey_store,
             passkey_engine: None,
+            preference_store: None,
         });
 
         // Simulate OFP startup happening AFTER AppState construction.

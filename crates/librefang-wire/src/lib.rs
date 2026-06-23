@@ -58,16 +58,11 @@ pub mod peer;
 pub mod registry;
 pub mod trusted_peers;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EncryptionMode {
+    #[default]
     None,
     ChaCha20Poly1305,
-}
-
-impl Default for EncryptionMode {
-    fn default() -> Self {
-        EncryptionMode::None
-    }
 }
 
 #[derive(Debug, Clone, Default)]

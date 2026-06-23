@@ -12,3 +12,4 @@ agent-client-protocol-schema = "=0.11.1"
 tokio = { workspace = true, features = ["full"] }
 serde_json = { workspace = true }
 jsonschema = "0.17"
+schemars = "1.2"

@@ -313,10 +313,10 @@ mod tests {
             kind: WireMessageKind::Request(WireRequest::Ping),
         };
         let bytes = encode_message(&msg).unwrap();
-        // First 4 bytes are length
-        let len = decode_length(&[bytes[0], bytes[1], bytes[2], bytes[3]]);
-        assert_eq!(len as usize, bytes.len() - 4);
-        let decoded = decode_message(&bytes[4..]).unwrap();
+        // First 5 bytes are header
+        let len = decode_length(&[bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]]);
+        assert_eq!(len as usize, bytes.len() - 5);
+        let decoded = decode_message(&bytes[5..]).unwrap();
         assert_eq!(decoded.id, "msg-1");
     }
 
@@ -361,7 +361,7 @@ mod tests {
             }),
         };
         let bytes = encode_message(&msg).unwrap();
-        let decoded = decode_message(&bytes[4..]).unwrap();
+        let decoded = decode_message(&bytes[5..]).unwrap();
         match decoded.kind {
             WireMessageKind::Request(WireRequest::AgentMessage { agent, message, .. }) => {
                 assert_eq!(agent, "coder");
