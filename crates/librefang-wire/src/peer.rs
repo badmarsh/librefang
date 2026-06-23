@@ -16,6 +16,9 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+
+use aes_gcm::{aead::Aead, Aes256Gcm, Nonce};
+use rand_core::{OsRng, RngCore};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -341,6 +344,8 @@ pub struct PeerConfig {
     /// SECURITY (#3876): Optional cumulative LLM token cap per peer per hour.
     /// `None` means unlimited. Default: None.
     pub max_llm_tokens_per_peer_per_hour: Option<u64>,
+    /// Frame encryption mode.
+    pub frame_encryption: librefang_types::config::FrameEncryptionMode,
 }
 
 impl Default for PeerConfig {
@@ -352,6 +357,7 @@ impl Default for PeerConfig {
             shared_secret: String::new(),
             max_messages_per_peer_per_minute: 60,
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         }
     }
 }
@@ -787,7 +793,7 @@ impl PeerNode {
 
         // Read their handshake ack
         let response = read_message(&mut reader).await?;
-        let sess_key = match &response.kind {
+        let (sess_key, use_encryption) = match &response.kind {
             WireMessageKind::Response(WireResponse::HandshakeAck {
                 node_id,
                 node_name,
@@ -845,17 +851,27 @@ impl PeerNode {
                 // both sides provided an ephemeral pubkey. Falls back to
                 // the legacy shared_secret derivation for peers from
                 // PR-2..5 that don't yet send one.
+                let mut use_encryption = false;
                 let key = match ack_eph {
                     Some(remote_eph) => {
                         let transcript = crate::kex::handshake_transcript(&our_nonce, ack_nonce);
+                        use_encryption = true;
                         our_kex
                             .derive_session_key(remote_eph, &transcript)
                             .map_err(|e| {
                                 WireError::HandshakeFailed(format!("X25519 ECDH failed: {e}"))
                             })?
                     }
-                    None => derive_session_key(&self.config.shared_secret, &our_nonce, ack_nonce),
+                    None => {
+                        if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Required {
+                            return Err(WireError::HandshakeFailed("Peer does not support required AES-256-GCM encryption".into()));
+                        }
+                        derive_session_key(&self.config.shared_secret, &our_nonce, ack_nonce)
+                    }
                 };
+                if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Plaintext {
+                    use_encryption = false;
+                }
 
                 info!(
                     "OFP: handshake complete with {} ({}) — {} agents",
@@ -872,7 +888,7 @@ impl PeerNode {
                     connected_at: chrono::Utc::now(),
                     protocol_version: *protocol_version,
                 });
-                key
+                (key, use_encryption)
             }
             WireMessageKind::Response(WireResponse::Error { code, message }) => {
                 return Err(WireError::HandshakeFailed(format!(
@@ -905,6 +921,7 @@ impl PeerNode {
                 &registry,
                 &*handle,
                 Some(&sess_key),
+                use_encryption,
                 &rate_limiter_clone,
             )
             .await
@@ -1122,7 +1139,7 @@ impl PeerNode {
                 )));
             }
         };
-        let (peer_node_id, session_key) = match &msg.kind {
+        let (peer_node_id, session_key, use_encryption) = match &msg.kind {
             WireMessageKind::Request(WireRequest::Handshake {
                 node_id,
                 node_name,
@@ -1256,18 +1273,26 @@ impl PeerNode {
                 };
                 write_message(&mut writer, &ack).await?;
 
-                // SECURITY (#4269): Prefer ECDH-derived session_key when the
-                // KEX was completed on both sides; legacy fallback otherwise.
+                let mut use_encryption = false;
                 let session_key = match (our_kex, peer_eph.as_deref()) {
                     (Some(kex), Some(remote_eph)) => {
                         let transcript = crate::kex::handshake_transcript(nonce, &ack_nonce);
+                        use_encryption = true;
                         kex.derive_session_key(remote_eph, &transcript)
                             .map_err(|e| {
                                 WireError::HandshakeFailed(format!("X25519 ECDH failed: {e}"))
                             })?
                     }
-                    _ => derive_session_key(&node.config.shared_secret, nonce, &ack_nonce),
+                    _ => {
+                        if node.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Required {
+                            return Err(WireError::HandshakeFailed("Peer does not support required AES-256-GCM encryption".into()));
+                        }
+                        derive_session_key(&node.config.shared_secret, nonce, &ack_nonce)
+                    }
                 };
+                if node.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Plaintext {
+                    use_encryption = false;
+                }
 
                 info!(
                     "OFP: handshake with {} ({}) from {} — {} agents",
@@ -1288,7 +1313,7 @@ impl PeerNode {
                     protocol_version: *protocol_version,
                 });
 
-                (node_id.clone(), session_key)
+                (node_id.clone(), session_key, use_encryption)
             }
             // SECURITY: Reject all non-Handshake initial messages.
             // Clients MUST complete HMAC-authenticated handshake before sending
@@ -1321,6 +1346,7 @@ impl PeerNode {
             registry,
             handle,
             Some(&session_key),
+            use_encryption,
             &node.rate_limiter,
         )
         .await
@@ -1393,16 +1419,16 @@ async fn connection_loop(
     registry: &PeerRegistry,
     handle: &dyn PeerHandle,
     session_key: Option<&str>,
+    use_encryption: bool,
     rate_limiter: &PeerRateLimiter,
 ) -> Result<(), WireError> {
     loop {
         let msg = match if let Some(key) = session_key {
-            // Both helpers thread `peer_node_id` so the
-            // `wire::compat` warn emitted on Unknown-variant decode
-            // is labelled with the actual peer, not the
-            // pre-handshake placeholder (audit:
-            // wire-message-other-variant-silent).
-            read_message_authenticated_observed(reader, key, peer_node_id).await
+            if use_encryption {
+                read_message_encrypted_observed(reader, key, peer_node_id).await
+            } else {
+                read_message_authenticated_observed(reader, key, peer_node_id).await
+            }
         } else {
             read_message_observed(reader, peer_node_id).await
         } {
@@ -1421,7 +1447,11 @@ async fn connection_loop(
                 let response =
                     handle_request_in_loop(&msg, handle, peer_node_id, rate_limiter).await;
                 if let Some(key) = session_key {
-                    write_message_authenticated(writer, &response, key).await?;
+                    if use_encryption {
+                        write_message_encrypted(writer, &response, key).await?;
+                    } else {
+                        write_message_authenticated(writer, &response, key).await?;
+                    }
                 } else {
                     write_message(writer, &response).await?;
                 }
@@ -1617,6 +1647,106 @@ pub async fn write_message_authenticated(
 /// Read a framed message (4-byte length + JSON) from a TCP stream, pre-handshake.
 ///
 /// SECURITY: this is the entry point for every read that happens *before* the peer has authenticated (inbound `Handshake`, outbound `HandshakeAck`), so the declared frame length is capped at [`MAX_PREHANDSHAKE_MESSAGE_SIZE`] — the cap is enforced before the body buffer is allocated, so an unauthenticated peer cannot pin a `MAX_MESSAGE_SIZE`-sized allocation by claiming a huge frame and stalling.
+
+/// SECURITY: Write an AES-256-GCM encrypted framed message.
+pub async fn write_message_encrypted(
+    writer: &mut tokio::net::tcp::OwnedWriteHalf,
+    msg: &WireMessage,
+    session_key: &str,
+) -> Result<(), WireError> {
+    let json_bytes = serde_json::to_vec(msg)?;
+    
+    let key_bytes = hex::decode(session_key)
+        .map_err(|_| WireError::HandshakeFailed("Invalid session key hex".into()))?;
+    if key_bytes.len() != 32 {
+        return Err(WireError::HandshakeFailed("Session key must be 32 bytes for AES-256".into()));
+    }
+    
+    let cipher = <Aes256Gcm as aes_gcm::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
+    
+    let mut nonce_bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    let encrypted = cipher.encrypt(nonce, json_bytes.as_ref())
+        .map_err(|_| WireError::HandshakeFailed("Encryption failed".into()))?;
+        
+    let total_len = nonce_bytes.len() + encrypted.len();
+    let len_bytes = (total_len as u32).to_be_bytes();
+    
+    writer.write_all(&len_bytes).await?;
+    writer.write_all(&nonce_bytes).await?;
+    writer.write_all(&encrypted).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// SECURITY: Read an AES-256-GCM encrypted framed message.
+pub async fn read_message_encrypted_observed(
+    reader: &mut tokio::net::tcp::OwnedReadHalf,
+    session_key: &str,
+    peer_node_id: &str,
+) -> Result<WireMessage, WireError> {
+    let mut header = [0u8; 4];
+    match reader.read_exact(&mut header).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            return Err(WireError::ConnectionClosed);
+        }
+        Err(e) => return Err(WireError::Io(e)),
+    }
+
+    let len = decode_length(&header);
+    if len > MAX_MESSAGE_SIZE {
+        return Err(WireError::MessageTooLarge {
+            size: len,
+            max: MAX_MESSAGE_SIZE,
+        });
+    }
+
+    if len < 12 + 16 + 2 {
+        return Err(WireError::HandshakeFailed("Message too short for encrypted frame".into()));
+    }
+
+    let mut frame = vec![0u8; len as usize];
+    reader.read_exact(&mut frame).await?;
+
+    let nonce_bytes = &frame[..12];
+    let encrypted = &frame[12..];
+
+    let key_bytes = hex::decode(session_key)
+        .map_err(|_| WireError::HandshakeFailed("Invalid session key hex".into()))?;
+    if key_bytes.len() != 32 {
+        return Err(WireError::HandshakeFailed("Session key must be 32 bytes for AES-256".into()));
+    }
+    
+    let cipher = <Aes256Gcm as aes_gcm::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+
+    let decrypted = cipher.decrypt(nonce, encrypted)
+        .map_err(|_| WireError::HandshakeFailed("AES-GCM decryption/authentication failed".into()))?;
+
+    let msg = decode_message(&decrypted)?;
+    if let Some(unk) = classify_unknown(&decrypted, &msg) {
+        warn!(
+            target: "wire::compat",
+            peer = %peer_node_id,
+            msg_id = %msg.id,
+            level = %unk.level.name(),
+            raw_tag = %unk.raw_tag,
+            "ignoring unrecognised wire variant from peer"
+        );
+    }
+    Ok(msg)
+}
+
+pub async fn read_message_encrypted_pre_handshake(
+    reader: &mut tokio::net::tcp::OwnedReadHalf,
+    session_key: &str,
+) -> Result<WireMessage, WireError> {
+    read_message_encrypted_observed(reader, session_key, "<pre-handshake>").await
+}
+
 pub async fn read_message(
     reader: &mut tokio::net::tcp::OwnedReadHalf,
 ) -> Result<WireMessage, WireError> {
@@ -1866,6 +1996,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node1, _task1) = PeerNode::start(config1, registry1.clone(), handle1.clone())
             .await
@@ -1881,6 +2012,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node2, _task2) = PeerNode::start(config2, registry2.clone(), handle2.clone())
             .await
@@ -1917,6 +2049,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node, _task) = PeerNode::start(config, registry.clone(), handle.clone())
             .await
@@ -1963,6 +2096,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node, _task) = PeerNode::start(config, registry, handle).await.unwrap();
 
@@ -1997,6 +2131,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node, _task) = PeerNode::start(config, registry, handle).await.unwrap();
 
@@ -2033,6 +2168,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node1, _task1) = PeerNode::start(config1, registry1.clone(), handle1.clone())
             .await
@@ -2047,6 +2183,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node2, _task2) = PeerNode::start(config2, registry2.clone(), handle2.clone())
             .await
@@ -2310,6 +2447,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0,
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node, _task) = PeerNode::start(config, registry, handle).await.unwrap();
 
@@ -2439,6 +2577,7 @@ mod tests {
             shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0,
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         }
     }
 

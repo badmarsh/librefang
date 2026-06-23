@@ -6860,6 +6860,16 @@ impl Default for MemoryDecayConfig {
     }
 }
 
+/// How encryption is applied to wire protocol frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameEncryptionMode {
+    #[default]
+    Plaintext,
+    Required,
+    Opportunistic,
+}
+
 /// Network layer configuration.
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
@@ -6894,6 +6904,9 @@ pub struct NetworkConfig {
     ///  to bound the LLM spend a single federated peer can force.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_llm_tokens_per_peer_per_hour: Option<u64>,
+    /// Frame encryption mode.
+    #[serde(default)]
+    pub frame_encryption: FrameEncryptionMode,
 }
 
 impl Default for NetworkConfig {
@@ -6906,6 +6919,7 @@ impl Default for NetworkConfig {
             shared_secret: String::new(),
             max_messages_per_peer_per_minute: 60,
             max_llm_tokens_per_peer_per_hour: None,
+            frame_encryption: FrameEncryptionMode::default(),
         }
     }
 }
@@ -6934,6 +6948,7 @@ impl std::fmt::Debug for NetworkConfig {
                 "max_llm_tokens_per_peer_per_hour",
                 &self.max_llm_tokens_per_peer_per_hour,
             )
+            .field("frame_encryption", &self.frame_encryption)
             .finish()
     }
 }

@@ -5249,6 +5249,7 @@ dependencies = [
 name = "librefang-wire"
 version = "2026.6.22-beta.22"
 dependencies = [
+ "aes-gcm 0.10.3",
  "async-trait",
  "base64 0.22.1",
  "chrono",
