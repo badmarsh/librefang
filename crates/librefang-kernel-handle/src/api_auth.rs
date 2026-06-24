@@ -7,6 +7,8 @@
 //     vault: prefix, literal) without pulling KernelConfig into that layer.
 // ============================================================================
 
+use librefang_types::config::ZeroizingString;
+
 /// A snapshot of the user-config values needed for API-key table construction.
 #[derive(Debug, Clone, Default)]
 pub struct ApiUserConfigSnapshot {
@@ -21,8 +23,8 @@ pub struct ApiUserConfigSnapshot {
 #[derive(Debug, Clone, Default)]
 pub struct DashboardRawConfig {
     pub user: String,
-    pub pass: String,
-    pub pass_hash: String,
+    pub pass: ZeroizingString,
+    pub pass_hash: ZeroizingString,
 }
 
 /// One-shot snapshot of every auth-relevant config field. Returned by
@@ -33,7 +35,7 @@ pub struct DashboardRawConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ApiAuthSnapshot {
     /// Raw `api_key` value from config (may be empty when auth is open).
-    pub api_key: String,
+    pub api_key: ZeroizingString,
     /// Raw dashboard credential strings (before env-var / vault resolution).
     pub dashboard: DashboardRawConfig,
     /// Absolute path to the daemon home directory (owned so the snapshot

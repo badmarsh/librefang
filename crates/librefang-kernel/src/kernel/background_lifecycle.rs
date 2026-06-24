@@ -992,6 +992,7 @@ impl LibreFangKernel {
             max_messages_per_peer_per_minute: cfg.network.max_messages_per_peer_per_minute,
             max_llm_tokens_per_peer_per_hour: cfg.network.max_llm_tokens_per_peer_per_hour,
             wire_config: Default::default(),
+            frame_encryption: cfg.network.frame_encryption,
         };
 
         let registry = PeerRegistry::new();

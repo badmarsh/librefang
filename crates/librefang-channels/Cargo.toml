@@ -62,6 +62,7 @@ include_dir = "0.7"
 # webhook-verifying in-process adapters; `embedded_sdk.rs` is the
 # only re-consumer.
 sha2 = { workspace = true }
+unicode-normalization = "0.1.25"
 
 # Sidecar migration cleanup: with every channel adapter moved
 # out-of-process (`librefang.sidecar.adapters.*`), the crypto and

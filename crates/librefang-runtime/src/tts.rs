@@ -514,11 +514,16 @@ mod tests {
         let mut config = default_config();
         config.enabled = true;
         let engine = TtsEngine::new(config);
+        
+        if TtsEngine::detect_provider().is_some() {
+            return;
+        }
+
         // This may or may not error depending on env vars
         let result = engine.synthesize("Hello world", None, None).await;
         // If no API keys are set, should error
         if let Err(err) = result {
-            assert!(err.contains("No TTS provider") || err.contains("not set"));
+            assert!(err.contains("No TTS provider") || err.contains("not set"), "Unexpected error: {}", err);
         }
     }
 

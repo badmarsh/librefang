@@ -34,6 +34,7 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/audit/export", axum::routing::get(audit_export))
         .route("/audit/recent", axum::routing::get(audit_recent))
         .route("/audit/verify", axum::routing::get(audit_verify))
+        .route("/audit/anchor-status", axum::routing::get(audit_anchor_status))
 }
 
 /// Filter parameters shared by `/api/audit/query` and `/api/audit/export`.
@@ -591,6 +592,24 @@ pub async fn audit_verify(State(state): State<Arc<AppState>>) -> impl IntoRespon
             }))
         }
     }
+}
+
+/// GET /api/audit/anchor-status — Get Tier-2 journal mirror anchor status.
+#[utoipa::path(get, path = "/api/audit/anchor-status", tag = "system", responses((status = 200, description = "Anchor status result", body = crate::types::JsonObject)))]
+pub async fn audit_anchor_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mirror_active = state.kernel.config_ref().audit_journal_mirror;
+    let tip = state.kernel.audit().tip_hash();
+    
+    #[cfg(target_os = "linux")]
+    let os_supported = true;
+    #[cfg(not(target_os = "linux"))]
+    let os_supported = false;
+
+    Json(serde_json::json!({
+        "mirror_active": mirror_active,
+        "latest_hash": tip,
+        "os_supported": os_supported
+    }))
 }
 
 #[cfg(test)]

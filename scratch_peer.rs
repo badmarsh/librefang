@@ -11,14 +11,13 @@
 use crate::keys::{verify_signature, Ed25519KeyPair};
 use crate::message::*;
 use crate::registry::{PeerEntry, PeerRegistry, PeerState};
-use librefang_types::config::ZeroizingString;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use aes_gcm::{aead::Aead, Aes256Gcm, Nonce};
+use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
 use rand_core::{OsRng, RngCore};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -338,15 +337,13 @@ pub struct PeerConfig {
     pub node_name: String,
     /// Pre-shared key for HMAC-SHA256 authentication.
     /// Required — OFP refuses to start without it.
-    pub shared_secret: ZeroizingString,
+    pub shared_secret: String,
     /// SECURITY (#3876): Maximum AgentMessage requests a single OFP peer may
     /// send per minute. `0` disables message rate limiting. Default: 60.
     pub max_messages_per_peer_per_minute: u32,
     /// SECURITY (#3876): Optional cumulative LLM token cap per peer per hour.
     /// `None` means unlimited. Default: None.
     pub max_llm_tokens_per_peer_per_hour: Option<u64>,
-    /// OFP Wire framing configuration.
-    pub wire_config: crate::WireConfig,
     /// Frame encryption mode.
     pub frame_encryption: librefang_types::config::FrameEncryptionMode,
 }
@@ -357,10 +354,9 @@ impl Default for PeerConfig {
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: uuid::Uuid::new_v4().to_string(),
             node_name: "librefang-node".to_string(),
-            shared_secret: ZeroizingString::default(),
+            shared_secret: String::new(),
             max_messages_per_peer_per_minute: 60,
             max_llm_tokens_per_peer_per_hour: None,
-            wire_config: crate::WireConfig::default(),
             frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         }
     }
@@ -797,7 +793,7 @@ impl PeerNode {
 
         // Read their handshake ack
         let response = read_message(&mut reader).await?;
-        let (sess_key, use_encryption) = match &response.kind {
+        let sess_key = match &response.kind {
             WireMessageKind::Response(WireResponse::HandshakeAck {
                 node_id,
                 node_name,
@@ -892,7 +888,7 @@ impl PeerNode {
                     connected_at: chrono::Utc::now(),
                     protocol_version: *protocol_version,
                 });
-                (key, use_encryption)
+                key
             }
             WireMessageKind::Response(WireResponse::Error { code, message }) => {
                 return Err(WireError::HandshakeFailed(format!(
@@ -1143,7 +1139,7 @@ impl PeerNode {
                 )));
             }
         };
-        let (peer_node_id, session_key, use_encryption) = match &msg.kind {
+        let (peer_node_id, session_key) = match &msg.kind {
             WireMessageKind::Request(WireRequest::Handshake {
                 node_id,
                 node_name,
@@ -1317,7 +1313,7 @@ impl PeerNode {
                     protocol_version: *protocol_version,
                 });
 
-                (node_id.clone(), session_key, use_encryption)
+                (node_id.clone(), session_key)
             }
             // SECURITY: Reject all non-Handshake initial messages.
             // Clients MUST complete HMAC-authenticated handshake before sending
@@ -1642,7 +1638,6 @@ pub async fn write_message_authenticated(
     let len_bytes = (total_len as u32).to_be_bytes();
 
     writer.write_all(&len_bytes).await?;
-    writer.write_all(&[0u8]).await?; // Mode = 0
     writer.write_all(&json_bytes).await?;
     writer.write_all(mac_bytes).await?;
     writer.flush().await?;
@@ -1667,7 +1662,7 @@ pub async fn write_message_encrypted(
         return Err(WireError::HandshakeFailed("Session key must be 32 bytes for AES-256".into()));
     }
     
-    let cipher = <Aes256Gcm as aes_gcm::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
     
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
@@ -1725,7 +1720,7 @@ pub async fn read_message_encrypted_observed(
         return Err(WireError::HandshakeFailed("Session key must be 32 bytes for AES-256".into()));
     }
     
-    let cipher = <Aes256Gcm as aes_gcm::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
     let nonce = Nonce::from_slice(nonce_bytes);
 
     let decrypted = cipher.decrypt(nonce, encrypted)
@@ -1784,7 +1779,7 @@ async fn read_message_bounded(
     peer_node_id: &str,
     max_size: u32,
 ) -> Result<WireMessage, WireError> {
-    let mut header = [0u8; 5];
+    let mut header = [0u8; 4];
     match reader.read_exact(&mut header).await {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -1839,7 +1834,7 @@ pub async fn read_message_authenticated_observed(
     session_key: &str,
     peer_node_id: &str,
 ) -> Result<WireMessage, WireError> {
-    let mut header = [0u8; 5];
+    let mut header = [0u8; 4];
     match reader.read_exact(&mut header).await {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
@@ -1995,14 +1990,12 @@ mod tests {
         let handle1 = Arc::new(TestHandle::new());
 
         let config1 = PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-1".to_string(),
             node_name: "kernel-1".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node1, _task1) = PeerNode::start(config1, registry1.clone(), handle1.clone())
             .await
@@ -2012,14 +2005,12 @@ mod tests {
         let registry2 = PeerRegistry::new();
         let handle2 = Arc::new(TestHandle::new());
         let config2 = PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-2".to_string(),
             node_name: "kernel-2".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node2, _task2) = PeerNode::start(config2, registry2.clone(), handle2.clone())
             .await
@@ -2050,14 +2041,12 @@ mod tests {
         let handle = Arc::new(TestHandle::new());
 
         let config = PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node, _task) = PeerNode::start(config, registry.clone(), handle.clone())
             .await
@@ -2098,14 +2087,12 @@ mod tests {
         let handle = Arc::new(TestHandle::new());
 
         let config = PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node, _task) = PeerNode::start(config, registry, handle).await.unwrap();
 
@@ -2134,14 +2121,12 @@ mod tests {
         let handle = Arc::new(TestHandle::new());
 
         let config = PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node, _task) = PeerNode::start(config, registry, handle).await.unwrap();
 
@@ -2172,14 +2157,12 @@ mod tests {
         let handle1 = Arc::new(TestHandle::new());
 
         let config1 = PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-a".to_string(),
             node_name: "kernel-a".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node1, _task1) = PeerNode::start(config1, registry1.clone(), handle1.clone())
             .await
@@ -2188,14 +2171,12 @@ mod tests {
         let registry2 = PeerRegistry::new();
         let handle2 = Arc::new(TestHandle::new());
         let config2 = PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "node-b".to_string(),
             node_name: "kernel-b".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0, // unlimited for tests
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node2, _task2) = PeerNode::start(config2, registry2.clone(), handle2.clone())
             .await
@@ -2426,10 +2407,10 @@ mod tests {
 
         // Declare a 16 MiB frame (the transport-layer MAX_MESSAGE_SIZE,
         // which the pre-fix code would have allocated) and send no body.
-        let mut header = [0u8; 5];
-        header[0..4].copy_from_slice(&MAX_MESSAGE_SIZE.to_be_bytes());
-        header[4] = 0;
-        client_writer.write_all(&header).await.unwrap();
+        client_writer
+            .write_all(&MAX_MESSAGE_SIZE.to_be_bytes())
+            .await
+            .unwrap();
         client_writer.flush().await.unwrap();
 
         let result = tokio::time::timeout(Duration::from_secs(5), read_message(&mut server_reader))
@@ -2453,23 +2434,21 @@ mod tests {
         let registry = PeerRegistry::new();
         let handle = Arc::new(TestHandle::new());
         let config = PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: "server".to_string(),
             node_name: "server-node".to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0,
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         };
         let (node, _task) = PeerNode::start(config, registry, handle).await.unwrap();
 
         let stream = TcpStream::connect(node.local_addr()).await.unwrap();
         let (mut reader, mut writer) = stream.into_split();
-        let mut header = [0u8; 5];
-        header[0..4].copy_from_slice(&MAX_MESSAGE_SIZE.to_be_bytes());
-        header[4] = 0;
-        writer.write_all(&header).await.unwrap();
+        writer
+            .write_all(&MAX_MESSAGE_SIZE.to_be_bytes())
+            .await
+            .unwrap();
         writer.flush().await.unwrap();
 
         // The server must reject from the header alone and close — the
@@ -2584,14 +2563,12 @@ mod tests {
 
     fn test_config(node_id: &str, node_name: &str) -> PeerConfig {
         PeerConfig {
-            wire_config: Default::default(),
             listen_addr: "127.0.0.1:0".parse().unwrap(),
             node_id: node_id.to_string(),
             node_name: node_name.to_string(),
-            shared_secret: "test-secret-for-unit-tests".to_string().into(),
+            shared_secret: "test-secret-for-unit-tests".to_string(),
             max_messages_per_peer_per_minute: 0,
             max_llm_tokens_per_peer_per_hour: None,
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         }
     }
 

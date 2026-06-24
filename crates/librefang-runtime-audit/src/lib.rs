@@ -15,7 +15,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 /// Default hard cap on the number of audit entries kept in memory when no
@@ -102,6 +102,9 @@ pub enum AuditAction {
     /// carries the URL and agent name. Subsequent `/api/a2a/send` and
     /// `/api/a2a/tasks/.../status` calls to that URL are now permitted.
     A2aTrusted,
+    /// A tainted value attempted to cross an execution boundary into a sink
+    /// that blocks one or more of its labels.
+    TaintSinkBlocked,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -301,6 +304,8 @@ pub struct AuditLog {
     /// `entries` mutex — important because the setter is called from
     /// boot before any append-path contention exists.
     max_in_memory_entries: AtomicUsize,
+    /// Mirror Tier-2 `[audit]` trace events directly to `journald` (Linux only).
+    journal_mirror: AtomicBool,
 }
 
 /// Per-trim summary returned by [`AuditLog::trim`].
@@ -348,7 +353,13 @@ impl AuditLog {
             anchor_path: None,
             chain_anchor: Mutex::new(None),
             max_in_memory_entries: AtomicUsize::new(0),
+            journal_mirror: AtomicBool::new(false),
         }
+    }
+
+    /// Enable or disable journal mirroring.
+    pub fn set_journal_mirror(&self, enabled: bool) {
+        self.journal_mirror.store(enabled, Ordering::Relaxed);
     }
 
     /// Atomically rewrite the anchor file with the given `seq:hash`.
@@ -548,6 +559,9 @@ impl AuditLog {
                         "PermissionDenied" => AuditAction::PermissionDenied,
                         "BudgetExceeded" => AuditAction::BudgetExceeded,
                         "RetentionTrim" => AuditAction::RetentionTrim,
+                        "A2aDiscovered" => AuditAction::A2aDiscovered,
+                        "A2aTrusted" => AuditAction::A2aTrusted,
+                        "TaintSinkBlocked" => AuditAction::TaintSinkBlocked,
                         _ => AuditAction::ToolInvoke, // fallback
                     };
                     let seq_raw: i64 = row.get(0)?;
@@ -599,6 +613,7 @@ impl AuditLog {
             anchor_path: None,
             chain_anchor: Mutex::new(recovered_anchor),
             max_in_memory_entries: AtomicUsize::new(0),
+            journal_mirror: AtomicBool::new(false),
         };
 
         // Verify chain integrity on load. Logged at WARN: the message itself
@@ -806,6 +821,22 @@ impl AuditLog {
             // path's signature.  The next record() will reuse the same
             // `seq` because `entries.last()` is unchanged.
             return hash;
+        }
+
+        // Mirror Tier-2 event if enabled
+        if self.journal_mirror.load(std::sync::atomic::Ordering::Relaxed) {
+            #[cfg(target_os = "linux")]
+            {
+                tracing::info!(
+                    audit_tier = "tier2",
+                    audit_event_hash = %hash,
+                    audit_prev_hash = %entry.prev_hash,
+                    audit_entry_id = %uuid::Uuid::new_v4(),
+                    audit_agent_id = %entry.agent_id,
+                    audit_event_type = %entry.action.to_string(),
+                    "Audit event recorded"
+                );
+            }
         }
 
         entries.push(entry);

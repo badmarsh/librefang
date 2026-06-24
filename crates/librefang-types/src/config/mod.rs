@@ -1202,7 +1202,7 @@ admin_role = "admin"
         let config = KernelConfig {
             network_enabled: true,
             network: NetworkConfig {
-                shared_secret: String::new(),
+                shared_secret: ZeroizingString::default(),
                 ..Default::default()
             },
             ..Default::default()
