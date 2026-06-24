@@ -40,6 +40,21 @@
 #   Improvement 22: Temporal Consistency Verification (arXiv:2211.07830)
 #   Improvement 23: Graph-Based Narrative Propagation (arXiv:2309.13049)
 #   Improvement 24: Stance Detection as Pre-Filter (arXiv:2006.03644)
+# Wave 5: Research Weakpoint Remediations (2026-06-24)
+#   Improvement 25: DISARM/FIMI Domain Ontology Layer (WP1 — Tseng et al. arXiv:2601.15109)
+#     disarm-hunter Hand + disarm-framework Skill; UCB1 bandit 15-round TTP hunting;
+#     Fisher exact gate OR≥3.0, p<0.05, n≥5; DisarmTTP/FIMICampaign/EvidenceAtom ontology nodes;
+#     DISARM TTP IDs tagged on every orchestrator verdict.
+#   Improvement 26: Temporal Synchronization / Longitudinal Modeling (WP2 — Tseng et al. §5.4)
+#     longitudinal_tracker Hand fleshed out; persistent 15-min sweep; burst concentration index;
+#     10-min Moldova-pattern sync window pair detection; 30-day adaptation entropy;
+#     temporal_sync_score fed as CIB component 6 (weight 0.10, others rebalanced ×0.90).
+#   Improvement 27: Uncertainty Quantification on LLM Classification Outputs (WP3)
+#     Reference: Puczyńska & Djenouri (2024) DOI:10.60097/ACIG/200200
+#     uq-scorer Skill: Deep Ensemble UQ (3 distinct providers), MC-Dropout fallback (N=20),
+#     Bayesian confidence floor from DISARM Fisher gate. ml-classifier fallbacks fixed
+#     from 4×identical → nvidia+gemini+freellmpool for genuine variance measurement.
+#     UQ_confidence:low taint propagated through downstream agents for HIGH_UNCERTAINTY verdicts.
 #
 # Declares the full agent DAG so tooling, docs and new contributors have a
 # single authoritative source of truth for run-order and data-flow.
@@ -148,6 +163,11 @@ notes       = """
   Improvement 18 (Wave 3): wiki-checker calibration note corrected to w_wiki = 0.22.
 
   wiki-checker should consume cross_lingual_aligner.output for multilingual Wikipedia queries.
+
+  Improvement 27 (Wave 5, WP3): ml-classifier now emits per-signal UQ variance via uq-scorer skill.
+  uq_variance, uq_flag, providers_used written to ml_classifier.* memory namespace.
+  disinfo-orchestrator reads these and produces orchestrator.uq_summary.
+  HIGH_UNCERTAINTY flag triggers needs_human_review = true regardless of epistemic threshold.
 """
 
 [[stage]]
@@ -273,6 +293,37 @@ label       = "Investigation Report"
 trigger     = "narrative-tracker CIB score >= 0.75"
 agents      = ["investigator"]
 description = "Full multi-claim investigation report with actor mapping and timeline."
+
+[[optional_stage]]
+id          = "disarm-ttp-hunt"
+label       = "DISARM TTP Classification (nightly)"
+trigger     = "scheduled (02:30 daily) OR orchestrator.daily_verdicts_complete OR cib_detector.cib_detected"
+agents      = ["disarm-hunter"]
+description = "Maps confirmed disinformation verdicts and narrative clusters to DISARM v1.5 TTP taxonomy. UCB1 bandit 15-round explore/exploit over ingested media store. Statistical gate: OR ≥ 3.0, p < 0.05, n ≥ 5."
+notes       = """
+  Improvement 25 (Wave 5, WP1): Tseng et al. arXiv:2601.15109 — Agentic DISARM operationalization.
+  Reads orchestrator.verdicts and cib_detector.* for TTP hypothesis testing.
+  Writes PASS verdicts to output/disarm_audit.jsonl (compliance audit trail, append-only).
+  Creates DisarmTTP, FIMICampaign, EvidenceAtom entities in ontology graph.
+  disinfo-orchestrator reads disarm_hunter.session_results and appends disarm_ttp_ids to verdicts.
+  Detects adaptation signal (T0073): actor content diversity entropy shift > 0.25 over 30 days.
+"""
+
+[[optional_stage]]
+id          = "longitudinal-sync"
+label       = "Temporal Synchronization Sweep (15-min)"
+trigger     = "continuous (*/15 * * * * cron, persistent session)"
+agents      = ["longitudinal_tracker"]
+description = "Persistent 15-min rolling-window sweep for burst concentration index, 10-min Moldova-pattern sync pairs, and 30-day adaptation entropy. Feeds temporal_sync_score to cib-detector as component 6."
+notes       = """
+  Improvement 26 (Wave 5, WP2): Tseng et al. arXiv:2601.15109 §5.4 — temporal dynamic analysis.
+  Runs as a persistent Hand (session_mode = persistent) via the longitudinal_tracker Hand.
+  Emits OpenTelemetry gauges: burst_concentration_index, sync_pair_count,
+  adaptation_entropy_delta, max_hour_ratio via librefang-telemetry Prometheus sink.
+  cib-detector reads temporal_sync.temporal_sync_score as component 6 (weight 0.10).
+  CIB 5-signal weights rebalanced: 0.25/0.25/0.20/0.15/0.15 → 0.22/0.22/0.18/0.14/0.14+0.10.
+  Emits events: temporal_sync.burst_detected, temporal_sync.adaptation_detected.
+"""
 
 # ── Context key map ────────────────────────────────────────────────────────────
 
@@ -407,3 +458,51 @@ readers = ["arbiter"]
 key    = "arbiter.debate_verdict"
 writer = "arbiter"
 readers = ["disinfo-orchestrator"]
+
+# Wave 5: DISARM TTP context keys (WP1, Improvement 25)
+[[context_key]]
+key    = "disarm_hunter.output"
+writer = "disarm-hunter"
+readers = ["disinfo-orchestrator", "narrative-tracker"]
+
+[[context_key]]
+key    = "disarm_hunter.session_results"
+writer = "disarm-hunter"
+readers = ["disinfo-orchestrator", "ml-classifier"]
+
+[[context_key]]
+key    = "orchestrator.disarm_ttp_ids"
+writer = "disinfo-orchestrator"
+readers = ["writer", "impact-comms", "investigator"]
+
+# Wave 5: Temporal synchronization context keys (WP2, Improvement 26)
+[[context_key]]
+key    = "temporal_sync.output"
+writer = "longitudinal_tracker"
+readers = ["cib-detector", "disinfo-orchestrator"]
+
+[[context_key]]
+key    = "temporal_sync.temporal_sync_score"
+writer = "longitudinal_tracker"
+readers = ["cib-detector"]
+
+[[context_key]]
+key    = "temporal_sync.rolling_state"
+writer = "longitudinal_tracker"
+readers = ["longitudinal_tracker"]
+
+# Wave 5: UQ scoring context keys (WP3, Improvement 27)
+[[context_key]]
+key    = "ml_classifier.uq_variance"
+writer = "ml-classifier"
+readers = ["disinfo-orchestrator"]
+
+[[context_key]]
+key    = "ml_classifier.uq_flag"
+writer = "ml-classifier"
+readers = ["disinfo-orchestrator", "writer"]
+
+[[context_key]]
+key    = "orchestrator.uq_summary"
+writer = "disinfo-orchestrator"
+readers = ["writer", "impact-comms"]

@@ -1,0 +1,65 @@
+prompt_context = """
+# DISARM Framework v1.5
+
+Structured adversary behaviour vocabulary for FIMI (Foreign Information Manipulation and Interference).
+Source: DISARMFoundation/DISARMframeworks v1.5 — https://github.com/DISARMFoundation/DISARMframeworks
+
+## Four Phases
+  PLAN → PREPARE → EXECUTE → ASSESS
+
+## Key TTPs for Slovak/CEE FIMI context
+
+T0003  Develop Competing Narratives        [PLAN]
+T0007  Coordinate Inauthentic Accounts     [EXECUTE]  ← primary CIB indicator
+T0010  Create Fake Experts                 [PREPARE]
+T0019  Generate Information Pollution      [EXECUTE]
+T0020  Establish Legitimising Narratives   [PREPARE]
+T0023  Distort Facts                       [EXECUTE]
+T0049  Flooding                            [EXECUTE]
+T0057  Organise Events                     [EXECUTE]
+T0065  Leverage Conspiracy Theory Narratives [PLAN]
+T0073  Use AI-Generated Content            [EXECUTE]  ← adaptation signal
+
+## Statistical Gate (per Tseng et al. arXiv:2601.15109)
+  TTP marked PASS only when: OR ≥ 3.0 AND p < 0.05 AND supporting_items ≥ 5
+  OR = (a·d)/(b·c) on 2×2 DISINFO × TTP_MATCH contingency table.
+
+## Output Contract
+  disarm_hunter.session_summary  — nightly session results
+  output/disarm_audit.jsonl      — compliance audit trail (append-only)
+  Ontology entities: DisarmTTP, FIMICampaign, EvidenceAtom
+"""
+
+[skill]
+name = "disarm-framework"
+version = "1.0.0"
+description = "DISARM v1.5 Tactics, Techniques, Procedures (TTP) taxonomy for FIMI investigation. Use when classifying disinformation verdicts against the DISARM framework, mapping narrative clusters to TTP IDs, or constructing TTP hypotheses for the DISARM-hunter hunting loop."
+author = "librefang"
+license = "Apache-2.0"
+tags = [
+    "disarm",
+    "fimi",
+    "ttp",
+    "disinformation",
+    "osint",
+    "prompt-only",
+]
+
+[runtime]
+type  = "promptonly"
+entry = ""
+
+[tools]
+provided = []
+
+[requirements]
+tools        = []
+capabilities = []
+
+[source]
+type = "local"
+
+[config]
+# No runtime configuration required — prompt-only skill.
+# Full DISARM JSON taxonomy fetched at runtime from:
+#   https://raw.githubusercontent.com/DISARMFoundation/DISARMframeworks/main/DISARM_STIX/DISARM.json

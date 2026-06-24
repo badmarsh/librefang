@@ -22,6 +22,14 @@
 #     Logged separately in output/external_claims_audit.jsonl for compliance auditing.
 #     External partner claims are treated as trusted pipeline input but do NOT bypass
 #     the ensemble — they enter as a normal claim and are logged with source org metadata.
+# WP1 (DISARM layer):
+#   Improvement 25: DISARM TTP ID tagging on every verdict (Tseng et al. arXiv:2601.15109)
+#     Reads disarm_hunter.session_results; appends disarm_ttp_ids to orchestrator.verdicts.
+# WP3 (Uncertainty Quantification):
+#   Improvement 27: Per-signal UQ variance summary (Puczyńska & Djenouri DOI:10.60097/ACIG/200200)
+#     Reads uq_variance from ml-classifier (and future UQ-enabled agents).
+#     Writes orchestrator.uq_summary with per-signal variance table.
+#     HIGH_UNCERTAINTY signals propagate UQ_confidence: low taint to downstream agents.
 name        = "disinfo-orchestrator"
 version     = "3.1.0"
 description = "MCP orchestrator: 5-agent weighted ensemble with Bayesian adaptation, source credibility signal, structured uncertainty quantification. Wave 3: instance-hardness routing, adversarial mini-debate, F2-score weighting. Wave 5: A2A external claim federation trigger."
@@ -43,8 +51,8 @@ context_window = 131072
 temperature = 0.1
 [capabilities]
 tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
-memory_read  = ["claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "wiki_checker.*", "triplet_fact_checker.*", "source_rater.*", "ensemble.*", "cib_detector.*", "arbiter.*", "feedback.*"]
-memory_write = ["orchestrator.*", "ensemble.*", "arbiter.*"]
+memory_read  = ["claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "wiki_checker.*", "triplet_fact_checker.*", "source_rater.*", "ensemble.*", "cib_detector.*", "arbiter.*", "feedback.*", "disarm_hunter.*", "temporal_sync.*"]
+memory_write = ["orchestrator.*", "ensemble.*", "arbiter.*"]  # includes orchestrator.disarm_ttp_ids, orchestrator.uq_summary
 
 
 [[fallback_models]]
@@ -151,6 +159,66 @@ Final verdict thresholds:
   P_fake >= 0.65  → DISINFORMATION
   P_fake >= 0.45  → UNCERTAIN (recheck scheduled)
   P_fake <  0.45  → CREDIBLE
+
+=======================================================================
+DISARM TTP TAGGING (WP1 — Improvement 25)
+=======================================================================
+Reference: Tseng et al. (2026) arXiv:2601.15109
+
+After computing each verdict, check if the DISARM-hunter has run this session:
+  disarm_results = memory_recall("disarm_hunter.session_results")
+
+If session_results is non-empty and the current claim's narrative_cluster matches
+any NarrativeCluster in disarm_hunter.session_results:
+  disarm_ttp_ids = [ttp.ttp_id for ttp in session_results if ttp.verdict == "PASS"]
+  disarm_phases  = [ttp.phase for ttp in disarm_ttp_ids]
+
+Append to orchestrator.verdicts for each claim:
+  "disarm_ttp_ids":   [<DISARM TTP IDs, e.g. "T0007", "T0023">]
+  "disarm_phases":    [<phases, e.g. "EXECUTE">]
+  "disarm_session_date": "<ISO8601 of DISARM-hunter session>"
+
+Also write:
+  memory_store("orchestrator.disarm_ttp_ids", <JSON array of TTP IDs for current batch>)
+
+If disarm_hunter memory is unavailable: set disarm_ttp_ids = [] (graceful fallback).
+NEVER block verdict publication waiting for DISARM results.
+
+=======================================================================
+PER-SIGNAL UQ VARIANCE SUMMARY (WP3 — Improvement 27)
+=======================================================================
+Reference: Puczyńska & Djenouri (2024) DOI:10.60097/ACIG/200200
+
+After collecting all 5 signals, read UQ variance from each agent that writes it:
+  ml_uq_variance  = memory_recall("ml_classifier.uq_variance")   # float or null
+  ml_uq_flag      = memory_recall("ml_classifier.uq_flag")        # HIGH|MODERATE|LOW or null
+
+Compute UQ summary:
+  per_signal_variance = {
+    "ml_classifier": ml_uq_variance,  # others will be null until they adopt uq-scorer skill
+  }
+  high_uncertainty_signals = [agent for agent, variance in per_signal_variance
+                               if uq_flag == "HIGH_UNCERTAINTY"]
+  needs_human_review = len(high_uncertainty_signals) > 0
+
+If ml_uq_flag == "HIGH_UNCERTAINTY":
+  Override needs_human_review = true (regardless of epistemic threshold).
+  This ensures that a highly uncertain ML signal always triggers human review,
+  even when ensemble epistemic uncertainty is below 0.40.
+
+Write:
+  memory_store("orchestrator.uq_summary", {
+    "per_signal_variance":     per_signal_variance,
+    "high_uncertainty_signals": high_uncertainty_signals,
+    "needs_human_review":       needs_human_review,
+    "bayesian_floor_applied":  <bool — true if DISARM confidence floor raised any signal score>
+  })
+
+Taint propagation:
+  Any downstream action triggered by a HIGH_UNCERTAINTY verdict carries the tag:
+  UQ_confidence: low
+  This tag is carried through writer, impact-comms, and any A2A verdict return.
+  Human review queue filters on needs_human_review = true.
 
 =======================================================================
 A2A EXTERNAL CLAIM HANDLING (Wave 5 — Improvement 18)

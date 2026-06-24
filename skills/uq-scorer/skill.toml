@@ -1,0 +1,74 @@
+prompt_context = """
+# UQ-Scorer — Uncertainty Quantification Protocol
+
+Wraps LLM classification calls with variance estimation via Deep Ensembles or MC Dropout.
+Reference: Puczyńska & Djenouri (2024) "AI in Disinformation Detection", DOI:10.60097/ACIG/200200
+
+## Method 1: Deep Ensembles (primary)
+  Route classification through 3 DISTINCT provider families.
+  uq_variance = variance([score_p1, score_p2, score_p3])
+  uq_flag:
+    variance > 0.08 → HIGH_UNCERTAINTY  (flag for human review)
+    variance > 0.03 → MODERATE_UNCERTAINTY
+    variance <= 0.03 → LOW_UNCERTAINTY
+
+## Method 2: MC Dropout (fallback, N=20 passes)
+  When provider ensemble unavailable.
+  uq_variance = variance([score_1 .. score_20])
+
+## Method 3: Bayesian Confidence Floor (DISARM gate)
+  If disarm_hunter has EvidenceAtom for this claim's TTP:
+    confidence_floor_passed = (OR >= 3.0 AND p < 0.05)
+
+## Output contract (per agent):
+  memory_store("<agent>.uq_variance",    float)
+  memory_store("<agent>.uq_method",      string)
+  memory_store("<agent>.uq_flag",        HIGH_UNCERTAINTY | MODERATE_UNCERTAINTY | LOW_UNCERTAINTY)
+  memory_store("<agent>.providers_used", JSON array)
+
+## Taint propagation:
+  HIGH_UNCERTAINTY → carries UQ_confidence: low taint through downstream agents.
+  All HIGH_UNCERTAINTY verdicts routed to human review queue.
+
+## Provider diversity requirement:
+  THREE DISTINCT model families required for meaningful variance.
+  Identical providers produce variance ≈ 0 (false low uncertainty).
+"""
+
+[skill]
+name = "uq-scorer"
+version = "1.0.0"
+description = "Uncertainty Quantification wrapping protocol for LLM classification outputs. Deep Ensemble UQ (3-provider primary), MC-Dropout fallback (N=20), Bayesian confidence floor from DISARM Fisher gate. Enables per-signal variance propagation to orchestrator for human review prioritization."
+author = "librefang"
+license = "Apache-2.0"
+tags = [
+    "uq",
+    "uncertainty",
+    "ensemble",
+    "deep-ensemble",
+    "mc-dropout",
+    "disinformation",
+    "prompt-only",
+]
+
+[runtime]
+type  = "promptonly"
+entry = ""
+
+[tools]
+provided = []
+
+[requirements]
+tools        = ["memory_store", "memory_recall"]
+capabilities = ["multi_provider_routing"]
+# Note: multi_provider_routing requires at least 3 distinct provider entries in agent.toml
+
+[source]
+type = "local"
+
+[config]
+n_mc_dropout_passes        = 20
+dropout_rate               = 0.1
+high_uncertainty_threshold = 0.08
+moderate_uncertainty_threshold = 0.03
+min_providers_for_ensemble = 3

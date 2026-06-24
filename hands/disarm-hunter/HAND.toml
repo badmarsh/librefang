@@ -1,0 +1,26 @@
+[hand]
+name = "disarm-hunter"
+description = "Nightly DISARM TTP hunting agent — explore/exploit multi-arm bandit over the ingested media SQLite store. Maps pipeline verdicts to DISARM v1.5 Tactics, Techniques, Procedures; applies Fisher's exact test statistical gate (OR ≥ 3.0, p < 0.05) before marking any TTP PASS."
+system_prompt_file = "system_prompt.md"
+schedule = "0 2 * * *"
+session_mode = "persistent"
+provider = "nvidia"
+model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+
+# References:
+#   Tseng et al. (2026) arXiv:2601.15109 — Agentic Operationalization of DISARM for FIMI
+#   Tseng et al. (ICWSM 2024 Workshop) — LLM Agent for Disinformation Detection (DISARM)
+#   DISARMFoundation/DISARMframeworks v1.5 — https://github.com/DISARMFoundation/DISARMframeworks
+
+[hand.tools]
+mcp_servers = ["filesystem", "ontology"]
+web_search  = false
+url_fetch   = true
+memory_read  = true
+memory_write = true
+
+[hand.channels]
+output = ["dashboard"]
+
+[hand.skills]
+skills = ["disarm-framework", "ontology"]

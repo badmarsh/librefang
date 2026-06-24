@@ -61,6 +61,56 @@
     "BELONGS_TO":   { "from": "Claim",           "to": "NarrativeCluster", "description": "Claim is part of a narrative cluster" },
     "AMPLIFIED_BY": { "from": "Claim",           "to": "Actor",           "description": "Actor amplified/shared the claim" },
     "CITED_BY":     { "from": "Source",          "to": "Claim",           "description": "Source was cited as evidence for claim" },
-    "MEMBER_OF":    { "from": "Actor",           "to": "NarrativeCluster", "description": "Actor is a known participant in this narrative" }
+    "MEMBER_OF":    { "from": "Actor",           "to": "NarrativeCluster", "description": "Actor is a known participant in this narrative" },
+    "MAPPED_TO_TTP":      { "from": "NarrativeCluster", "to": "DisarmTTP",       "description": "Narrative cluster maps to this DISARM TTP" },
+    "PART_OF_CAMPAIGN":   { "from": "DisarmTTP",        "to": "FIMICampaign",    "description": "TTP is part of a broader FIMI campaign" },
+    "SUPPORTS_TTP_CLAIM": { "from": "Claim",            "to": "EvidenceAtom",    "description": "Claim is supporting evidence for a DISARM TTP atomic hypothesis" },
+    "REFUTES_TTP_CLAIM":  { "from": "Claim",            "to": "EvidenceAtom",    "description": "Claim refutes a DISARM TTP atomic hypothesis" }
+  },
+  "_disarm_nodes_comment": "Nodes below added by WP1: DISARM/FIMI domain ontology layer (Tseng et al. arXiv:2601.15109)",
+  "disarm_nodes": {
+    "DisarmTTP": {
+      "fields": {
+        "id":             { "type": "uuid",     "required": true },
+        "ttp_id":         { "type": "string",   "required": true, "description": "DISARM ID e.g. T0007" },
+        "name":           { "type": "string",   "required": true },
+        "phase":          { "type": "enum",     "values": ["PLAN", "PREPARE", "EXECUTE", "ASSESS"], "required": true },
+        "tactic_id":      { "type": "string",   "description": "Parent tactic e.g. TA09" },
+        "first_detected": { "type": "datetime" },
+        "last_seen":      { "type": "datetime" },
+        "confidence":     { "type": "float",    "min": 0.0, "max": 1.0, "description": "Based on Fisher OR from statistical gate" },
+        "odds_ratio":     { "type": "float",    "description": "Fisher OR from 2x2 contingency table; must be >= 3.0 for ACTIVE status" },
+        "p_value":        { "type": "float",    "description": "Fisher exact p-value; must be < 0.05 for ACTIVE status" },
+        "status":         { "type": "enum",     "values": ["ACTIVE", "DORMANT", "HISTORICAL", "INSUFFICIENT_EVIDENCE"], "default": "INSUFFICIENT_EVIDENCE" }
+      },
+      "description": "A DISARM v1.5 Tactic, Technique, or Procedure detected in the monitored information environment"
+    },
+    "FIMICampaign": {
+      "fields": {
+        "id":             { "type": "uuid",     "required": true },
+        "label":          { "type": "string",   "required": true, "description": "Descriptive campaign name" },
+        "attributed_to":  { "type": "string",   "description": "Actor or state attribution if known" },
+        "ttps":           { "type": "array",    "items": "string", "description": "List of DISARM TTP IDs active in this campaign" },
+        "first_seen":     { "type": "datetime" },
+        "last_seen":      { "type": "datetime" },
+        "target_country": { "type": "string",   "description": "ISO 3166-1 alpha-2 primary target" },
+        "confidence":     { "type": "float",    "min": 0.0, "max": 1.0 }
+      },
+      "description": "A coordinated FIMI campaign spanning multiple DISARM TTPs"
+    },
+    "EvidenceAtom": {
+      "fields": {
+        "id":                { "type": "uuid",     "required": true },
+        "claim_text":        { "type": "string",   "required": true, "description": "Atomic SQL-testable assertion text" },
+        "ttp_id":            { "type": "string",   "required": true, "description": "DISARM TTP this atom tests" },
+        "verdict":           { "type": "enum",     "values": ["PASS", "INSUFFICIENT_EVIDENCE", "PENDING"], "default": "PENDING" },
+        "odds_ratio":        { "type": "float",    "description": "OR from 2x2 contingency table" },
+        "p_value":           { "type": "float",    "description": "Fisher exact p-value" },
+        "supporting_count":  { "type": "integer",  "description": "Number of content items matching atom" },
+        "session_date":      { "type": "datetime", "description": "Date of DISARM-hunter session that produced this atom" },
+        "bandit_round":      { "type": "integer",  "description": "UCB1 round number within session (1–15)" }
+      },
+      "description": "An atomic, independently verifiable evidence unit for a DISARM TTP hypothesis"
+    }
   }
 }

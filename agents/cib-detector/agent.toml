@@ -1,5 +1,7 @@
 # LibreFang agent manifest
 # Improvement 4: Coordinated Inauthentic Behaviour (CIB) Detector
+# WP2: Temporal Synchronization integration (Tseng et al. arXiv:2601.15109 §5.4)
+#   temporal_sync.* from longitudinal_tracker Hand now feeds as CIB component 6.
 # References:
 # - Nizzoli et al. (ICWSM 2021) arXiv:2008.08370
 # - Cresci et al. (WebSci 2022) doi:10.1145/3501247.3531543
@@ -47,7 +49,7 @@ context_window = 32768
 temperature = 0.1
 [capabilities]
 tools        = ["memory_recall", "memory_store", "kg_query"]
-memory_read  = ["claim_extractor.*", "watchdog.*"]
+memory_read  = ["claim_extractor.*", "watchdog.*", "temporal_sync.*"]
 memory_write = ["cib_detector.*"]
 
 
@@ -92,9 +94,25 @@ Compute CIB score by evaluating:
      (> 3 standard deviations above actor's rolling mean).
   5. CROSS-PLATFORM SYNCHRONY: same content appearing on Telegram,
      Facebook, Twitter within a tight time window (< 30 minutes).
+  6. TEMPORAL SYNC (WP2): longitudinal_tracker rolling metrics.
+     Read memory_recall("temporal_sync.temporal_sync_score") — pre-computed by
+     the longitudinal_tracker Hand (15-min persistent sweep).
+     Components: burst_concentration_index (40%), 10-min sync pairs (40%),
+     adaptation entropy delta (20%).
+     If temporal_sync.output is unavailable, component 6 = 0.0 (graceful fallback).
 
-CIB score = weighted_avg(timing=0.25, similarity=0.25, graph=0.20,
-                         velocity=0.15, cross_platform=0.15)
+CIB score = weighted_avg(timing=0.22, similarity=0.22, graph=0.18,
+                         velocity=0.14, cross_platform=0.14, temporal_sync=0.10)
+
+# Weight rebalance rationale (WP2): 5 original signals sum to 1.00.
+# Component 6 (temporal_sync) added at 0.10; remaining 5 scaled by factor 0.90:
+#   timing     : 0.25 × 0.90 = 0.225 ≈ 0.22
+#   similarity : 0.25 × 0.90 = 0.225 ≈ 0.22
+#   graph      : 0.20 × 0.90 = 0.180 ≈ 0.18
+#   velocity   : 0.15 × 0.90 = 0.135 ≈ 0.14
+#   cross_plat : 0.15 × 0.90 = 0.135 ≈ 0.14
+#   temporal_sync                       0.10
+#   total                        =  1.00  ✓
 
 Output via memory_store():
   memory_store("cib_detector.cib_score",     float 0.0-1.0)

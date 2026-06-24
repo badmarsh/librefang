@@ -1,1 +1,32 @@
+[hand]
 name = "longitudinal_tracker"
+description = "Persistent 15-minute rolling temporal synchronization agent. Detects burst concentration, 10-minute coordination windows (Moldova CIB pattern), and 30-day content diversity entropy shifts indicating bot adaptation. Writes metrics consumed by cib-detector and disinfo-orchestrator."
+system_prompt_file = "system_prompt.md"
+schedule = "*/15 * * * *"
+session_mode = "persistent"
+provider = "gemini"
+model = "gemini-2.5-flash"
+
+# References:
+#   Tseng et al. (2026) arXiv:2601.15109 §5.4 — Temporal dynamic analysis as first-class CIB signal
+#   Moldova Telegram dataset findings — bot shift from repetitive→AI-diverse over 12 months
+#   librefang-telemetry — OpenTelemetry + Prometheus for time-series metrics
+
+[hand.tools]
+mcp_servers  = []
+web_search   = false
+url_fetch    = false
+memory_read  = true
+memory_write = true
+
+[hand.channels]
+output = ["dashboard"]
+
+[hand.telemetry]
+# Emit these OpenTelemetry gauge metrics on each sweep
+metrics = [
+    "temporal_sync.burst_concentration_index",
+    "temporal_sync.sync_pair_count",
+    "temporal_sync.adaptation_entropy_delta",
+    "temporal_sync.max_hour_ratio",
+]

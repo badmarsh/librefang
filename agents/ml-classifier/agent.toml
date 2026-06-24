@@ -1,6 +1,9 @@
 # LibreFang agent manifest
 # arXiv:2508.10143 — Agent 1: ML Classifier
 # Part of fix: Fix 1 — Replace fake ml-classifier with real trained model
+# WP3: Uncertainty Quantification — uq-scorer skill added (Puczyńska & Djenouri 2024 DOI:10.60097/ACIG/200200)
+#   fallback_models now use 3 distinct provider families (nvidia, gemini, freellmpool) for
+#   genuine Deep Ensemble UQ variance — was 4×identical freellmpool/Meta-Llama-3_3-70B.
 name        = "ml-classifier"
 version     = "1.2.0"
 description = "Multilingual sequence classifier (mDeBERTa-v3/BGE-M3/NLLB) served locally via scripts/serve_ml_classifier.py (falls back to TF-IDF + Logistic Regression when PyTorch/Transformers are unavailable)."
@@ -8,7 +11,7 @@ author      = "librefang"
 module      = "builtin:http_scorer"
 tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
 
-skills = ["filesystem"]
+skills = ["filesystem", "uq-scorer"]
 
 mcp_servers = ["filesystem"]
 
@@ -22,12 +25,29 @@ fallback_score  = 0.5
 
 [capabilities]
 tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
-memory_read  = ["claim_extractor.*"]
-memory_write = ["ml_classifier.*"]
+memory_read  = ["claim_extractor.*", "disarm_hunter.session_results"]
+memory_write = ["ml_classifier.*"]  # includes uq_variance, uq_method, uq_flag, providers_used
 
 [[triggers]]
 event   = "claim_extractor.output.ready"
 action  = "classify_claims"
+
+# WP3: Three DISTINCT provider families for Deep Ensemble UQ variance measurement.
+# All-identical fallbacks produce variance ≈ 0 (false low uncertainty) — now fixed.
+[[fallback_models]]
+provider    = "nvidia"
+model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
+api_key_env = "NVIDIA_API_KEY"
+
+[[fallback_models]]
+provider    = "gemini"
+model       = "gemini-2.5-flash"
+api_key_env = "GEMINI_API_KEY"
+
+[[fallback_models]]
+provider    = "freellmpool"
+model       = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
 
 [[triggers]]
 event   = "pipeline.rerun.ml-classifier"
