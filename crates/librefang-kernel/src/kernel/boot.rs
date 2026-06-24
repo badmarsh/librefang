@@ -1513,6 +1513,7 @@ impl LibreFangKernel {
         // `set_max_in_memory_entries`. `None` / `0` leaves the default
         // `MAX_AUDIT_ENTRIES` fallback in place.
         let audit_soft_cap = config.audit.retention.max_in_memory_entries.unwrap_or(0);
+        let audit_journal_mirror = config.audit_journal_mirror;
 
         let kernel = Self {
             home_dir_boot: config.home_dir.clone(),
@@ -1605,6 +1606,23 @@ impl LibreFangKernel {
                     // (the `None` case) leaves the default
                     // `MAX_AUDIT_ENTRIES` fallback in effect.
                     audit_log.set_max_in_memory_entries(audit_soft_cap);
+
+                    if audit_journal_mirror {
+                        audit_log.set_journal_mirror(true);
+                        #[cfg(target_os = "linux")]
+                        {
+                            tracing::info!(
+                                audit_tier = "tier2",
+                                audit_event_hash = %audit_log.tip_hash(),
+                                "journal mirror active"
+                            );
+                        }
+                        #[cfg(not(target_os = "linux"))]
+                        {
+                            tracing::warn!("journal mirroring is not available on this platform");
+                        }
+                    }
+
                     Arc::new(audit_log)
                 },
                 metering,

@@ -3690,6 +3690,9 @@ pub struct KernelConfig {
     /// Audit log configuration.
     #[serde(default)]
     pub audit: AuditConfig,
+    /// Mirror Tier-2 `[audit]` trace events directly to `journald` (on Linux only).
+    #[serde(default)]
+    pub audit_journal_mirror: bool,
     /// Health check configuration.
     #[serde(default)]
     pub health_check: HealthCheckConfig,
@@ -6337,6 +6340,7 @@ impl Default for KernelConfig {
             rl_export: RlExportConfig::default(),
             context_engine: ContextEngineTomlConfig::default(),
             audit: AuditConfig::default(),
+            audit_journal_mirror: false,
             health_check: HealthCheckConfig::default(),
             heartbeat: HeartbeatTomlConfig::default(),
             plugins: PluginsConfig::default(),
