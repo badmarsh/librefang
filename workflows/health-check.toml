@@ -31,50 +31,52 @@ flag_archival       = true   # triggers archivist long-context model (>180 days)
 # STAGE 1: INJECT
 # Skip watchdog and claim-extractor deduplication for test fixture
 # ─────────────────────────────────────────────
-[[stages]]
-id          = "inject"
+[[steps]]
+name          = "inject"
 description = "Write test fixture claim directly to dispatch queue, bypassing deduplication gate (test claims must always re-run)."
+prompt_template = "Write test fixture claim directly to dispatch queue, bypassing deduplication gate (test claims must always re-run)."
 action      = "write_fixture"
 input       = "test_fixture"
-output      = "dispatch_queue"
+output_var = "dispatch_queue"
 
 # ─────────────────────────────────────────────
 # STAGE 2: PARALLEL VERIFICATION
 # Same fan-out as disinfo-pipeline
 # ─────────────────────────────────────────────
-[[stages]]
-id          = "hc-verify-fast"
+[[steps]]
+name          = "hc-verify-fast"
 agent       = "ml-classifier"
 depends_on  = ["inject"]
 parallel    = true
-timeout_s   = 15
+timeout_secs = 15
 
-[[stages]]
-id          = "hc-verify-deep"
+[[steps]]
+name          = "hc-verify-deep"
 agent       = "inquisitor"
 depends_on  = ["inject"]
 parallel    = true
-timeout_s   = 150
+timeout_secs = 150
 
 # ─────────────────────────────────────────────
 # STAGE 3: CONSENSUS
 # ─────────────────────────────────────────────
-[[stages]]
-id          = "hc-consensus"
+[[steps]]
+name          = "hc-consensus"
 agent       = "disinfo-orchestrator"
 descends_on = ["hc-verify-fast", "hc-verify-deep"]
 depends_on  = ["hc-verify-fast", "hc-verify-deep"]
 wait        = "all_required_parallel_complete"
-timeout_s   = 30
-output      = "hc_arbiter_decision"
+timeout_secs = 30
+output_var = "hc_arbiter_decision"
 
 # ─────────────────────────────────────────────
 # STAGE 4: ASSERT
 # Validate the pipeline produced the expected result
 # ─────────────────────────────────────────────
-[[stages]]
-id          = "assert"
+[[steps]]
+name          = "assert"
 description = "Compare hc_arbiter_decision against test_fixture expectations. Write result to output/health-check/latest.json."
+prompt_template = "Compare hc_arbiter_decision against test_fixture expectations. Write result to output/health-check/latest.json."
 action      = "assert_verdict"
 depends_on  = ["hc-consensus"]
 input       = ["hc_arbiter_decision", "test_fixture"]
@@ -90,13 +92,14 @@ on_fail     = "write_result(status='fail') + trigger_alert"
 # ─────────────────────────────────────────────
 # STAGE 5: ALERT (conditional, on failure only)
 # ─────────────────────────────────────────────
-[[stages]]
-id          = "alert"
+[[steps]]
+name          = "alert"
 agent       = "orchestrator"
 description = "On health-check failure: write human-review task, send proactive-agent alert, log to routing_log.json."
+prompt_template = "On health-check failure: write human-review task, send proactive-agent alert, log to routing_log.json."
 depends_on  = ["assert"]
 condition   = "assert.status == 'fail'"
-timeout_s   = 15
+timeout_secs = 15
 
 # ─────────────────────────────────────────────
 # HEALTH CHECK OUTPUT

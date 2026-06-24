@@ -4,15 +4,15 @@ version     = "1.0.0"
 description = "Runs the security-checklist against the repository and agent configurations to block updates containing misconfigurations or vulnerabilities."
 author      = "librefang"
 
-[[stages]]
-id          = "run_audit"
+[[steps]]
+name          = "run_audit"
 agent       = "security-auditor"
 action      = "execute_security_checklist"
 input       = "repository_diff"
-timeout_s   = 120
+timeout_secs = 120
 
-[[stages]]
-id          = "enforce_compliance"
+[[steps]]
+name          = "enforce_compliance"
 action      = "assert_verdict"
 depends_on  = ["run_audit"]
 assertions  = [

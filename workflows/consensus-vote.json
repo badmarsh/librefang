@@ -1,5 +1,5 @@
 {
-  "id": "a1b2c3d4-consensus-vote-protocol-v1",
+  "id": "f483e823-380e-4133-953e-fb866c5de23d",
   "name": "consensus-vote-protocol-v1",
   "description": "Multi-model consensus gate: fans a claim out to three agents using different LLM backends, then routes through arbiter for weighted Bayesian decision. No report is published without quorum.",
   "trigger": {

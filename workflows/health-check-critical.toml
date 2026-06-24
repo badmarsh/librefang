@@ -14,24 +14,24 @@ timezone    = "Europe/Bratislava"
 prompt = "Ping. Please return the string 'ACK'."
 expected_response = "ACK"
 
-[[stages]]
-id          = "probe_collector"
+[[steps]]
+name          = "probe_collector"
 agent       = "collector-hand"
 input       = "test_fixture"
-timeout_s   = 15
+timeout_secs = 15
 
-[[stages]]
-id          = "probe_researcher"
+[[steps]]
+name          = "probe_researcher"
 agent       = "researcher-hand"
 input       = "test_fixture"
-timeout_s   = 15
+timeout_secs = 15
 
-[[stages]]
-id          = "assert_health"
+[[steps]]
+name          = "assert_health"
 action      = "assert_verdict"
 depends_on  = ["probe_collector", "probe_researcher"]
 assertions  = [
-    "probe_collector.output == test_fixture.expected_response",
-    "probe_researcher.output == test_fixture.expected_response"
+    "probe_collector.output_var == test_fixture.expected_response",
+    "probe_researcher.output_var == test_fixture.expected_response"
 ]
 on_fail     = "trigger_alert + trigger_self_healing_pipeline"

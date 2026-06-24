@@ -1,5 +1,5 @@
 {
-  "id": "c3d4e5f6-narrative-campaign-scan-v1",
+  "id": "17ef62b7-a479-4a96-8af7-e0367dc5b264",
   "name": "narrative-campaign-scan-v1",
   "description": "Scheduled proactive disinformation campaign detector: clusters recent claims, scores for coordinated inauthentic behaviour, triggers investigator on high-CIB clusters.",
   "trigger": {
@@ -10,18 +10,24 @@
   "steps": [
     {
       "name": "claim-cluster-scan",
-      "agent": { "name": "narrative-tracker" },
+      "agent": {
+        "name": "narrative-tracker"
+      },
       "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "MODE 1: SCHEDULED CLUSTER SCAN. Query ontology for all claims ingested in the past 72 hours. Group by actor, hashtag_cluster, geopolitical_event, narrative_fingerprint. For each cluster of 3+ related claims: compute NarrativeCluster score and CIB indicators. Return array of NarrativeCluster JSON objects sorted by cib_score descending.",
       "mode": "sequential",
       "timeout_secs": 600,
       "error_mode": "fail",
       "output_var": "narrative_clusters",
-      "extra_body": { "enable_thinking": true }
+      "extra_body": {
+        "enable_thinking": true
+      }
     },
     {
       "name": "high-cib-triage",
-      "agent": { "name": "analyst" },
+      "agent": {
+        "name": "analyst"
+      },
       "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "Filter narrative clusters with cib_score >= 0.75: {{narrative_clusters}}. For each high-CIB cluster: validate the CIB indicators are distinct (not duplicates of prior alerts). Rank by estimated reach and harm potential. Return filtered and ranked list with investigator_brief for each.",
       "mode": "sequential",
@@ -31,7 +37,9 @@
     },
     {
       "name": "investigator-dispatch",
-      "agent": { "name": "orchestrator" },
+      "agent": {
+        "name": "orchestrator"
+      },
       "model": "nvidia/nemotron-3-super-120b-a12b:free",
       "prompt_template": "For each cluster in high_cib_clusters: {{high_cib_clusters}}, dispatch investigator agent with the cluster brief. Trigger workflow: investigative-report-generation for each cluster_id. Also update ontology NarrativeCluster nodes with latest cib_scores from: {{narrative_clusters}}.",
       "mode": "sequential",
