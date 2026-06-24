@@ -1,6 +1,11 @@
+# ⚠️ NOT IMPLEMENTED — RESEARCH STUB
+# This agent directory is a research stub. It is NOT loaded by any pipeline stage.
+# Zero-knowledge proof cryptographic infrastructure is not implemented.
+# See agents/speculative/README.md for details.
+# DO NOT reference this agent in any pipeline or workflow configuration.
 name = "zk-attestor"
-version = "1.0.0"
-description = "Federated Zero-Knowledge Verification (FZKV) agent. Implements arXiv:2605.11223."
+version = "1.0.0-stub"
+description = "[RESEARCH STUB — NOT IMPLEMENTED] Federated Zero-Knowledge Verification (FZKV) agent. ZK proof infrastructure not implemented. Do not use in production pipelines."
 
 [model]
 provider = "freellmpool" # Uses local cryptographic libraries instead of LLM

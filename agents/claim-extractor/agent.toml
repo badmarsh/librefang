@@ -7,9 +7,17 @@
 #   Improvement 11: Firecrawl as primary web fetch backend (github.com/firecrawl/firecrawl)
 #     Replaces web_fetch for URL inputs — LLM-ready markdown, JS-heavy site support,
 #     onlyMainContent filtering removes nav/footer noise from Slovak news portals.
+#
+# Wave 3.5 — FIX-4: Provenance chain tracking for information laundering detection.
+#   For each extracted claim, record not just the immediate source but whether the
+#   claim's narrative frame originates from a known-bad source within the prior 72h
+#   (using the archivist's KG via kg_query). Compute laundering_risk_score using
+#   SBERT cosine similarity ≥ 0.82 between the current claim and KG claims from
+#   known-bad sources in the 72h window.
+#   Reference: Alliance for Europe, "Information Laundering in Slovakia", March 2026.
 name        = "claim-extractor"
-version     = "2.1.0"
-description = "Extracts verifiable factual claims using NER and sentence segmentation. SHA-256 + semantic deduplication. Slovak/Czech entity preservation. Wave 3: Firecrawl-backed URL fetching."
+version     = "2.2.0"
+description = "Extracts verifiable factual claims using NER and sentence segmentation. SHA-256 + semantic deduplication. Slovak/Czech entity preservation. Wave 3: Firecrawl-backed URL fetching. Wave 3.5 FIX-4: provenance chain tracking and laundering_risk_score computation."
 author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "nlp", "claim-extraction", "ner", "pipeline", "deduplication", "slovak-ner", "semantic-dedup", "firecrawl"]
@@ -28,8 +36,28 @@ context_window = 32768
 temperature = 0.1
 [capabilities]
 tools        = ["firecrawl_scrape", "web_fetch", "memory_store", "memory_recall", "file_write", "embedding", "kg_query"]
-memory_read  = ["claim_extractor.seen_hashes"]
-memory_write = ["claim_extractor.*"]
+memory_read  = ["claim_extractor.seen_hashes", "archivist.kg_known_bad_claims"]
+memory_write = ["claim_extractor.*"]   # includes claim_extractor.laundering_risk_score
+
+# Wave 3.5 FIX-4: Provenance chain tracking configuration
+[claim_extractor.provenance]
+# After extracting each claim, query the KG for semantically similar claims
+# (SBERT cosine >= 0.82) from known-bad sources published within the prior 72h.
+# laundering_risk_score = P(claim appears in known-bad <= 72h before known-good)
+# weighted by SBERT cosine similarity.
+sbert_similarity_threshold = 0.82
+lookback_hours = 72
+kg_query_field = "archivist.kg_known_bad_claims"  # pre-computed by archivist
+# Output fields per extracted claim:
+#   claim_extractor.source_domain        - immediate article source
+#   claim_extractor.provenance_chain     - list of {source, credibility, timestamp} tuples
+#   claim_extractor.laundering_risk_score - float 0.0-1.0
+#   claim_extractor.laundering_prior_sources - list of known-bad sources in window
+# If laundering_risk_score > 0.60:
+#   - Pass to source-rater with laundering override flag
+#   - Add "LAUNDERING RISK" annotation to review_queue.json entry
+#   - Override source credibility weight to neutral (0.50) regardless of source rating
+# Reference: Alliance for Europe, "Information Laundering in Slovakia", March 2026.
 
 
 [[fallback_models]]

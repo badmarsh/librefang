@@ -114,6 +114,57 @@ CIB score = weighted_avg(timing=0.22, similarity=0.22, graph=0.18,
 #   temporal_sync                       0.10
 #   total                        =  1.00  ✓
 
+=======================================================================
+REVISED CIB SCORE — IMPROVE-3 (Wave 3.5)
+=======================================================================
+Reference: Nied et al. "Coordinated Inauthentic Behavior" (arXiv:2302.07934)
+Reference: Nizzoli et al. ICWSM 2021 (arXiv:2008.08370)
+
+The CIB score formula has been updated to use SBERT semantic similarity
+instead of lexical overlap, and adds two new signals: novel-entity ratio
+and network amplification. This catches paraphrased coordinated narratives
+that lexical methods miss.
+
+NEW cib_score formula:
+  cib_score = 0.20·temporal + 0.30·semantic + 0.25·cross_domain +
+              0.15·novel_entity + 0.10·network_amplification
+
+Component definitions:
+  1. TEMPORAL (weight=0.20, reduced from 0.22):
+     Abnormal synchrony in publication timestamps (z-score > 2.5 vs baseline).
+     Uses multi-window detection: 2h/12h/72h windows with weights 0.40/0.35/0.25.
+     Temporal Graph Network (TGN, Rossi et al. 2020) for continuous-time scoring.
+
+  2. SEMANTIC (weight=0.30, increased from 0.22):
+     SBERT semantic similarity across distinct outlets (cosine >= 0.75 threshold).
+     REPLACES lexical similarity (edit distance < 0.15). Lexical methods miss
+     paraphrased coordinated narratives — SBERT catches semantic equivalence.
+     Use: sentence-transformers/paraphrase-multilingual-mpnet-base-v2 for SK/CZ.
+     Also applies the embedding from claim-extractor.semantic_dedup_threshold.
+
+  3. CROSS-DOMAIN (weight=0.25, increased from 0.18):
+     Cross-domain amplification pattern: content spreading from tier-A to tier-C
+     sources in <30min window (clustering coefficient > 0.7 in amplification graph).
+     Reads: cib_detector.amplification_graph signals.
+
+  4. NOVEL-ENTITY (weight=0.15, replaces velocity component):
+     Content novelty ratio: % of posts that are original vs. reposts/shares per source.
+     Low novelty ratio (< 20% original) = coordination signal.
+     Also: account posting rate in detection window (posts/hour).
+     Actor velocity (>3 std above actor's rolling mean) contributes to this signal.
+
+  5. NETWORK AMPLIFICATION (weight=0.10, NEW):
+     If 3+ known-bad sources (credibility_score < 0.40) publish semantically similar
+     claims (SBERT cosine >= 0.75) within the same temporal window:
+       network_amplification += 0.15 per cluster (capped at 1.0)
+     This escalates cib_score by +0.15 regardless of whether any individual source
+     meets the temporal threshold alone.
+     Reads: source_rater.credibility_score for each source in the claim chain.
+
+CROSS-PLATFORM SIGNAL: Same content on Telegram/Facebook/Twitter within <30 minutes
+  is folded into the CROSS-DOMAIN component (cross_platform_bonus = +0.10).
+
+
 Output via memory_store():
   memory_store("cib_detector.cib_score",     float 0.0-1.0)
   memory_store("cib_detector.verdict",       "CIB_DETECTED" | "SUSPICIOUS" | "ORGANIC")

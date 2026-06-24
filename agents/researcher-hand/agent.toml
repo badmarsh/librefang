@@ -23,7 +23,7 @@ check_interval_secs = 3600
 
 [model]
 provider    = "openrouter"
-model       = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 max_tokens  = 8192
 context_window = 131072
@@ -508,16 +508,16 @@ heartbeat_interval_secs = 120
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 

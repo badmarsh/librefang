@@ -5,6 +5,46 @@ All notable changes to LibreFang will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Calendar Versioning](https://calver.org/) (YYYY.M.DD).
 
+## [3.1.0] - 2026-06-24
+
+### Wave 3.5 — Methodological Integrity Improvements
+
+#### Fixed (Priority 1 — Critical Correctness)
+
+- **FIX-1 — config.toml**: Source-rater ensemble weight corrected from 0.12 → 0.08 (reduces circular-prior over-weighting). Wiki-checker compensated +0.04 (Wikidata SPARQL is reproducible and auditable). Rebalance: ml 0.21→0.19, trip 0.20→0.18, temporal 0.08→0.06. Sum = 1.00. Reference: Baly et al. arXiv:1908.05049.
+- **FIX-1 — source-rater/provenance.md**: Rewrote provenance chain document with full 4-source independence verification table (NewsGuard, MBFC, EUvsDisinfo, Konšpirátori.sk), weighted fusion formula, `credibility_confidence` field semantics (1–4 scale), and laundering override logic.
+- **FIX-2 — ml-classifier/agent.toml**: Formalised model priority order: SlovakBERT (primary, F1=0.8931) → SlavicBERT (secondary, F1=0.8661) → XLM-RoBERTa (tertiary, F1≈0.8311) → TF-IDF+LR (CPU baseline only, clearly labeled NOT recommended for production). References: arXiv:1912.07076 (SlavicBERT), arXiv:1911.02116 (XLM-R).
+- **FIX-2 — ml-classifier/evaluation.md**: Added XLM-RoBERTa row to evaluation table; added model priority rationale section documenting structural inversion fix.
+- **FIX-2 — scripts/serve_ml_classifier.py**: Updated model priority to SlovakBERT → SlavicBERT → XLM-R → TF-IDF. Added prominent ⚠️ BASELINE CLASSIFIER WARNING on TF-IDF fallback path. Removed incorrect mdeberta/multilingual-e5/nllb from priority list.
+- **FIX-3 — disinfo-orchestrator/agent.toml**: Implemented explicit u_ale/u_epi decomposition in system prompt. u_ale = variance(agent_scores)/0.25 (aleatory, irreducible). u_epi = 1 - (sources_found/5) (epistemic, reducible). 4-case routing: Case A (high u_ale only → HITL), Case B (high u_epi only → inquisitor escalation), Case C (both high → arbiter debate + HITL), Case D (both low → fast path). u_ale and u_epi now mandatory in every verdict JSON and Telegram alert. References: arXiv:1703.04977, arXiv:2306.13063.
+- **FIX-4 — claim-extractor/agent.toml**: Added provenance chain tracking with SBERT cosine ≥ 0.82 and 72h lookback. New output fields: `provenance_chain`, `laundering_risk_score`, `laundering_prior_sources`. laundering_risk_score > 0.60 → source credibility override to 0.50 + "LAUNDERING RISK" annotation.
+- **FIX-4 — archivist/agent.toml**: Added Responsibility 7 (laundering risk KG cache: every 15min refresh of known-bad claims from past 72h, written to archivist.kg_known_bad_claims). Added Responsibility 8 (ensemble weight revert: if F1 drops >5pt after weight update, auto-revert + WEIGHT_REVERT event to weight_history.jsonl + Telegram alert).
+- **config.toml**: Added `[uncertainty]` block (u_ale_threshold=0.30, u_epi_threshold=0.35) and `[laundering_risk]` block (sbert_cosine_threshold=0.82, lookback_hours=72, override_threshold=0.60).
+
+#### Fixed (Priority 2 — Methodological Improvements)
+
+- **IMPROVE-3 — cib-detector/agent.toml**: Updated CIB score formula to 5-component: `0.20·temporal + 0.30·semantic + 0.25·cross-domain + 0.15·novel-entity + 0.10·network-amplification`. SEMANTIC component now uses SBERT cosine ≥ 0.75 (replaces lexical similarity/edit distance). Novel-entity component replaces raw velocity. Network amplification signal added: 3+ known-bad sources in window escalates cib_score +0.15. Reference: Nied et al. arXiv:2302.07934.
+- **IMPROVE-4 — agents/gart-synthesizer/agent.toml** [NEW]: Promoted from agents/speculative/. Full system prompt with 5 evasion strategies (Morphological Variation, Negation Framing, Laundering Simulation, Slow-Burn Temporal, Semantic Paraphrasing). Weekly evaluation (Sun 03:00 UTC). Bypass threshold updated 15% → 30%. SEGREGATION enforced: outputs never touch training loop. Reference: Perez et al. arXiv:2202.03286.
+- **IMPROVE-4 — workflows/gart-evaluation.toml**: Updated bypass threshold 15% → 30%; references promoted agents/gart-synthesizer (not agents/speculative/). Added `segregation_enforced = true` setting. Per-strategy bypass breakdown in Telegram alert.
+- **IMPROVE-2 — workflows/feedback-ingestion.toml**: Wired Krippendorff α pause alert to Telegram with full detail (α value, threshold, verdicts count). Added borderline claim 2-annotator enforcement. Added `feedback.weight_update_paused` memory state. Resume alert when α recovers.
+- **IMPROVE-2 — agents/writer/agent.toml**: Full system prompt added. Ethics framework compliance (satire protection, defamation law gating, false positive protection). u_ale/u_epi uncertainty reporting in every output. Krippendorff α annotation quality check before verdict routing. HITL review queue entry format specified.
+
+#### Added (Priority 3 — Transparency and Reproducibility)
+
+- **CITATION_AUDIT.md**: Comprehensive rewrite with all Wave 3.5 citations added. Verified status for all 20 implemented features. Clear Research Roadmap section separating 📋 planned and ❌ removed citations from ✅ implemented ones. New entries: FIX-1 (arXiv:1908.05049), FIX-2 (arXiv:1912.07076, arXiv:1911.02116), FIX-3 (arXiv:1703.04977), IMPROVE-2 (Krippendorff 2011), IMPROVE-3 (arXiv:2302.07934), IMPROVE-4 (arXiv:2202.03286).
+- **docs/annotation_guidelines.md**: Expanded with Krippendorff α requirement explanation, multi-annotator workflow, information laundering context section, u_ale/u_epi interpretation table, enhanced Slovak defamation law examples, annotation scope checklist.
+- **docs/ethics_framework.md**: Expanded with explicit scope/limitations table (what system CAN and CANNOT conclude), u_ale/u_epi uncertainty ethical routing table, enhanced operator responsibilities checklist, expanded appeal mechanism with Mermaid diagram.
+
+#### Changed (Priority 4 — Epistemic Deflation)
+
+- **agents/speculative/README.md** [NEW]: Top-level warning that ALL agents in this directory are research stubs not loaded by any pipeline. Table of agents with quarantine reasons.
+- **agents/speculative/qsvm-classifier/agent.toml**: Added ⚠️ NOT IMPLEMENTED banner. Version → 1.0.0-stub. Hardware requirement (105-qubit QPU unavailable) clearly stated.
+- **agents/speculative/zk-attestor/agent.toml**: Added ⚠️ NOT IMPLEMENTED banner. Version → 1.0.0-stub.
+
+#### Documentation
+
+- **README.md**: Added "Wave 3.5 — Methodological Integrity Improvements" section with detailed explanations of each fix. Added "Known Limitations" section (4 operator-mandatory acknowledgements). Added "Research Roadmap (Not Yet Implemented)" table separating planned from implemented features. Implemented features table updated for v3.1.0.
+
 ## [4.0.0] - 2026-06-23
 
 ### Fixed — Academic Citations (CITATION_AUDIT Wave 4)

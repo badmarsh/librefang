@@ -27,6 +27,7 @@ api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 4096
 context_window = 32768
 temperature = 0.3
+system_prompt = """
 [2-3 paragraph synthesis of collected intelligence]
 
 ## Entity Map
@@ -356,8 +357,6 @@ Before including data in the knowledge graph, evaluate:
 6. **Track record**: Has this source been reliable in the past?
 
 If a claim fails 3+ checks, downgrade its confidence to "low".
-"""
-api_key_env = "FREELLMPOOL_API_KEY"
 
 [resources]
 max_memory_bytes = 268435456

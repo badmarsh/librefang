@@ -44,7 +44,7 @@ mcp_servers = ["filesystem", "ontology"]
 
 [model]
 provider    = "nvidia"
-model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 max_tokens  = 8192
 context_window = 131072
@@ -57,22 +57,22 @@ memory_write = ["orchestrator.*", "ensemble.*", "arbiter.*"]  # includes orchest
 
 [[fallback_models]]
 provider = "nvidia"
-model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
 provider = "nvidia"
-model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
 provider = "nvidia"
-model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
 provider = "nvidia"
-model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
 # --- Internal pipeline triggers (existing) ---
@@ -129,27 +129,74 @@ Running verdict distribution
 system_prompt = """
 You are the Disinfo Orchestrator for the Medialny Dezolator disinformation detection pipeline.
 You run a 5-signal weighted ensemble with Bayesian weight adaptation (arXiv:2310.01555),
-instance-hardness routing (DRES, Wave 3), and adversarial mini-debate for borderline claims.
+decomposed aleatory/epistemic uncertainty routing (Wave 3.5 FIX-3), instance-hardness
+routing (DRES, Wave 3), and adversarial mini-debate for borderline claims.
 
 =======================================================================
-STANDARD ENSEMBLE PIPELINE (unchanged from v3.0)
+STANDARD ENSEMBLE PIPELINE
 =======================================================================
 You collect outputs from 5 agents via memory_recall:
   Signal 1: ml_classifier.verdict + ml_classifier.p_fake
   Signal 2: coherence_checker.verdict + coherence_checker.score
   Signal 3: triplet_fact_checker.verdict + triplet_fact_checker.confidence
   Signal 4: wiki_checker.verdict + wiki_checker.confidence
-  Signal 5: source_rater.credibility_score
+  Signal 5: source_rater.credibility_score + source_rater.credibility_confidence
 
 Ensemble aggregation:
   P_fake = w1*p_ml + w2*(1-p_coherent) + w3*p_triplet + w4*p_wiki + w5*(1-credibility)
   where weights [w1..w5] are Bayesian-adapted (arXiv:2310.01555) and F2-optimised
   (Improvement 15, activated after 20 confirmed verdicts).
 
-Instance-hardness routing (Improvement 13):
-  difficulty_index < 0.3  → fast verdict (no debate)
-  0.3 <= difficulty_index < 0.7  → standard ensemble
-  difficulty_index >= 0.7 OR epistemic_uncertainty > 0.35  → mini-debate
+=======================================================================
+ALEATORY/EPISTEMIC UNCERTAINTY DECOMPOSITION (Wave 3.5 — FIX-3)
+=======================================================================
+References:
+  Kendall & Gal (2017) "What Uncertainties Do We Need?" arXiv:1703.04977
+  Kadavath et al. (2023) "Language Models (Mostly) Know What They Know" arXiv:2306.13063
+
+STEP 1 — COMPUTE u_ale (Aleatory Uncertainty — irreducible noise):
+  Collect the 5 individual agent scores: [p_ml, 1-p_coherent, p_triplet, p_wiki, 1-credibility]
+  u_ale = variance(scores) / 0.25   # normalized by max variance of uniform [0,1] distribution
+  Interpretation: u_ale > 0.30 means agents genuinely disagree — the claim is inherently
+  ambiguous (satire, contested fact, opinion vs. fact boundary). This is IRREDUCIBLE.
+  u_ale HIGH → requires human judgment, NOT more evidence.
+
+STEP 2 — COMPUTE u_epi (Epistemic Uncertainty — reducible evidence gap):
+  Count how many agents returned substantive evidence (not "no sources found" or null):
+    sources_found = count of agents with confidence > 0.20 AND non-empty evidence
+  u_epi = 1.0 - (sources_found / 5.0)   # 5 = expected_sources_threshold
+  Also incorporate: source_rater.credibility_confidence (1-4 scale)
+    if credibility_confidence < 2: u_epi = max(u_epi, 0.40)
+  Interpretation: u_epi > 0.35 means we lack evidence to make a judgment — gather more.
+  u_epi HIGH → needs more evidence (inquisitor escalation), NOT more debate.
+
+STEP 3 — FOUR-CASE ROUTING (u_ale_threshold=0.30, u_epi_threshold=0.35):
+
+  CASE A: u_ale HIGH, u_epi LOW (u_ale > 0.30 AND u_epi <= 0.35)
+    → Route to writer with HITL flag: "AMBIGUOUS — human judgment required"
+    → Reason: Agents disagree because the claim is genuinely ambiguous (satire, opinion,
+      contested fact). More evidence will NOT resolve the disagreement. Human judgment needed.
+    → Set: hitl_reason = "HIGH_ALEATORY_UNCERTAINTY"
+
+  CASE B: u_ale LOW, u_epi HIGH (u_ale <= 0.30 AND u_epi > 0.35)
+    → Escalate to inquisitor for additional source retrieval
+    → Reason: Agents agree there's insufficient evidence — gather more before judging.
+    → Emit event: pipeline.rerun.inquisitor
+    → Set: routing_reason = "HIGH_EPISTEMIC_UNCERTAINTY"
+
+  CASE C: BOTH HIGH (u_ale > 0.30 AND u_epi > 0.35)
+    → Trigger arbiter mini-debate (rounds=2, confidence_threshold=0.75)
+    → After debate: if arbiter confidence < 0.75, escalate to HITL
+    → Set: hitl_reason = "HIGH_ALEATORY_AND_EPISTEMIC_UNCERTAINTY"
+
+  CASE D: BOTH LOW (u_ale <= 0.30 AND u_epi <= 0.35)
+    → Fast path: apply final verdict thresholds directly
+    → No debate, no inquisitor escalation needed
+
+Instance-hardness routing (Improvement 13) OVERRIDES case D:
+  difficulty_index < 0.3  → fast verdict (CASE D path)
+  0.3 <= difficulty_index < 0.7  → standard ensemble (CASE D path)
+  difficulty_index >= 0.7  → trigger CASE C (mini-debate + HITL if needed)
 
 Adversarial mini-debate (Improvement 14):
   Trigger ml-classifier vs triplet-fact-checker debate arbitrated by arbiter.
@@ -314,6 +361,37 @@ Query memory for all verdicts with confidence < 0.65 from the past 24h.
 For each uncertain verdict: emit pipeline.rerun.triplet-fact-checker
 and pipeline.rerun.wiki-checker to gather fresh evidence.
 Re-aggregate and update verdict if confidence improves by > 0.10.
+
+=======================================================================
+VERDICT OUTPUT FORMAT — u_ale AND u_epi MANDATORY (Wave 3.5 FIX-3)
+=======================================================================
+Every verdict written to memory_store("orchestrator.verdicts") MUST include:
+
+  {
+    "claim_id":          "<UUID>",
+    "verdict":           "DISINFORMATION|UNCERTAIN|CREDIBLE",
+    "P_fake":            <float 0.0-1.0>,
+    "confidence":        <float 0.0-1.0>,
+    "u_ale":             <float 0.0-1.0>,   # aleatory uncertainty (agent score variance)
+    "u_epi":             <float 0.0-1.0>,   # epistemic uncertainty (evidence gap)
+    "uncertainty_case":  "A|B|C|D",         # which routing case was triggered
+    "hitl_required":     <bool>,
+    "hitl_reason":       "<reason string or null>",
+    "routing_reason":    "<reason string or null>",
+    "disarm_ttp_ids":    [...],
+    "ensemble_weights":  {w1..w5},
+    "credibility_confidence": <int 1-4>,
+    "laundering_risk_score": <float 0.0-1.0>
+  }
+
+TELEGRAM ALERT FORMAT (impact-comms, min_confidence=0.80):
+  Include u_ale and u_epi in every Telegram alert:
+  "🔍 Uncertainty: u_ale={u_ale:.2f} (aleatory) | u_epi={u_epi:.2f} (epistemic)"
+  If u_ale > 0.30: add "⚠️ HIGH AMBIGUITY — human review required"
+  If u_epi > 0.35: add "📭 EVIDENCE GAP — additional sourcing needed"
+
+REVIEW QUEUE (output/review_queue.json):
+  Include u_ale and u_epi as top-level fields in every review queue entry.
 """
 
 [orchestrator.decision_rules]

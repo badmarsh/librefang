@@ -18,24 +18,24 @@ skills = [
 
 [model]
 provider    = "nvidia"
-model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 max_tokens  = 8192
 context_window = 131072
 temperature = 0.2
 [[fallback_models]]
 provider = "nvidia"
-model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
 provider = "nvidia"
-model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
 provider = "nvidia"
-model = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
 [inquisitor.uncertainty]

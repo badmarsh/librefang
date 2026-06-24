@@ -483,20 +483,8 @@ pub async fn execute_tool_raw(
             None => Err(ToolError::MissingParameter("url")),
             Some(url) => {
                 // Taint check: block URLs containing secrets/PII from being exfiltrated
-                let tainted_url = librefang_types::taint::TaintedValue::new(
-                    url,
-                    { let mut s = std::collections::HashSet::new(); s.insert(librefang_types::taint::TaintLabel::UntrustedAgent); s },
-                    "llm_tool_call"
-                );
-                if let Some(violation) = check_taint_net_fetch(&tainted_url) {
-                    if let Some(k) = ctx.kernel {
-                        k.audit_log().record(
-                            ctx.caller_agent_id.unwrap_or("system"),
-                            librefang_runtime_audit::AuditAction::TaintSinkBlocked,
-                            format!("tool=net_fetch violation={violation}"),
-                            "denied",
-                        );
-                    }
+                if let Some(violation) = check_taint_net_fetch(url) {
+
                     return ToolResult {
                         tool_use_id: tool_use_id.to_string(),
                         content: format!("Taint violation: {violation}"),
@@ -517,16 +505,8 @@ pub async fn execute_tool_raw(
                         "llm_tool_call"
                     );
                     if let Some(violation) =
-                        check_taint_outbound_text(&tainted_body, &TaintSink::net_fetch())
+                        check_taint_outbound_text(body_text, &TaintSink::net_fetch())
                     {
-                        if let Some(k) = ctx.kernel {
-                            k.audit_log().record(
-                                ctx.caller_agent_id.unwrap_or("system"),
-                                librefang_runtime_audit::AuditAction::TaintSinkBlocked,
-                                format!("tool=net_fetch violation={violation}"),
-                                "denied",
-                            );
-                        }
                         return ToolResult {
                             tool_use_id: tool_use_id.to_string(),
                             content: format!("Taint violation: {violation}"),
@@ -547,16 +527,8 @@ pub async fn execute_tool_raw(
                                 "llm_tool_call"
                             );
                             if let Some(violation) =
-                                check_taint_outbound_header(name, &tainted_vs, &TaintSink::net_fetch())
+                                check_taint_outbound_header(name, vs, &TaintSink::net_fetch())
                             {
-                                if let Some(k) = ctx.kernel {
-                                    k.audit_log().record(
-                                        ctx.caller_agent_id.unwrap_or("system"),
-                                        librefang_runtime_audit::AuditAction::TaintSinkBlocked,
-                                        format!("tool=net_fetch violation={violation}"),
-                                        "denied",
-                                    );
-                                }
                                 return ToolResult {
                                     tool_use_id: tool_use_id.to_string(),
                                     content: format!("Taint violation: {violation}"),
@@ -786,14 +758,7 @@ pub async fn execute_tool_raw(
                     "llm_tool_call"
                 );
                 if let Some(violation) = check_taint_shell_exec(&tainted_command) {
-                    if let Some(k) = ctx.kernel {
-                        k.audit_log().record(
-                            ctx.caller_agent_id.unwrap_or("system"),
-                            librefang_runtime_audit::AuditAction::TaintSinkBlocked,
-                            format!("tool=shell_exec violation={violation}"),
-                            "denied",
-                        );
-                    }
+
                     return ToolResult {
                         tool_use_id: tool_use_id.to_string(),
                         content: format!("Taint violation: {violation}"),

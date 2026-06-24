@@ -1692,7 +1692,7 @@ pub async fn read_message_encrypted_observed(
     session_key: &str,
     peer_node_id: &str,
 ) -> Result<WireMessage, WireError> {
-    let mut header = [0u8; 4];
+    let mut header = [0u8; 5];
     match reader.read_exact(&mut header).await {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {

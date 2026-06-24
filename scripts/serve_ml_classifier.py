@@ -1,7 +1,15 @@
 # LibreFang — serve_ml_classifier.py
-# Part of fix: Fix 2 — Replace TF-IDF + Logistic Regression with SlavicBERT / Slovak BERT
-# Author: coding-agent
-# Date: 2026-06-22
+# Part of fix: Wave 3.5 FIX-2 — SlovakBERT / SlavicBERT / XLM-R transformer pipeline
+# Model priority (FIX-2):
+#   1. gerulata/slovakbert (Slovak-specific, F1=0.8931 on held-out test)
+#   2. deeppavlov/bert-base-bg-cs-pl-ru-cased (SlavicBERT, multilingual Slavic)
+#   3. facebook/xlm-roberta-base (XLM-R, cross-lingual fallback)
+#   4. TF-IDF + Logistic Regression (BASELINE ONLY — NOT RECOMMENDED FOR PRODUCTION)
+#      CPU-only fallback: loses morphological variants and syntactic negation.
+#      Use only when PyTorch/Transformers are unavailable (e.g. RAM < 4096 MB).
+# References: Arkhipov et al. arXiv:1912.07076; Conneau et al. arXiv:1911.02116
+# Author: librefang
+# Date: 2026-06-24 (Wave 3.5 update)
 
 import os
 import sys
@@ -44,38 +52,56 @@ def load_model():
     force_tfidf = os.environ.get("ML_CLASSIFIER_FORCE_TFIDF", "0") == "1"
     
     if HAS_TRANSFORMERS and not force_tfidf:
-        # Priority order: local fine-tuned model path, otherwise SOTA multilingual models
-        model_name = os.environ.get("ML_TRANSFORMER_MODEL", "models/slovak_bert")
-        if not os.path.exists(model_name) and model_name == "models/slovak_bert":
-            # Fall back to HuggingFace hub if local model doesn't exist yet
-            # Uses fallback chain (Improvement 28)
-            CLASSIFIER_MODELS = [
-                "intfloat/multilingual-e5-large-instruct",   # primary
-                "microsoft/mdeberta-v3-base",                 # fine-tune target
-                "facebook/nllb-200-distilled-600M",           # CPU fallback
-            ]
-            # Try to load the primary model (for this script we default to the first available)
-            model_name = CLASSIFIER_MODELS[0]
-            
-        print(f"Loading transformer model from {model_name}...")
-        try:
-            device = 0 if torch.cuda.is_available() and torch.cuda.device_count() > 0 else -1
-            transformer_pipeline = hf_pipeline(
-                "text-classification",
-                model=model_name,
-                tokenizer=model_name,
-                device=device,
-                return_all_scores=True
-            )
-            classifier_type = "transformer"
-            model_version = f"transformer:{model_name}"
-            print(f"Transformer model loaded successfully on device: {'GPU' if device >= 0 else 'CPU'}")
+        # Priority order (Wave 3.5 FIX-2):
+        #   1. gerulata/slovakbert        — Slovak-specific, F1=0.8931
+        #   2. deeppavlov/bert-base-bg-cs-pl-ru-cased (SlavicBERT)
+        #   3. facebook/xlm-roberta-base  — cross-lingual fallback
+        # Override with env var ML_TRANSFORMER_MODEL to pin a specific model.
+        CLASSIFIER_MODELS = [
+            os.environ.get("ML_TRANSFORMER_MODEL", "") or "gerulata/slovakbert",
+            "deeppavlov/bert-base-bg-cs-pl-ru-cased",
+            "facebook/xlm-roberta-base",
+        ]
+        # Also support a locally fine-tuned model stored at models/slovak_bert
+        local_path = "models/slovak_bert"
+        if os.path.exists(local_path):
+            CLASSIFIER_MODELS.insert(0, local_path)
+
+        loaded = False
+        for model_name in CLASSIFIER_MODELS:
+            print(f"Attempting to load transformer model: {model_name} ...")
+            try:
+                device = 0 if torch.cuda.is_available() and torch.cuda.device_count() > 0 else -1
+                transformer_pipeline = hf_pipeline(
+                    "text-classification",
+                    model=model_name,
+                    tokenizer=model_name,
+                    device=device,
+                    return_all_scores=True
+                )
+                classifier_type = "transformer"
+                model_version = f"transformer:{model_name}"
+                print(f"Loaded {model_name} on {'GPU' if device >= 0 else 'CPU'}")
+                loaded = True
+                break
+            except Exception as e:
+                print(f"  ⚠️  Could not load {model_name}: {e}", file=sys.stderr)
+
+        if loaded:
             return
-        except Exception as e:
-            print(f"Failed to load transformer model ({e}). Falling back to TF-IDF...", file=sys.stderr)
+        print("All transformer models failed to load. Falling back to TF-IDF baseline.", file=sys.stderr)
             
-    # Fallback to TF-IDF + LR
-    print("[WARNING] baseline classifier, not recommended for production. HuggingFace transformers or PyTorch not available, or model load failed.")
+    # ============================================================
+    # ⚠️  BASELINE CLASSIFIER — NOT RECOMMENDED FOR PRODUCTION
+    # TF-IDF + Logistic Regression loses morphological variants
+    # (e.g. Kremla/Kremlu/Kremom are distinct tokens) and syntactic
+    # negation context. F1=0.7871 vs SlovakBERT F1=0.8931.
+    # Use ONLY when PyTorch/Transformers are unavailable (CPU-only,
+    # RAM < 4096 MB). Run scripts/train_ml_classifier.py to train.
+    # Reference: evaluation.md in agents/ml-classifier/
+    # ============================================================
+    print("[WARNING] BASELINE CLASSIFIER ACTIVE — NOT RECOMMENDED FOR PRODUCTION."
+          " Install PyTorch + Transformers to use SlovakBERT (F1=0.8931).")
     model_path = "models/ml_classifier.joblib"
     if not os.path.exists(model_path):
         print(f"ERROR: Baseline TF-IDF model file not found at {model_path}", file=sys.stderr)

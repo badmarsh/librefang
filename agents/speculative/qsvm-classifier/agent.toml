@@ -1,6 +1,12 @@
+# ⚠️ NOT IMPLEMENTED — RESEARCH STUB
+# This agent directory is a research stub. It is NOT loaded by any pipeline stage.
+# Hardware requirement: Google Willow 105-qubit QPU (unavailable).
+# Classical simulation does NOT provide the claimed exponential speedup.
+# See agents/speculative/README.md for details.
+# DO NOT reference this agent in any pipeline or workflow configuration.
 name        = "qsvm-classifier"
-version     = "1.0.0"
-description = "Quantum Support Vector Machine (QSVM) using Google Willow (105-qubit) for exponential speedup on complex narrative classification."
+version     = "1.0.0-stub"
+description = "[RESEARCH STUB — NOT IMPLEMENTED] Quantum Support Vector Machine (QSVM) using Google Willow (105-qubit). Requires QPU hardware that is not available. Classical simulation does not provide the speedup. Do not use in production pipelines."
 author      = "librefang"
 module      = "builtin:quantum"
 tags        = ["qsvm", "quantum", "willow", "classification"]

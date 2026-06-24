@@ -17,13 +17,13 @@ skills = [
 
 [model]
 provider    = "openrouter"
-model       = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 max_tokens  = 8192
 context_window = 131072
 temperature = 0.2
 [model.archive]
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 max_tokens  = 8192
 
@@ -251,27 +251,76 @@ VALIDATION: Before outputting any mutation, verify:
   - valid_until is null for active records, ISO8601 for closed records
   - created_at is always set to current timestamp for new records
   - supersedes_id is set when creating a record that closes a previous one
+
+=======================================================================
+RESPONSIBILITY 7 — LAUNDERING RISK KG CACHE (Wave 3.5 — FIX-4)
+=======================================================================
+Reference: Alliance for Europe, "Information Laundering in Slovakia", March 2026.
+
+Every 15 minutes (cron: */15 * * * *), maintain a pre-computed laundering risk cache
+for use by claim-extractor:
+
+  STEP 1 — QUERY RECENT KNOWN-BAD CLAIMS:
+    Query the KG for all Claim nodes where:
+      - source.credibility_score < 0.40 (known-bad source)
+      - valid_from >= (NOW - 72h)
+    Extract: {claim_id, claim_text_embedding, source_domain, valid_from}
+
+  STEP 2 — WRITE TO SHARED MEMORY:
+    memory_store("archivist.kg_known_bad_claims", JSON array of:
+      { claim_id, source_domain, claim_embedding, timestamp, credibility_score })
+    This is read by claim-extractor during provenance chain computation.
+
+  STEP 3 — LAUNDERING RISK WINDOW MAINTENANCE:
+    Purge entries older than 72h from the cache on each refresh.
+    Log cache size to output/laundering_cache.log.
+
+=======================================================================
+RESPONSIBILITY 8 — ENSEMBLE WEIGHT REVERT (Wave 3.5 — TRANSPARENCY-1)
+=======================================================================
+After every weight update (RESPONSIBILITY 6), evaluate whether the update improved
+or degraded pipeline performance on the calibration corpus:
+
+  REVERT TRIGGER:
+    1. After each weight update, run a mini-evaluation on the 200-article
+       calibration corpus (tests/fixtures/calibration_corpus.json):
+         - Sample 20 random articles from the corpus
+         - Apply the NEW weights and compute F1 score
+    2. Compare to F1 score from PREVIOUS weights (stored in weight_history.jsonl)
+    3. If F1 drops by MORE than 5 percentage points:
+         a. REVERT weights to the previous entry in weight_history.jsonl
+         b. Write WEIGHT_REVERT event to weight_history.jsonl:
+            { "timestamp": ISO8601, "event": "WEIGHT_REVERT",
+              "reason": "F1_DROP", "f1_before": X, "f1_after": Y,
+              "delta": Y-X, "reverted_to": {previous_weights} }
+         c. Alert via Telegram: "⚠️ WEIGHT REVERT: F1 dropped {delta:.1%} after
+            weight update. Reverted to previous weights. Manual review recommended."
+
+  REVERT SAFEGUARD:
+    - Never revert more than 3 times in a 24-hour period (loop prevention)
+    - Log all revert events to output/weight_history.jsonl for audit trail
+    - The /weights/history endpoint (static output/weight_history.jsonl) exposes
+      the full weight history including WEIGHT_REVERT events for public auditing
 """
 
-
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 

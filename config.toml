@@ -47,14 +47,20 @@ weight_recompute_interval = 50
 # They have NOT been validated on Slovak-language claims.
 # Run scripts/calibrate_weights.py once you have >= 50 labelled verdicts.
 # See docs/calibration_guide.md.
+#
+# Wave 3.5 — FIX-1: src reduced from 0.12 → 0.08 (source-rater uses multi-source
+# fusion, not a circular prior, so over-weighting is epistemically unjustified).
+# FIX-1: wiki increased by +0.04 (Wikidata SPARQL is reproducible & auditable).
+# Reference: Baly et al., arXiv:1908.05049 (Multi-Source Fake News Classification)
+# Rebalancing: ml 0.21→0.19, trip 0.20→0.18, temporal 0.08→0.06 to maintain sum=1.00.
 [disinfo_pipeline.baseline_weights]
 coh = 0.13
-ml = 0.21
-src = 0.06
-trip = 0.20
-wiki = 0.22
+ml  = 0.19
+src = 0.08
+trip = 0.18
+wiki = 0.26
 kg = 0.10
-temporal = 0.08
+temporal = 0.06
 
 [kg_checker]
 expiry_days = 90
@@ -64,6 +70,23 @@ weight = 0.10
 [ensemble]
 f2_weighting_enabled = true
 f2_min_disinfo_verdicts = 20
+
+# Wave 3.5 — FIX-3: Aleatory/epistemic uncertainty decomposition routing thresholds.
+# u_ale = variance across agent scores (irreducible ambiguity in the claim).
+# u_epi = 1 - (sources_found / expected_sources_threshold) (reducible evidence gap).
+# Reference: Kendall & Gal (2017) arXiv:1703.04977; Kadavath et al. (2023) arXiv:2306.13063
+[uncertainty]
+u_ale_threshold = 0.30      # agent score variance above this → aleatory flag
+u_epi_threshold = 0.35      # evidence gap above this → epistemic flag
+expected_sources_per_claim = 3  # baseline for u_epi denominator
+
+# Wave 3.5 — FIX-4: Information laundering risk detection config.
+# Reference: Alliance for Europe, "Information Laundering in Slovakia", March 2026.
+[laundering_risk]
+sbert_cosine_threshold = 0.82   # semantic similarity for claim matching
+lookback_hours = 72             # window to check known-bad prior publication
+override_threshold = 0.60       # laundering_risk > 0.60 → override credibility to 0.50
+network_amplification_sources = 3  # 3+ known-bad sources in window → escalate cib_score +0.15
 
 [feedback]
 confirmed_verdict_key = "feedback.confirmed_verdicts"

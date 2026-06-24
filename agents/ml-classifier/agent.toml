@@ -4,9 +4,17 @@
 # WP3: Uncertainty Quantification — uq-scorer skill added (Puczyńska & Djenouri 2024 DOI:10.60097/ACIG/200200)
 #   fallback_models now use 3 distinct provider families (nvidia, gemini, freellmpool) for
 #   genuine Deep Ensemble UQ variance — was 4×identical freellmpool/Meta-Llama-3_3-70B.
+#
+# Wave 3.5 — FIX-2: Transformer model priority order established:
+#   1. gerulata/slovakbert (Slovak-specific, best F1=0.8931 on held-out test)
+#   2. deeppavlov/bert-base-bg-cs-pl-ru-cased (SlavicBERT, multilingual Slavic coverage)
+#   3. facebook/xlm-roberta-base (XLM-R, cross-lingual fallback)
+#   4. tfidf_logistic_regression (CPU baseline — NOT recommended for production)
+# TF-IDF+LR is retained as fallback ONLY for CPU-only / RAM < 4096 MB environments.
+# References: Arkhipov et al. (arXiv:1912.07076); Conneau et al. (arXiv:1911.02116)
 name        = "ml-classifier"
-version     = "1.2.0"
-description = "Multilingual sequence classifier (mDeBERTa-v3/BGE-M3/NLLB) served locally via scripts/serve_ml_classifier.py (falls back to TF-IDF + Logistic Regression when PyTorch/Transformers are unavailable)."
+version     = "1.3.0"
+description = "Transformer sequence classifier for Slovak/multilingual disinformation detection. Primary: gerulata/slovakbert (F1=0.8931). Secondary: SlavicBERT (deeppavlov). 3rd fallback: XLM-RoBERTa (facebook/xlm-roberta-base). CPU fallback: TF-IDF+LR via scripts/serve_ml_classifier.py (baseline, NOT recommended for production). Wave 3.5 FIX-2. Refs: arXiv:1912.07076, arXiv:1911.02116."
 author      = "librefang"
 module      = "builtin:http_scorer"
 tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
@@ -36,7 +44,7 @@ action  = "classify_claims"
 # All-identical fallbacks produce variance ≈ 0 (false low uncertainty) — now fixed.
 [[fallback_models]]
 provider    = "nvidia"
-model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
 [[fallback_models]]
@@ -54,10 +62,28 @@ event   = "pipeline.rerun.ml-classifier"
 action  = "classify_claims"
 
 [classifier.bert]
+# Model priority order (Wave 3.5 FIX-2):
+#   1. Slovak-specific BERT: gerulata/slovakbert (best F1=0.8931 on held-out Slovak test set)
+#   2. Multilingual Slavic BERT: deeppavlov/bert-base-bg-cs-pl-ru-cased (SlavicBERT)
+#      Covers SK/CZ/RU/BG/PL natively. F1=0.8661. Ref: Arkhipov et al. arXiv:1912.07076.
+#   3. XLM-RoBERTa: facebook/xlm-roberta-base (cross-lingual fallback)
+#      Trained on 100 languages. F1 estimated ~0.82 zero-shot SK. Ref: Conneau et al. arXiv:1911.02116.
+#   4. TF-IDF + Logistic Regression (BASELINE ONLY — NOT recommended for production)
+#      Loses morphological variants and negation. Retained for CPU-only / RAM < 4096 MB.
+#      Served via scripts/serve_ml_classifier.py when PyTorch/Transformers unavailable.
 primary_model = "gerulata/slovakbert"
+secondary_model = "deeppavlov/bert-base-bg-cs-pl-ru-cased"
+tertiary_model = "facebook/xlm-roberta-base"
 ner_model = "ju-bezdek/slovakbert-conll2003-sk-ner"
 slavic_ner_model = "DeepPavlov/bert-base-slavic-ner"
 fallback_model = "tfidf_logistic_regression"
+fallback_label = "BASELINE CLASSIFIER — NOT RECOMMENDED FOR PRODUCTION. Use transformer models above."
 fallback_trigger = "transformers_unavailable OR ram_mb < 4096"
+fallback_script = "scripts/serve_ml_classifier.py"
 sequence_classification_max_length = 512
-# References: arXiv:1908.10084 (SBERT), sk-bert-ner GitHub 2020
+# References:
+#   Arkhipov et al. (2019) SlavicBERT: arXiv:1912.07076
+#   Conneau et al. (2020) XLM-RoBERTa: arXiv:1911.02116
+#   Gerulata/SlovakBERT: huggingface.co/gerulata/slovakbert
+#   Reimers & Gurevych (2019) SBERT: arXiv:1908.10084
+#   FakeNewsDetection_DRES: github.com/FFarhangian/FakeNewsDetection_DRES

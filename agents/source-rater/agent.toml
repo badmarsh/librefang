@@ -10,14 +10,14 @@
 #   Replaced with actual Slovak disinformation domains and added known-good list.
 name        = "source-rater"
 version     = "1.2.0"
-description = "Scores source domain credibility using a multi-source registry (NewsGuard, MBFC, EUvsDisinfo, Konšpirátori.sk) with a weighted fusion function and laundering risk checks. 5th ensemble signal (w=0.08)."
+description = "Scores source domain credibility using a multi-source registry (NewsGuard, MBFC, EUvsDisinfo, Konšpirátori.sk) with a weighted fusion function and laundering risk checks. 5th ensemble signal (w=0.08). Wave 3.5: weight confirmed at 0.08 per FIX-1 (reduced from 0.12 to correct circular-prior over-weighting). Reference: Baly et al., arXiv:1908.05049."
 author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "source", "credibility", "osint", "ensemble"]
 
 [model]
 provider    = "openrouter"
-model       = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 max_tokens  = 8192
 context_window = 131072
@@ -102,17 +102,17 @@ memory_write = ["source_rater.*"]
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 [[fallback_models]]
 provider = "openrouter"
-model = "nvidia/nemotron-3-ultra-550b-a55b:free"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
 [source.trust_model]

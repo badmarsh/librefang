@@ -8,7 +8,7 @@ use librefang_types::taint::{
     TaintLabel, TaintSink, TaintedValue, SECRET_HEADER_NAMES, SECRET_KEYS,
 };
 use regex_lite::Regex;
-use std::collections::HashSet;
+
 use std::sync::OnceLock;
 use tracing::warn;
 
@@ -50,8 +50,8 @@ pub(super) fn check_taint_shell_exec(command: &TaintedValue<&str>) -> Option<Str
 /// checked — an attacker can otherwise bypass the filter with encoding
 /// tricks such as `api%5Fkey=secret` (the server decodes `%5F` to `_`
 /// and receives the real `api_key=secret`).
-pub(super) fn check_taint_net_fetch(url: &TaintedValue<&str>) -> Option<String> {
-    let url_lower = url.value.to_lowercase();
+pub(super) fn check_taint_net_fetch(url: &str) -> Option<String> {
+    let url_lower = url.to_lowercase();
     let mut hit = url_lower.contains("authorization:");
     if !hit {
         hit = SECRET_KEYS
@@ -62,7 +62,7 @@ pub(super) fn check_taint_net_fetch(url: &TaintedValue<&str>) -> Option<String> 
     // Scan 2: percent-decoded query parameter names. Parsing via
     // `url::Url` decodes each name so `api%5Fkey` becomes `api_key`.
     if !hit {
-        if let Ok(parsed) = url::Url::parse(url.value) {
+        if let Ok(parsed) = url::Url::parse(url) {
             for (name, _value) in parsed.query_pairs() {
                 let name_lower = name.to_lowercase();
                 if SECRET_KEYS.iter().any(|k| name_lower.contains(k)) {
@@ -74,11 +74,11 @@ pub(super) fn check_taint_net_fetch(url: &TaintedValue<&str>) -> Option<String> 
     }
 
     if hit {
-        let mut labels = command.labels.clone();
-        labels.insert(TaintLabel::Secret);
-        let tainted = TaintedValue { value: url.value, labels, sources: url.sources.clone() };
+        let mut labels = std::collections::HashSet::new();
+        labels.insert(librefang_types::taint::TaintLabel::Secret);
+        let tainted = librefang_types::taint::TaintedValue::new(url, labels, "taint_heuristic");
         if let Err(violation) = tainted.check_sink(&TaintSink::net_fetch()) {
-            warn!(url = crate::str_utils::safe_truncate_str(url.value, 80), %violation, "Net fetch taint check failed");
+            warn!(url = crate::str_utils::safe_truncate_str(url, 80), %violation, "Net fetch taint check failed");
             return Some(violation.to_string());
         }
     }
@@ -91,21 +91,21 @@ pub(super) fn check_taint_net_fetch(url: &TaintedValue<&str>) -> Option<String> 
 /// scanner used for bodies.
 pub(super) fn check_taint_outbound_header(
     name: &str,
-    value: &TaintedValue<&str>,
+    value: &str,
     sink: &TaintSink,
 ) -> Option<String> {
     let name_lower = name.trim().to_ascii_lowercase();
     if SECRET_HEADER_NAMES.iter().any(|h| *h == name_lower)
         || SECRET_KEYS.iter().any(|k| *k == name_lower)
     {
-        let mut labels = command.labels.clone();
-        labels.insert(TaintLabel::Secret);
-        let tainted = TaintedValue { value: value.value, labels, sources: value.sources.clone() };
+        let mut labels = std::collections::HashSet::new();
+        labels.insert(librefang_types::taint::TaintLabel::Secret);
+        let tainted = librefang_types::taint::TaintedValue::new(value, labels, "taint_heuristic");
         if let Err(violation) = tainted.check_sink(sink) {
             warn!(
                 sink = %sink.name,
                 header = %name_lower,
-                value_len = value.value.len(),
+                value_len = value.len(),
                 %violation,
                 "Outbound taint check failed (credential header)"
             );
@@ -178,8 +178,8 @@ fn contains_key_sep(normalized: &str) -> bool {
     false
 }
 
-pub(super) fn check_taint_outbound_text(payload: &TaintedValue<&str>, sink: &TaintSink) -> Option<String> {
-    let lower = payload.value.to_lowercase();
+pub(super) fn check_taint_outbound_text(payload: &str, sink: &TaintSink) -> Option<String> {
+    let lower = payload.to_lowercase();
 
     let mut hit = lower.contains("authorization:");
 
@@ -196,7 +196,7 @@ pub(super) fn check_taint_outbound_text(payload: &TaintedValue<&str>, sink: &Tai
     // prefixes (`sk-`, `ghp_`, `xoxp-`) are also flagged regardless
     // of length.
     if !hit {
-        let trimmed = payload.value.trim();
+        let trimmed = payload.trim();
         let well_known_prefix = trimmed.starts_with("sk-")
             || trimmed.starts_with("ghp_")
             || trimmed.starts_with("github_pat_")
@@ -210,15 +210,15 @@ pub(super) fn check_taint_outbound_text(payload: &TaintedValue<&str>, sink: &Tai
     }
 
     if hit {
-        let mut labels = command.labels.clone();
-        labels.insert(TaintLabel::Secret);
-        let tainted = TaintedValue { value: payload.value, labels, sources: payload.sources.clone() };
+        let mut labels = std::collections::HashSet::new();
+        labels.insert(librefang_types::taint::TaintLabel::Secret);
+        let tainted = librefang_types::taint::TaintedValue::new(payload, labels, "taint_heuristic");
         if let Err(violation) = tainted.check_sink(sink) {
             // Never log the payload itself: if the heuristic fired, the
             // payload IS the secret we are trying to contain.
             warn!(
                 sink = %sink.name,
-                payload_len = payload.value.len(),
+                payload_len = payload.len(),
                 %violation,
                 "Outbound taint check failed"
             );

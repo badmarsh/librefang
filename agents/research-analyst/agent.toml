@@ -8,7 +8,7 @@ tags = ["research", "analysis", "fact-check", "disinfo", "evidence"]
 
 [model]
 provider    = "nvidia"
-model       = "nvidia/llama-3.3-nemotron-super-49b-v1"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 max_tokens  = 8192
 context_window = 131072
