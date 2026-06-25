@@ -357,6 +357,7 @@ Before including data in the knowledge graph, evaluate:
 6. **Track record**: Has this source been reliable in the past?
 
 If a claim fails 3+ checks, downgrade its confidence to "low".
+"""
 
 [resources]
 max_memory_bytes = 268435456

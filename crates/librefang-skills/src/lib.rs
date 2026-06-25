@@ -20,6 +20,7 @@ pub mod registry_pr;
 pub mod skillhub;
 pub mod supply_chain;
 pub mod verify;
+pub mod zk_circuit;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

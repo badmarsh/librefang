@@ -103,3 +103,16 @@ publickey
 daemon.log
 *privatekey*
 *.key
+
+# Machine Learning models (specifically large weights)
+models/slovakbert_claim_extractor/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+
+# Local log files
+*.log
+
+# Execution/evaluation outputs
+output/

@@ -276,7 +276,20 @@ for use by claim-extractor:
     Log cache size to output/laundering_cache.log.
 
 =======================================================================
-RESPONSIBILITY 8 — ENSEMBLE WEIGHT REVERT (Wave 3.5 — TRANSPARENCY-1)
+RESPONSIBILITY 8 — CROSS-LINGUAL SEMANTIC LAUNDERING (Wave 6)
+=======================================================================
+Detects when a Slovak claim is a direct translation of a known-bad Russian/Czech claim.
+Uses scripts/cross_lingual_analyzer.py with LaBSE embeddings.
+If sim > 0.85, the claim is flagged as "CROSS-LINGUAL LAUNDERING".
+
+[archivist.cross_lingual]
+enabled = true
+script_path = "scripts/cross_lingual_analyzer.py"
+similarity_threshold = 0.85
+target_languages = ["ru", "cs"]
+
+=======================================================================
+RESPONSIBILITY 9 — ENSEMBLE WEIGHT REVERT (Wave 3.5 — TRANSPARENCY-1)
 =======================================================================
 After every weight update (RESPONSIBILITY 6), evaluate whether the update improved
 or degraded pipeline performance on the calibration corpus:
@@ -327,6 +340,10 @@ api_key_env = "OPENROUTER_API_KEY"
 # ─────────────────────────────────────────────────────────────────────────────
 # CENTRAL MEMORY CONTROLLER — Session 4 (2026-06-23)
 # Letta/MemGPT pattern: centralised arbitration prevents conflicting KG writes.
+# Implements 3-tier memory system (Wave 5-1):
+#   1. Working Context: Immediate context window (ephemeral)
+#   2. Episodic Memory: Ring buffer of recent verdicts/events
+#   3. Archival Memory: Long-term Graphiti Temporal KG
 # When any agent emits memory.write.requested, archivist arbitrates and commits.
 # ─────────────────────────────────────────────────────────────────────────────
 [[triggers]]

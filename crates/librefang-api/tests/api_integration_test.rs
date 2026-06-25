@@ -185,7 +185,7 @@ async fn start_full_router(api_key: &str) -> FullRouterHarness {
     let config = KernelConfig {
         home_dir: tmp.path().to_path_buf(),
         data_dir: tmp.path().join("data"),
-        api_key: api_key.to_string(),
+        api_key: api_key.to_string().into(),
         default_model: DefaultModelConfig {
             provider: "ollama".to_string(),
             model: "test-model".to_string(),
@@ -1948,7 +1948,7 @@ system_prompt = "Test."
 async fn start_test_server_with_auth(api_key: &str) -> TestServer {
     let api_key_owned = api_key.to_string();
     let test = TestAppState::with_builder(MockKernelBuilder::new().with_config(move |cfg| {
-        cfg.api_key = api_key_owned;
+        cfg.api_key = api_key_owned.into();
     }))
     .with_api_key(api_key);
     let config_path = test.tmp_path().join("config.toml");
@@ -3250,7 +3250,7 @@ async fn start_test_server_with_rbac_users(
 
     let api_key_owned = api_key.to_string();
     let test = TestAppState::with_builder(MockKernelBuilder::new().with_config(move |cfg| {
-        cfg.api_key = api_key_owned;
+        cfg.api_key = api_key_owned.into();
         cfg.users = user_configs;
     }))
     .with_api_key(api_key)
@@ -3505,7 +3505,7 @@ async fn start_test_server_with_full_user_configs(
 
     let api_key_owned = api_key.to_string();
     let test = TestAppState::with_builder(MockKernelBuilder::new().with_config(move |cfg| {
-        cfg.api_key = api_key_owned;
+        cfg.api_key = api_key_owned.into();
         cfg.users = user_configs;
     }))
     .with_api_key(api_key)

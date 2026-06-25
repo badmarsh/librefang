@@ -3341,4 +3341,35 @@ mod tests {
             "login page must not redirect to /dashboard/ — that path 404s (#4860)"
         );
     }
+
+    #[tokio::test]
+    async fn slovak_legal_compliance_gate_blocks_missing_human_reviewed_at() {
+        let app: Router = Router::new()
+            .route("/test", axum::routing::post(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(super::slovak_legal_compliance_gate));
+
+        // Missing human_reviewed_at => should be blocked (451)
+        let req = Request::post("/test")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"verdict": "blocked", "source": "hlavnespravy.sk"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status().as_u16(), 451);
+
+        // Has human_reviewed_at => should pass (200)
+        let req2 = Request::post("/test")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"verdict": "blocked", "source": "hlavnespravy.sk", "human_reviewed_at": "2026-01-01T00:00:00Z"}"#))
+            .unwrap();
+        let resp2 = app.clone().oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+
+        // Not a slovak outlet => should pass (200)
+        let req3 = Request::post("/test")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"verdict": "allowed", "source": "bbc.co.uk"}"#))
+            .unwrap();
+        let resp3 = app.clone().oneshot(req3).await.unwrap();
+        assert_eq!(resp3.status(), StatusCode::OK);
+    }
 }

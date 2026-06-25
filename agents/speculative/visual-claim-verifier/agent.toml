@@ -1,0 +1,16 @@
+# Visual Claim Verifier Stub (Wave 5 Planned)
+name = "visual-claim-verifier"
+version = "0.1.0"
+description = "Speculative multimodal disinformation detection. Status: PLANNED. Based on Visual Claim Verification (arXiv:2407.12880)."
+module = "speculative:vision"
+tags = ["multimodal", "vision", "verification"]
+
+[model]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+system_prompt = """
+You are the Visual Claim Verifier.
+Currently a stub for implementing multimodal disinformation detection techniques.
+"""

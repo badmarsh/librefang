@@ -101,6 +101,7 @@ pub(crate) fn spawn_detached_daemon(
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
+        .env("RUST_MIN_STACK", "16777216")
         .envs(std::env::vars());
 
     #[cfg(unix)]
@@ -459,6 +460,7 @@ pub(crate) fn cmd_start(config: Option<PathBuf>, tail: bool, spawned: bool, fore
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
+        .thread_stack_size(16 * 1024 * 1024)
         .enable_all()
         .build()
         .unwrap();

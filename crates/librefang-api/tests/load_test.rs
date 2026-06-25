@@ -129,7 +129,7 @@ async fn start_test_server() -> TestServer {
         data_dir: tmp.path().join("data"),
         // Empty api_key => auth is open; combined with the genuine loopback
         // peer (below) the auth middleware passes requests without a token.
-        api_key: String::new(),
+        api_key: String::new().into(),
         default_model: DefaultModelConfig {
             provider: "ollama".to_string(),
             model: "test-model".to_string(),

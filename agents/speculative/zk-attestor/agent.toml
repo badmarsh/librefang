@@ -1,18 +1,16 @@
-# ⚠️ NOT IMPLEMENTED — RESEARCH STUB
-# This agent directory is a research stub. It is NOT loaded by any pipeline stage.
-# Zero-knowledge proof cryptographic infrastructure is not implemented.
-# See agents/speculative/README.md for details.
-# DO NOT reference this agent in any pipeline or workflow configuration.
+# ZK Attestor Stub (Wave 5 Planned)
 name = "zk-attestor"
-version = "1.0.0-stub"
-description = "[RESEARCH STUB — NOT IMPLEMENTED] Federated Zero-Knowledge Verification (FZKV) agent. ZK proof infrastructure not implemented. Do not use in production pipelines."
+version = "0.1.0"
+description = "Speculative zero-knowledge proof attestation for publishing verifiable verdicts without revealing internal pipeline signals. Status: PLANNED. Based on the Halo2 crate."
+module = "speculative:zk"
+tags = ["zkp", "attestation", "halo2", "crypto"]
 
 [model]
-provider = "freellmpool" # Uses local cryptographic libraries instead of LLM
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
 
-capabilities = ["snark_verification", "decentralized_trust"]
-
-[config]
-curve = "bn128"
-proving_system = "groth16"
-minimum_attestation_weight = 0.85
+system_prompt = """
+You are the Zero-Knowledge Verdict Attestor.
+Currently a stub for evaluating cryptographic attestation of disinformation verdicts using Halo2.
+"""

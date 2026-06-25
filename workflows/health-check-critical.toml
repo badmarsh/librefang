@@ -16,13 +16,13 @@ expected_response = "ACK"
 
 [[steps]]
 name          = "probe_collector"
-agent       = "collector-hand"
+agent_name = "collector-hand"
 input       = "test_fixture"
 timeout_secs = 15
 
 [[steps]]
 name          = "probe_researcher"
-agent       = "researcher-hand"
+agent_name = "researcher-hand"
 input       = "test_fixture"
 timeout_secs = 15
 

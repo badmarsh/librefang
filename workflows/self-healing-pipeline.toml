@@ -28,7 +28,7 @@ output_var = "recent_errors"
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "analyze_failures"
-agent       = "code-reviewer"  # Using code-reviewer, which can be equipped with self-improving-agent
+agent_name = "code-reviewer"  # Using code-reviewer, which can be equipped with self-improving-agent
 depends_on  = ["fetch_errors"]
 input       = "recent_errors"
 description = "Analyze the stack traces and pipeline states to propose a fix."
@@ -41,7 +41,7 @@ output_var = "proposed_fix"
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "apply_fix"
-agent       = "maintainer"
+agent_name = "maintainer"
 depends_on  = ["analyze_failures"]
 input       = "proposed_fix"
 description = "Apply the proposed fix and restart the affected agents."
@@ -53,7 +53,7 @@ timeout_secs = 120
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "alert_operator"
-agent       = "orchestrator"
+agent_name = "orchestrator"
 depends_on  = ["apply_fix"]
 description = "Notify the operator in the command-center that a self-healing action was taken."
 prompt_template = "Notify the operator in the command-center that a self-healing action was taken."

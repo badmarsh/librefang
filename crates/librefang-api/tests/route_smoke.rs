@@ -90,7 +90,7 @@ async fn boot_router() -> Harness {
     let config = KernelConfig {
         home_dir: tmp.path().to_path_buf(),
         data_dir: tmp.path().join("data"),
-        api_key: String::new(),
+        api_key: String::new().into(),
         default_model: DefaultModelConfig {
             provider: "ollama".to_string(),
             model: "test-model".to_string(),

@@ -59,7 +59,7 @@ async fn boot_router_with_api_key(api_key: &str) -> RouterHarness {
     let config = KernelConfig {
         home_dir: tmp.path().to_path_buf(),
         data_dir: tmp.path().join("data"),
-        api_key: api_key.to_string(),
+        api_key: api_key.to_string().into(),
         default_model: DefaultModelConfig {
             provider: "ollama".to_string(),
             model: "test-model".to_string(),
@@ -102,7 +102,7 @@ async fn boot_router_strict_reads() -> RouterHarness {
     let config = KernelConfig {
         home_dir: tmp.path().to_path_buf(),
         data_dir: tmp.path().join("data"),
-        api_key: "test-secret-key".to_string(),
+        api_key: "test-secret-key".to_string().into(),
         require_auth_for_reads: Some(true),
         default_model: DefaultModelConfig {
             provider: "ollama".to_string(),
@@ -653,7 +653,7 @@ async fn auth_providers_open_mode_returns_names_only() {
     let config = KernelConfig {
         home_dir: tmp.path().to_path_buf(),
         data_dir: tmp.path().join("data"),
-        api_key: String::new(), // open mode
+        api_key: String::new().into(), // open mode
         external_auth: ExternalAuthConfig {
             enabled: true,
             providers: vec![OidcProvider {
