@@ -15,62 +15,62 @@
   },
   "steps": [
     {
-      "name": "asset-retrieve",
-      "timeout_secs": 120,
-      "error_mode": "fail",
-      "mode": "sequential",
+      "agent": "collector-hand",
       "prompt_template": "Retrieve and archive the media asset at URL: {{input.asset_url}}. Compute SHA256 hash. If video: extract {{config.video_keyframe_sample_rate}} keyframes per 30-second segment. Archive original URL to Wayback Machine. Return: asset_hash, archived_url, keyframe_paths (if video), extracted_audio_transcript (if video, use openai-whisper skill).",
-      "output_var": "asset_data",
-      "agent_name": "collector-hand"
-    },
-    {
-      "name": "vlm-forensics",
-      "timeout_secs": 300,
-      "error_mode": "fail",
       "mode": "sequential",
-      "prompt_template": "Apply full image forensics pipeline to asset {{asset_data.asset_hash}}. Run: (1) caption_consistency check against claim: {{input.claim_text}}, (2) manipulation_check for deepfake/splice indicators, (3) EXIF validation if metadata available. For video: analyse each keyframe in {{asset_data.keyframe_paths}} individually then aggregate. Use image-forensics skill prompts. Return full VisualEvidence JSON.",
-      "output_var": "vlm_forensics_result",
-      "agent_name": "visual-analyst"
-    },
-    {
-      "name": "reverse-image-search",
-      "timeout_secs": 180,
-      "error_mode": "skip",
-      "mode": "fan_out",
-      "prompt_template": "Perform reverse image lineage search for asset hash {{asset_data.asset_hash}}, URL: {{input.asset_url}}. Use multi-search-engine and browser-use to find earlier publications of this image/video. Identify original context, original date, and any prior fact-checks. Return: earliest_known_url, original_context, original_date, prior_factchecks.",
-      "output_var": "reverse_image_result",
-      "agent_name": "researcher-hand"
-    },
-    {
-      "name": "caption-cross-check",
-      "timeout_secs": 300,
-      "error_mode": "fail",
-      "mode": "sequential",
-      "prompt_template": "Cross-check visual findings against textual claim. VLM forensics result: {{vlm_forensics_result}}. Reverse image search: {{reverse_image_result}}. Original claim: {{input.claim_text}}. Does the visual evidence support, refute, or complicate the textual claim? Output updated verdict JSON incorporating visual evidence.",
-      "output_var": "integrated_verdict",
-      "agent_name": "inquisitor"
-    },
-    {
-      "name": "overlay-generation",
       "timeout_secs": 120,
-      "error_mode": "skip",
+      "name": "asset-retrieve",
+      "output_var": "asset_data",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "visual-analyst",
+      "prompt_template": "Apply full image forensics pipeline to asset {{asset_data.asset_hash}}. Run: (1) caption_consistency check against claim: {{input.claim_text}}, (2) manipulation_check for deepfake/splice indicators, (3) EXIF validation if metadata available. For video: analyse each keyframe in {{asset_data.keyframe_paths}} individually then aggregate. Use image-forensics skill prompts. Return full VisualEvidence JSON.",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "name": "vlm-forensics",
+      "output_var": "vlm_forensics_result",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "researcher-hand",
+      "prompt_template": "Perform reverse image lineage search for asset hash {{asset_data.asset_hash}}, URL: {{input.asset_url}}. Use multi-search-engine and browser-use to find earlier publications of this image/video. Identify original context, original date, and any prior fact-checks. Return: earliest_known_url, original_context, original_date, prior_factchecks.",
+      "mode": "fan_out",
+      "timeout_secs": 180,
+      "name": "reverse-image-search",
+      "output_var": "reverse_image_result",
+      "error_mode": "skip"
+    },
+    {
+      "agent": "inquisitor",
+      "prompt_template": "Cross-check visual findings against textual claim. VLM forensics result: {{vlm_forensics_result}}. Reverse image search: {{reverse_image_result}}. Original claim: {{input.claim_text}}. Does the visual evidence support, refute, or complicate the textual claim? Output updated verdict JSON incorporating visual evidence.",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "name": "caption-cross-check",
+      "output_var": "integrated_verdict",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "visual-analyst",
+      "prompt_template": "Generate factcheck overlay badge for asset {{asset_data.asset_hash}} using nano-banana-pro skill. Integrated verdict: {{integrated_verdict}}. Apply appropriate badge text from image-forensics skill config. Save to output/visual/forensics/{{asset_data.asset_hash}}_overlay.png.",
       "mode": {
         "conditional": {
           "condition": "integrated_verdict.verdict != 'TRUE'"
         }
       },
-      "prompt_template": "Generate factcheck overlay badge for asset {{asset_data.asset_hash}} using nano-banana-pro skill. Integrated verdict: {{integrated_verdict}}. Apply appropriate badge text from image-forensics skill config. Save to output/visual/forensics/{{asset_data.asset_hash}}_overlay.png.",
+      "timeout_secs": 120,
+      "name": "overlay-generation",
       "output_var": "overlay_result",
-      "agent_name": "visual-analyst"
+      "error_mode": "skip"
     },
     {
-      "name": "provenance-attach-visual",
-      "timeout_secs": 60,
-      "error_mode": "skip",
-      "mode": "sequential",
+      "agent": "archivist",
       "prompt_template": "Attach VisualEvidence node to provenance graph. Claim ID: {{input.claim_id}}. VLM forensics: {{vlm_forensics_result}}. Reverse image: {{reverse_image_result}}. Overlay path: {{overlay_result.overlay_path}}. Asset data: {{asset_data}}.",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "name": "provenance-attach-visual",
       "output_var": "provenance_visual_node",
-      "agent_name": "archivist"
+      "error_mode": "skip"
     }
   ],
   "created_at": "2026-05-04T16:13:00.000000000Z"

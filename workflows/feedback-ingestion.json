@@ -1,1 +1,62 @@
-{"name": "feedback-ingestion", "version": "1.0.0", "description": "Ingests human-confirmed verdicts from writer review queue into ensemble.agent_stats. Enables Bayesian weight adaptation (Improvement 1) to converge. Wires the open feedback loop identified in audit.", "author": "librefang", "tags": ["feedback", "bayesian", "ensemble", "self-improvement", "audit-fix"], "steps": [{"name": "read-review-queue", "timeout_secs": 30, "prompt_template": "Read confirmed verdicts from writer.pending_review queue (human-approved items only).", "output_var": "confirmed_verdicts_batch", "agent_name": "writer"}, {"depends_on": ["read-review-queue"], "name": "ingest-to-ensemble-stats", "timeout_secs": 60, "prompt_template": "Ingest confirmed verdicts into ensemble.agent_stats, requiring minimum 2 independent reviews for borderline P_fake [0.45, 0.75] claims.", "output_var": "ensemble_stats_updated", "agent_name": "archivist"}, {"depends_on": ["ingest-to-ensemble-stats"], "name": "trigger-weight-recompute", "timeout_secs": 30, "prompt_template": "Trigger Bayesian weight recomputation when threshold is reached and quality threshold is met.", "output_var": "weight_recompute_result", "mode": {"conditional": {"condition": "ensemble_stats_updated.total_confirmed >= 10 && ensemble_stats_updated.alpha_paused == false"}}, "agent_name": "disinfo-orchestrator"}, {"depends_on": ["trigger-weight-recompute"], "name": "archive-feedback-record", "timeout_secs": 30, "prompt_template": "Immutable log of the feedback ingestion batch and any weight changes.", "output_var": "feedback_archive_record", "agent_name": "archivist"}], "settings": {"max_concurrent_claims": 1, "global_timeout_secs": 180, "failure_mode": "log-and-continue", "log_all_verdicts": true}}
+{
+  "name": "feedback-ingestion",
+  "version": "1.0.0",
+  "description": "Ingests human-confirmed verdicts from writer review queue into ensemble.agent_stats. Enables Bayesian weight adaptation (Improvement 1) to converge. Wires the open feedback loop identified in audit.",
+  "author": "librefang",
+  "tags": [
+    "feedback",
+    "bayesian",
+    "ensemble",
+    "self-improvement",
+    "audit-fix"
+  ],
+  "steps": [
+    {
+      "agent": "writer",
+      "prompt_template": "Read confirmed verdicts from writer.pending_review queue (human-approved items only).",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "name": "read-review-queue",
+      "output_var": "confirmed_verdicts_batch"
+    },
+    {
+      "agent": "archivist",
+      "prompt_template": "Ingest confirmed verdicts into ensemble.agent_stats, requiring minimum 2 independent reviews for borderline P_fake [0.45, 0.75] claims.",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "name": "ingest-to-ensemble-stats",
+      "output_var": "ensemble_stats_updated",
+      "depends_on": [
+        "read-review-queue"
+      ]
+    },
+    {
+      "agent": "disinfo-orchestrator",
+      "prompt_template": "Trigger Bayesian weight recomputation when threshold is reached and quality threshold is met.",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "name": "trigger-weight-recompute",
+      "output_var": "weight_recompute_result",
+      "depends_on": [
+        "ingest-to-ensemble-stats"
+      ]
+    },
+    {
+      "agent": "archivist",
+      "prompt_template": "Immutable log of the feedback ingestion batch and any weight changes.",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "name": "archive-feedback-record",
+      "output_var": "feedback_archive_record",
+      "depends_on": [
+        "trigger-weight-recompute"
+      ]
+    }
+  ],
+  "settings": {
+    "max_concurrent_claims": 1,
+    "global_timeout_secs": 180,
+    "failure_mode": "log-and-continue",
+    "log_all_verdicts": true
+  }
+}

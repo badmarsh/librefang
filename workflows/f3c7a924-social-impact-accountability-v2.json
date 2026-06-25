@@ -10,61 +10,61 @@
   },
   "steps": [
     {
-      "name": "determine-tier",
-      "timeout_secs": 60,
-      "error_mode": "fail",
-      "mode": "sequential",
+      "agent": "impact-comms",
       "prompt_template": "Evaluate verdict: {{input.verdict_json}}. Determine action tier: Tier 1 (confidence >= 0.80), Tier 2 (confidence >= 0.85, recommended_action=notify), Tier 3 (confidence >= 0.90, recommended_action=escalate-legal). Return tier number and justification.",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "name": "determine-tier",
       "output_var": "action_tier",
-      "agent_name": "impact-comms"
+      "error_mode": "fail"
     },
     {
-      "name": "draft-advertiser-notice",
-      "timeout_secs": 120,
-      "error_mode": "skip",
+      "agent": "impact-comms",
+      "prompt_template": "Draft a formal DOCX advertiser notification using Word/DOCX and humanizer skills. Template: advertiser-notice. Tone: formal. Include: claim text, verdict, confidence score, evidence summary, request to suspend ad placements on {{input.verdict_json.actor}} properties. Verdict: {{input.verdict_json}}.",
       "mode": {
         "conditional": {
           "condition": "action_tier.tier >= 2"
         }
       },
-      "prompt_template": "Draft a formal DOCX advertiser notification using Word/DOCX and humanizer skills. Template: advertiser-notice. Tone: formal. Include: claim text, verdict, confidence score, evidence summary, request to suspend ad placements on {{input.verdict_json.actor}} properties. Verdict: {{input.verdict_json}}.",
-      "output_var": "advertiser_notice_doc",
-      "agent_name": "impact-comms"
-    },
-    {
-      "name": "draft-regulator-complaint",
       "timeout_secs": 120,
-      "error_mode": "skip",
-      "mode": {
-        "conditional": {
-          "condition": "action_tier.tier >= 3"
-        }
-      },
+      "name": "draft-advertiser-notice",
+      "output_var": "advertiser_notice_doc",
+      "error_mode": "skip"
+    },
+    {
+      "agent": "impact-comms",
       "prompt_template": "Draft a formal DOCX regulatory complaint using Word/DOCX and humanizer skills. Template: regulatory-complaint. Tone: legal. Address to: Slovak Press Council (Tla\u010dov\u00e1 rada), RTVS Council, EU DSA enforcement body. Include full evidence package. Verdict: {{input.verdict_json}}.",
-      "output_var": "regulator_complaint_doc",
-      "agent_name": "impact-comms"
-    },
-    {
-      "name": "phone-outreach",
-      "timeout_secs": 240,
-      "error_mode": "skip",
       "mode": {
         "conditional": {
           "condition": "action_tier.tier >= 3"
         }
       },
-      "prompt_template": "Use agent-phone-call skill to place outbound calls to trust-and-safety contacts and journalists. Script template: journalist-briefing. Max duration: 180 seconds. Briefing context: {{regulator_complaint_doc}}. Target contacts: {{input.contact_list}}.",
-      "output_var": "call_results",
-      "agent_name": "impact-comms"
+      "timeout_secs": 120,
+      "name": "draft-regulator-complaint",
+      "output_var": "regulator_complaint_doc",
+      "error_mode": "skip"
     },
     {
-      "name": "deliver-notifications",
-      "timeout_secs": 180,
-      "error_mode": "skip",
-      "mode": "fan_out",
+      "agent": "impact-comms",
+      "prompt_template": "Use agent-phone-call skill to place outbound calls to trust-and-safety contacts and journalists. Script template: journalist-briefing. Max duration: 180 seconds. Briefing context: {{regulator_complaint_doc}}. Target contacts: {{input.contact_list}}.",
+      "mode": {
+        "conditional": {
+          "condition": "action_tier.tier >= 3"
+        }
+      },
+      "timeout_secs": 240,
+      "name": "phone-outreach",
+      "output_var": "call_results",
+      "error_mode": "skip"
+    },
+    {
+      "agent": "impact-comms",
       "prompt_template": "Deliver all prepared notifications via api-gateway and automation-workflows skills. Channels: email, webhook, signal. Attach documents: {{advertiser_notice_doc}}, {{regulator_complaint_doc}}. Log all delivery confirmations.",
+      "mode": "fan_out",
+      "timeout_secs": 180,
+      "name": "deliver-notifications",
       "output_var": "delivery_confirmations",
-      "agent_name": "impact-comms"
+      "error_mode": "skip"
     }
   ],
   "created_at": "2026-05-04T12:50:00.000000000Z"

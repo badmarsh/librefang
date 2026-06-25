@@ -1,1 +1,45 @@
-{"name": "health-check-critical", "version": "1.0.0", "description": "Probes the researcher-hand and collector-hand with a benign request to ensure they are online and responding within thresholds. Auto-restarts on failure.", "author": "librefang", "tags": ["system", "health", "critical"], "schedule": {"cron": "*/30 * * * *", "timezone": "Europe/Bratislava"}, "test_fixture": {"prompt": "Ping. Please return the string 'ACK'.", "expected_response": "ACK"}, "steps": [{"name": "probe_collector", "timeout_secs": 15, "agent_name": "collector-hand"}, {"name": "probe_researcher", "timeout_secs": 15, "agent_name": "researcher-hand"}, {"depends_on": ["probe_collector", "probe_researcher"], "name": "assert_health", "agent_name": "orchestrator"}]}
+{
+  "name": "health-check-critical",
+  "version": "1.0.0",
+  "description": "Probes the researcher-hand and collector-hand with a benign request to ensure they are online and responding within thresholds. Auto-restarts on failure.",
+  "author": "librefang",
+  "tags": [
+    "system",
+    "health",
+    "critical"
+  ],
+  "schedule": {
+    "cron": "*/30 * * * *",
+    "timezone": "Europe/Bratislava"
+  },
+  "test_fixture": {
+    "prompt": "Ping. Please return the string 'ACK'.",
+    "expected_response": "ACK"
+  },
+  "steps": [
+    {
+      "agent": "collector-hand",
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "name": "probe_collector"
+    },
+    {
+      "agent": "researcher-hand",
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "name": "probe_researcher"
+    },
+    {
+      "agent": "default-agent",
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "name": "assert_health",
+      "depends_on": [
+        "probe_collector",
+        "probe_researcher"
+      ]
+    }
+  ]
+}

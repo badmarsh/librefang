@@ -13,58 +13,58 @@
   },
   "steps": [
     {
-      "name": "actor-mapping",
-      "timeout_secs": 600,
-      "error_mode": "fail",
-      "mode": "sequential",
+      "agent": "investigator",
       "prompt_template": "ACTOR MAPPING phase for cluster: {{input.cluster_id}}. Brief: {{input.investigator_brief}}. Claim IDs: {{input.claim_ids}}. Map all actors: people, organisations, domains, social accounts. Use browser-use for corporate registry, WHOIS, social graph lookups. Cross-reference with ontology Actor nodes. Return actor_network JSON with relationship edges.",
-      "output_var": "actor_network",
-      "agent_name": "investigator"
-    },
-    {
-      "name": "timeline-reconstruction",
-      "timeout_secs": 300,
-      "error_mode": "fail",
       "mode": "sequential",
-      "prompt_template": "TIMELINE RECONSTRUCTION for cluster {{input.cluster_id}}. Actor network: {{actor_network}}. Claims: {{input.claim_ids}}. Reconstruct chronological sequence: first appearance, amplification nodes, mainstream pickup. Identify patient-zero origin. Flag if narrative was seeded before the real-world event it references. Return timeline JSON array.",
-      "output_var": "timeline",
-      "agent_name": "investigator"
-    },
-    {
-      "name": "evidence-chain-assembly",
-      "timeout_secs": 180,
-      "error_mode": "fail",
-      "mode": "sequential",
-      "prompt_template": "Retrieve full provenance chains for all claims in cluster {{input.cluster_id}}: {{input.claim_ids}}. Export chain-of-evidence for each. Filter: only include evidence with confidence >= 0.75. Flag gaps as [UNVERIFIED - REQUIRES HUMAN REPORTER]. Return assembled evidence_appendix JSON.",
-      "output_var": "evidence_appendix",
-      "agent_name": "archivist"
-    },
-    {
-      "name": "impact-assessment",
-      "timeout_secs": 180,
-      "error_mode": "skip",
-      "mode": "sequential",
-      "prompt_template": "IMPACT ASSESSMENT for campaign cluster {{input.cluster_id}}. Timeline: {{timeline}}. Actor network: {{actor_network}}. Estimate: total audience reach, most viral amplification nodes, real-world harm potential (elections, public health, ethnic tensions, financial markets). Source registry credibility context for all domains involved. Return impact_assessment JSON.",
-      "output_var": "impact_assessment",
-      "agent_name": "analyst"
-    },
-    {
-      "name": "report-synthesis",
       "timeout_secs": 600,
-      "error_mode": "fail",
-      "mode": "sequential",
-      "prompt_template": "Generate full investigation report for cluster {{input.cluster_id}}. Actor network: {{actor_network}}. Timeline: {{timeline}}. Evidence appendix: {{evidence_appendix}}. Impact assessment: {{impact_assessment}}. Write report with: Executive Summary, Key Findings, Actor Network, Timeline, Evidence Appendix, Gaps & Limitations, Recommended Actions. Save DOCX and JSON to output/investigations/{{input.cluster_id}}/. Return report summary and file paths.",
-      "output_var": "investigation_report",
-      "agent_name": "investigator"
+      "name": "actor-mapping",
+      "output_var": "actor_network",
+      "error_mode": "fail"
     },
     {
-      "name": "editorial-routing",
-      "timeout_secs": 180,
-      "error_mode": "skip",
+      "agent": "investigator",
+      "prompt_template": "TIMELINE RECONSTRUCTION for cluster {{input.cluster_id}}. Actor network: {{actor_network}}. Claims: {{input.claim_ids}}. Reconstruct chronological sequence: first appearance, amplification nodes, mainstream pickup. Identify patient-zero origin. Flag if narrative was seeded before the real-world event it references. Return timeline JSON array.",
       "mode": "sequential",
+      "timeout_secs": 300,
+      "name": "timeline-reconstruction",
+      "output_var": "timeline",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "archivist",
+      "prompt_template": "Retrieve full provenance chains for all claims in cluster {{input.cluster_id}}: {{input.claim_ids}}. Export chain-of-evidence for each. Filter: only include evidence with confidence >= 0.75. Flag gaps as [UNVERIFIED - REQUIRES HUMAN REPORTER]. Return assembled evidence_appendix JSON.",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "name": "evidence-chain-assembly",
+      "output_var": "evidence_appendix",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "analyst",
+      "prompt_template": "IMPACT ASSESSMENT for campaign cluster {{input.cluster_id}}. Timeline: {{timeline}}. Actor network: {{actor_network}}. Estimate: total audience reach, most viral amplification nodes, real-world harm potential (elections, public health, ethnic tensions, financial markets). Source registry credibility context for all domains involved. Return impact_assessment JSON.",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "name": "impact-assessment",
+      "output_var": "impact_assessment",
+      "error_mode": "skip"
+    },
+    {
+      "agent": "investigator",
+      "prompt_template": "Generate full investigation report for cluster {{input.cluster_id}}. Actor network: {{actor_network}}. Timeline: {{timeline}}. Evidence appendix: {{evidence_appendix}}. Impact assessment: {{impact_assessment}}. Write report with: Executive Summary, Key Findings, Actor Network, Timeline, Evidence Appendix, Gaps & Limitations, Recommended Actions. Save DOCX and JSON to output/investigations/{{input.cluster_id}}/. Return report summary and file paths.",
+      "mode": "sequential",
+      "timeout_secs": 600,
+      "name": "report-synthesis",
+      "output_var": "investigation_report",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "impact-comms",
       "prompt_template": "Route investigation report for cluster {{input.cluster_id}}. Report: {{investigation_report}}. Impact: {{impact_assessment}}. If harm_potential=high AND evidence_gaps=[] \u2192 auto-publish. If evidence_gaps present \u2192 create human-reporter handoff brief. If harm_potential=critical \u2192 trigger Tier 3 accountability (regulator alert + phone outreach). Execute appropriate action.",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "name": "editorial-routing",
       "output_var": "editorial_result",
-      "agent_name": "impact-comms"
+      "error_mode": "skip"
     }
   ],
   "created_at": "2026-05-04T16:13:00.000000000Z"

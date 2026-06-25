@@ -1,1 +1,101 @@
-{"name": "health-check", "version": "0.1.0", "description": "Daily end-to-end pipeline validator. Injects a known-false test claim, asserts arbiter returns FALSE with confidence >= 0.75. Alerts operator on failure.", "author": "librefang", "tags": ["system", "health", "testing", "monitoring", "reliability"], "schedule": {"cron": "0 6 * * *", "timezone": "Europe/Bratislava"}, "test_fixture": {"claim_id": "health-check-fixture-001", "claim_text": "Slovakia declared independence from Czechoslovakia on 1 January 1991.", "claim_text_sk": "Slovensko vyhl\u00e1silo nez\u00e1vislos\u0165 od \u010ceskoslovenska 1. janu\u00e1ra 1991.", "expected_verdict": "FALSE", "expected_confidence_min": 0.75, "flag_archival": true}, "steps": [{"name": "inject", "prompt_template": "Write test fixture claim directly to dispatch queue, bypassing deduplication gate (test claims must always re-run).", "output_var": "dispatch_queue", "agent_name": "orchestrator"}, {"depends_on": ["inject"], "name": "hc-verify-fast", "timeout_secs": 15, "mode": "fan_out", "agent_name": "ml-classifier"}, {"depends_on": ["inject"], "name": "hc-verify-deep", "timeout_secs": 150, "mode": "fan_out", "agent_name": "inquisitor"}, {"depends_on": ["hc-verify-fast", "hc-verify-deep"], "name": "hc-consensus", "timeout_secs": 30, "output_var": "hc_arbiter_decision", "agent_name": "disinfo-orchestrator"}, {"depends_on": ["hc-consensus"], "name": "assert", "prompt_template": "Compare hc_arbiter_decision against test_fixture expectations. Write result to output/health-check/latest.json.", "agent_name": "orchestrator"}, {"depends_on": ["assert"], "name": "alert", "timeout_secs": 15, "prompt_template": "On health-check failure: write human-review task, send proactive-agent alert, log to routing_log.json.", "mode": {"conditional": {"condition": "assert.status == 'fail'"}}, "agent_name": "orchestrator"}], "output": {"path": "output/health-check/latest.json", "schema": "{ run_at='ISO8601', status='pass|fail', verdict='DISINFORMATION|SUSPICIOUS|UNCERTAIN|CREDIBLE', weighted_fake_score=0.0, confidence=0.0, expected_verdict='string', expected_confidence_min=0.0, assertion_results=[], stage_timings_ms={}, failure_reason='string or null' }", "retain_history": 30}}
+{
+  "name": "health-check",
+  "version": "0.1.0",
+  "description": "Daily end-to-end pipeline validator. Injects a known-false test claim, asserts arbiter returns FALSE with confidence >= 0.75. Alerts operator on failure.",
+  "author": "librefang",
+  "tags": [
+    "system",
+    "health",
+    "testing",
+    "monitoring",
+    "reliability"
+  ],
+  "schedule": {
+    "cron": "0 6 * * *",
+    "timezone": "Europe/Bratislava"
+  },
+  "test_fixture": {
+    "claim_id": "health-check-fixture-001",
+    "claim_text": "Slovakia declared independence from Czechoslovakia on 1 January 1991.",
+    "claim_text_sk": "Slovensko vyhl\u00e1silo nez\u00e1vislos\u0165 od \u010ceskoslovenska 1. janu\u00e1ra 1991.",
+    "expected_verdict": "FALSE",
+    "expected_confidence_min": 0.75,
+    "flag_archival": true
+  },
+  "steps": [
+    {
+      "agent": "default-agent",
+      "prompt_template": "Write test fixture claim directly to dispatch queue, bypassing deduplication gate (test claims must always re-run).",
+      "mode": "sequential",
+      "name": "inject",
+      "output_var": "dispatch_queue"
+    },
+    {
+      "agent": "ml-classifier",
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 15,
+      "name": "hc-verify-fast",
+      "depends_on": [
+        "inject"
+      ]
+    },
+    {
+      "agent": "inquisitor",
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 150,
+      "name": "hc-verify-deep",
+      "depends_on": [
+        "inject"
+      ]
+    },
+    {
+      "agent": "disinfo-orchestrator",
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "name": "hc-consensus",
+      "output_var": "hc_arbiter_decision",
+      "depends_on": [
+        "hc-verify-fast",
+        "hc-verify-deep"
+      ]
+    },
+    {
+      "agent": "default-agent",
+      "prompt_template": "Compare hc_arbiter_decision against test_fixture expectations. Write result to output/health-check/latest.json.",
+      "mode": "sequential",
+      "name": "assert",
+      "depends_on": [
+        "hc-consensus"
+      ]
+    },
+    {
+      "agent": "orchestrator",
+      "prompt_template": "On health-check failure: write human-review task, send proactive-agent alert, log to routing_log.json.",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "name": "alert",
+      "depends_on": [
+        "assert"
+      ]
+    }
+  ],
+  "output": {
+    "path": "output/health-check/latest.json",
+    "schema": {
+      "run_at": "ISO8601",
+      "status": "pass|fail",
+      "verdict": "DISINFORMATION|SUSPICIOUS|UNCERTAIN|CREDIBLE",
+      "weighted_fake_score": 0.0,
+      "confidence": 0.0,
+      "expected_verdict": "string",
+      "expected_confidence_min": 0.0,
+      "assertion_results": [],
+      "stage_timings_ms": {},
+      "failure_reason": "string or null",
+      "retain_history": 30
+    }
+  }
+}

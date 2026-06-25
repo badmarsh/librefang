@@ -4,49 +4,49 @@
   "description": "Continuous monitoring of high-profile actors and news outlets to detect malicious demagoguery and high-impact lies.",
   "steps": [
     {
-      "name": "ingest-feeds",
-      "timeout_secs": 120,
-      "error_mode": "skip",
-      "mode": "fan_out",
+      "agent": "collector-hand",
       "prompt_template": "Monitor the following list of high-profile social media accounts and news RSS feeds for new statements: {{input}}. Extract all factual claims made in the last 24 hours with author, reach estimate, and platform.",
+      "mode": "fan_out",
+      "timeout_secs": 120,
+      "name": "ingest-feeds",
       "output_var": "extracted_claims",
-      "agent_name": "collector-hand"
+      "error_mode": "skip"
     },
     {
-      "name": "translate-claims",
-      "timeout_secs": 90,
-      "error_mode": "skip",
-      "mode": "sequential",
+      "agent": "translator",
       "prompt_template": "Translate all non-English claims in {{extracted_claims}} to English. Preserve original language text. Source languages: SK, CZ, HU, RU.",
-      "output_var": "translated_claims",
-      "agent_name": "translator"
-    },
-    {
-      "name": "identify-demagoguery",
-      "timeout_secs": 180,
-      "error_mode": "fail",
       "mode": "sequential",
-      "prompt_template": "Review the following claims: {{translated_claims}}. Identify statements that exhibit demagoguery (appealing to prejudices, using inflammatory language) or contain potentially high-impact malicious lies that could cause public harm or misinformation spread. Include a brief reasoning chain for each flag.",
-      "output_var": "flagged_claims",
-      "agent_name": "analyst"
-    },
-    {
-      "name": "impact-scoring",
-      "timeout_secs": 180,
-      "error_mode": "fail",
-      "mode": "sequential",
-      "prompt_template": "For each flagged claim in {{flagged_claims}}, assign an impact score (0-100) based on the reach of the author, platform virality potential, and the potential for social disruption in the Slovak/Central European context. Filter for claims with a score > 75 and output them as a structured JSON list with fields: claim_text, author, source_url, impact_score, flag_reason.",
-      "output_var": "scored_claims",
-      "agent_name": "analyst"
-    },
-    {
-      "name": "qa-review",
       "timeout_secs": 90,
-      "error_mode": "skip",
+      "name": "translate-claims",
+      "output_var": "translated_claims",
+      "error_mode": "skip"
+    },
+    {
+      "agent": "analyst",
+      "prompt_template": "Review the following claims: {{translated_claims}}. Identify statements that exhibit demagoguery (appealing to prejudices, using inflammatory language) or contain potentially high-impact malicious lies that could cause public harm or misinformation spread. Include a brief reasoning chain for each flag.",
       "mode": "sequential",
+      "timeout_secs": 180,
+      "name": "identify-demagoguery",
+      "output_var": "flagged_claims",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "analyst",
+      "prompt_template": "For each flagged claim in {{flagged_claims}}, assign an impact score (0-100) based on the reach of the author, platform virality potential, and the potential for social disruption in the Slovak/Central European context. Filter for claims with a score > 75 and output them as a structured JSON list with fields: claim_text, author, source_url, impact_score, flag_reason.",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "name": "impact-scoring",
+      "output_var": "scored_claims",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "analyst",
       "prompt_template": "Review the scored claims {{scored_claims}} for scoring consistency, evidence quality, and flag accuracy. Verify that high-impact_score claims (>75) genuinely warrant escalation in the Slovak/Central European context. Correct or remove any mis-scored claims.",
+      "mode": "sequential",
+      "timeout_secs": 90,
+      "name": "qa-review",
       "output_var": "high_priority_claims",
-      "agent_name": "analyst"
+      "error_mode": "skip"
     }
   ],
   "created_at": "2026-05-03T16:20:53.128055154Z"

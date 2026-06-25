@@ -1,1 +1,56 @@
-{"name": "self-healing-pipeline", "version": "1.0.0", "description": "Monitors pipeline runs and applies the self-improving-agent skill to automatically propose and implement fixes for failures.", "author": "librefang", "tags": ["infrastructure", "stability", "self-healing", "monitoring"], "schedule": {"cron": "30 * * * *", "timezone": "Europe/Bratislava"}, "steps": [{"name": "fetch_errors", "prompt_template": "Fetch recent pipeline errors from the last hour.", "output_var": "recent_errors", "agent_name": "orchestrator"}, {"depends_on": ["fetch_errors"], "name": "analyze_failures", "timeout_secs": 120, "prompt_template": "Analyze the stack traces and pipeline states to propose a fix.", "output_var": "proposed_fix", "agent_name": "code-reviewer"}, {"depends_on": ["analyze_failures"], "name": "apply_fix", "timeout_secs": 120, "prompt_template": "Apply the proposed fix and restart the affected agents.", "agent_name": "maintainer"}, {"depends_on": ["apply_fix"], "name": "alert_operator", "timeout_secs": 30, "prompt_template": "Notify the operator in the command-center that a self-healing action was taken.", "agent_name": "orchestrator"}]}
+{
+  "name": "self-healing-pipeline",
+  "version": "1.0.0",
+  "description": "Monitors pipeline runs and applies the self-improving-agent skill to automatically propose and implement fixes for failures.",
+  "author": "librefang",
+  "tags": [
+    "infrastructure",
+    "stability",
+    "self-healing",
+    "monitoring"
+  ],
+  "schedule": {
+    "cron": "30 * * * *",
+    "timezone": "Europe/Bratislava"
+  },
+  "steps": [
+    {
+      "agent": "default-agent",
+      "prompt_template": "Fetch recent pipeline errors from the last hour.",
+      "mode": "sequential",
+      "name": "fetch_errors",
+      "output_var": "recent_errors"
+    },
+    {
+      "agent": "code-reviewer",
+      "prompt_template": "Analyze the stack traces and pipeline states to propose a fix.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "name": "analyze_failures",
+      "output_var": "proposed_fix",
+      "depends_on": [
+        "fetch_errors"
+      ]
+    },
+    {
+      "agent": "maintainer",
+      "prompt_template": "Apply the proposed fix and restart the affected agents.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "name": "apply_fix",
+      "depends_on": [
+        "analyze_failures"
+      ]
+    },
+    {
+      "agent": "orchestrator",
+      "prompt_template": "Notify the operator in the command-center that a self-healing action was taken.",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "name": "alert_operator",
+      "depends_on": [
+        "apply_fix"
+      ]
+    }
+  ]
+}

@@ -1437,6 +1437,7 @@ async fn handle_request(
 /// Read/write message loop for an established connection.
 ///
 /// If `session_key` is provided, all post-handshake messages use per-message HMAC.
+#[allow(clippy::too_many_arguments)]
 async fn connection_loop(
     reader: &mut tokio::net::tcp::OwnedReadHalf,
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
@@ -1669,10 +1670,6 @@ pub async fn write_message_authenticated(
     writer.flush().await?;
     Ok(())
 }
-
-/// Read a framed message (4-byte length + JSON) from a TCP stream, pre-handshake.
-///
-/// SECURITY: this is the entry point for every read that happens *before* the peer has authenticated (inbound `Handshake`, outbound `HandshakeAck`), so the declared frame length is capped at [`MAX_PREHANDSHAKE_MESSAGE_SIZE`] — the cap is enforced before the body buffer is allocated, so an unauthenticated peer cannot pin a `MAX_MESSAGE_SIZE`-sized allocation by claiming a huge frame and stalling.
 
 /// SECURITY: Write an ChaCha20Poly1305 encrypted framed message.
 pub async fn write_message_encrypted(

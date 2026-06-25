@@ -1,1 +1,24 @@
-{"name": "security-scan", "version": "1.0.0", "description": "Runs the security-checklist against the repository and agent configurations to block updates containing misconfigurations or vulnerabilities.", "author": "librefang", "steps": [{"name": "run_audit", "timeout_secs": 600, "agent_name": "security-auditor"}, {"depends_on": ["run_audit"], "name": "enforce_compliance", "agent_name": "orchestrator"}]}
+{
+  "name": "security-scan",
+  "version": "1.0.0",
+  "description": "Runs the security-checklist against the repository and agent configurations to block updates containing misconfigurations or vulnerabilities.",
+  "author": "librefang",
+  "steps": [
+    {
+      "agent": "security-auditor",
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "name": "run_audit"
+    },
+    {
+      "agent": "default-agent",
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "name": "enforce_compliance",
+      "depends_on": [
+        "run_audit"
+      ]
+    }
+  ]
+}

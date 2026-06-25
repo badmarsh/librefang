@@ -38,7 +38,15 @@ impl TemporalGraph {
             edges: Vec::new(),
         }
     }
+}
 
+impl Default for TemporalGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TemporalGraph {
     pub fn add_node(&mut self, node: TemporalNode) {
         self.nodes.push(node);
     }
@@ -53,7 +61,7 @@ impl TemporalGraph {
             .iter()
             .filter(|e| {
                 e.valid_from <= timestamp
-                    && e.valid_to.map_or(true, |end| timestamp <= end)
+                    && e.valid_to.is_none_or(|end| timestamp <= end)
             })
             .collect()
     }

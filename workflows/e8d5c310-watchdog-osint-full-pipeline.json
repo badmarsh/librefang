@@ -7,79 +7,79 @@
   },
   "steps": [
     {
-      "name": "ingest-and-triage",
-      "timeout_secs": 120,
-      "error_mode": "skip",
-      "mode": "fan_out",
+      "agent": "watchdog",
       "prompt_template": "Ingest latest content from all configured OSINT sources: {{input.sources}}. Sources include: RSS feeds from hlavnespravy.sk, infovojna.sk, parlamentnelisty.sk, dennikn.sk, sme.sk, aktuality.sk; YouTube RSS; Telegram webhooks; Twitter webhooks. Normalize, deduplicate, and extract claim objects. Return array of raw claim objects.",
-      "output_var": "raw_claims",
-      "agent_name": "watchdog"
-    },
-    {
-      "name": "translate-foreign-content",
+      "mode": "fan_out",
       "timeout_secs": 120,
-      "error_mode": "skip",
-      "mode": "sequential",
+      "name": "ingest-and-triage",
+      "output_var": "raw_claims",
+      "error_mode": "skip"
+    },
+    {
+      "agent": "translator",
       "prompt_template": "Translate all non-English claims in {{raw_claims}} to English. Preserve original text alongside translation. Source languages: Slovak (sk), Czech (cs), Hungarian (hu), Russian (ru). Return claims with added fields: translated_text, source_lang.",
-      "output_var": "translated_claims",
-      "agent_name": "translator"
-    },
-    {
-      "name": "classify-and-route",
-      "timeout_secs": 180,
-      "error_mode": "fail",
       "mode": "sequential",
-      "prompt_template": "Classify each claim in {{translated_claims}}. For each: (1) assign escalation_score 0.0-1.0, (2) assign modality text|image|video|audio, (3) assign priority low|medium|high|critical, (4) assign route_to: inquisitor (score>=0.72 and text), visual-analyst (image/video), archive (historical). Return classified_claims array.",
-      "output_var": "classified_claims",
-      "agent_name": "watchdog"
+      "timeout_secs": 120,
+      "name": "translate-foreign-content",
+      "output_var": "translated_claims",
+      "error_mode": "skip"
     },
     {
-      "name": "visual-triage",
-      "timeout_secs": 300,
-      "error_mode": "skip",
+      "agent": "watchdog",
+      "prompt_template": "Classify each claim in {{translated_claims}}. For each: (1) assign escalation_score 0.0-1.0, (2) assign modality text|image|video|audio, (3) assign priority low|medium|high|critical, (4) assign route_to: inquisitor (score>=0.72 and text), visual-analyst (image/video), archive (historical). Return classified_claims array.",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "name": "classify-and-route",
+      "output_var": "classified_claims",
+      "error_mode": "fail"
+    },
+    {
+      "agent": "visual-analyst",
+      "prompt_template": "Analyze visual claims from {{classified_claims}} where modality is image or video. For each: extract text (OCR), assess authenticity, detect manipulation or out-of-context usage. Return visual_evidence array with visual_verdict and confidence.",
       "mode": {
         "conditional": {
           "condition": "any(c.modality in ['image', 'video'] for c in classified_claims)"
         }
       },
-      "prompt_template": "Analyze visual claims from {{classified_claims}} where modality is image or video. For each: extract text (OCR), assess authenticity, detect manipulation or out-of-context usage. Return visual_evidence array with visual_verdict and confidence.",
+      "timeout_secs": 300,
+      "name": "visual-triage",
       "output_var": "visual_evidence",
-      "agent_name": "visual-analyst"
+      "error_mode": "skip"
     },
     {
-      "name": "fact-check",
-      "timeout_secs": 300,
-      "error_mode": "skip",
+      "agent": "inquisitor",
+      "prompt_template": "Fact-check all escalated claims from {{classified_claims}} where escalation_score >= 0.72 and modality == text. Visual evidence available: {{visual_evidence}}. Apply CRAAP methodology. Return verdict array.",
       "mode": {
         "conditional": {
           "condition": "any(c.escalation_score >= 0.72 for c in classified_claims)"
         }
       },
-      "prompt_template": "Fact-check all escalated claims from {{classified_claims}} where escalation_score >= 0.72 and modality == text. Visual evidence available: {{visual_evidence}}. Apply CRAAP methodology. Return verdict array.",
+      "timeout_secs": 300,
+      "name": "fact-check",
       "output_var": "verdicts",
-      "agent_name": "inquisitor"
+      "error_mode": "skip"
     },
     {
-      "name": "enrich-graph",
-      "timeout_secs": 120,
-      "error_mode": "skip",
-      "mode": "sequential",
+      "agent": "archivist",
       "prompt_template": "Update the knowledge graph with all new verdicts: {{verdicts}}. Upsert Actor, Claim, Source, NarrativeCluster nodes. Update source credibility scores. Detect new narrative clusters (spread_score > 0.80 triggers watchdog alert). Output graph_mutations JSON.",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "name": "enrich-graph",
       "output_var": "graph_mutations",
-      "agent_name": "archivist"
+      "error_mode": "skip"
     },
     {
-      "name": "prepare-debunks",
-      "timeout_secs": 120,
-      "error_mode": "skip",
+      "agent": "impact-comms",
+      "prompt_template": "For all FALSE or MISLEADING verdicts in {{verdicts}} with confidence >= 0.80: draft bilingual (SK+EN) debunk posts using humanizer skill. Attach visual overlays from {{visual_evidence}} where available. Return debunk_drafts array.",
       "mode": {
         "conditional": {
           "condition": "any(v.verdict in ['FALSE', 'MISLEADING'] and v.confidence >= 0.80 for v in verdicts)"
         }
       },
-      "prompt_template": "For all FALSE or MISLEADING verdicts in {{verdicts}} with confidence >= 0.80: draft bilingual (SK+EN) debunk posts using humanizer skill. Attach visual overlays from {{visual_evidence}} where available. Return debunk_drafts array.",
+      "timeout_secs": 120,
+      "name": "prepare-debunks",
       "output_var": "debunk_drafts",
-      "agent_name": "impact-comms"
+      "error_mode": "skip"
     }
   ],
   "created_at": "2026-05-04T12:50:00.000000000Z"

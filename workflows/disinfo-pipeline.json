@@ -1,1 +1,199 @@
-{"name": "disinfo-pipeline", "version": "3.0.0", "description": "End-to-end disinformation detection: Firecrawl web backend, claim extraction, orchestrator gate, parallel multi-agent verification, instance-hardness routing, adversarial mini-debate, Bayesian+F2 consensus, multi-window CIB, and impact comms.", "author": "librefang", "tags": ["osint", "disinformation", "pipeline", "fact-check", "slovak", "czech", "firecrawl", "instance-hardness", "f2-score"], "steps": [{"name": "ingest", "timeout_secs": 60, "prompt_template": "Accept raw input. Extract atomic claims via Firecrawl (Imp 11), assign UUIDs, write to ontology, build dispatch queue. Watchdog uses firecrawl_search for cross-domain discovery (Imp 17).", "output_var": "dispatch_queue", "agent_name": "claim-extractor"}, {"depends_on": ["ingest"], "name": "sanitize", "timeout_secs": 15, "prompt_template": "Blocks adversarial inputs, prompt injections, and poisoned data in the extracted claims before orchestration.", "output_var": "sanitized_queue", "agent_name": "injection-shield"}, {"depends_on": ["sanitize"], "name": "orchestrate", "timeout_secs": 15, "prompt_template": "Deduplication gate: skip already-verified claims. Cost guard: hold if hourly cost > $5. Circuit breaker: batch if >20 claims/5min. Outputs approved dispatch_queue.", "output_var": "approved_queue", "agent_name": "orchestrator"}, {"depends_on": ["orchestrate"], "name": "stance-detect", "timeout_secs": 15, "prompt_template": "Classifies stance (SUPPORTS, REFUTES, UNRELATED) using BGE-M3 cross-encoder logic (Improvement 38).", "output_var": "stance_queue", "agent_name": "stance-detector"}, {"depends_on": ["stance-detect"], "name": "verify-fast", "timeout_secs": 10, "mode": "fan_out", "prompt_template": "Fast linguistic + structural first-pass. No web access. Confidence capped at 0.80. Returns verdict JSON for arbiter.", "output_var": "verdict_ml", "agent_name": "ml-classifier"}, {"depends_on": ["stance-detect"], "name": "verify-deep", "timeout_secs": 120, "mode": "fan_out", "prompt_template": "Deep CRAAP + adversarial multi-source verification. Min 10 sources (or 3 for targeted_verify path). Triggers archivist for claims >180 days. Checks COST_HOLD flag before starting.", "output_var": "verdict_inquisitor", "agent_name": "inquisitor"}, {"depends_on": ["stance-detect"], "name": "verify-visual", "timeout_secs": 60, "prompt_template": "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if stance_queue.visual_analyst is non-empty.", "output_var": "verdict_visual", "mode": {"conditional": {"condition": "len(stance_queue.visual_analyst) > 0"}}, "agent_name": "visual-analyst"}, {"depends_on": ["stance-detect"], "name": "verify-kg", "timeout_secs": 30, "mode": "fan_out", "prompt_template": "Knowledge graph consistency checking against local Neo4j/SQLite graph (Improvement 37).", "output_var": "verdict_kg", "agent_name": "kg-consistency-checker"}, {"depends_on": ["orchestrate"], "name": "narrative-scan", "timeout_secs": 90, "prompt_template": "Campaign detection: multi-window CIB analysis (2h/12h/72h), cluster related claims, score coordinated inauthentic behaviour, emit CampaignAlert if threshold met.", "output_var": "narrative_brief", "mode": {"conditional": {"condition": "len(approved_queue.narrative_tracker) > 0"}}, "agent_name": "narrative-tracker"}, {"depends_on": ["verify-fast", "verify-deep", "verify-visual", "verify-kg"], "name": "consensus", "timeout_secs": 30, "prompt_template": "Bayesian+F2 weighted merge of all verdicts. Instance-hardness routing. Adversarial mini-debate for borderline claims. Applies safety override rules. Emits: auto-publish | monitor | escalate-human | false-debunk.", "output_var": "arbiter_decision", "agent_name": "arbiter"}, {"depends_on": ["consensus"], "name": "investigate", "timeout_secs": 300, "prompt_template": "Deep actor/network investigation: provenance graph, financial flows, account network analysis. Only on escalated or high-CIB claims.", "output_var": "investigation_report", "mode": {"conditional": {"condition": "arbiter_decision.decision in ['escalate-human', 'false-debunk'] or narrative_brief.cib_score >= 0.75"}}, "agent_name": "investigator"}, {"depends_on": ["consensus"], "name": "legal-gate", "timeout_secs": 3600, "prompt_template": "Slovak §373 constraint: Requires human review before publishing verdicts about local entities.", "output_var": "legal_decision", "mode": {"conditional": {"condition": "arbiter_decision.decision in ['auto-publish', 'false-debunk', 'monitor']"}}, "agent_name": "legal-reviewer"}, {"depends_on": ["legal-gate"], "name": "communicate", "timeout_secs": 60, "prompt_template": "Generate bilingual (SK+EN) debunk summary, factcheck overlay, push to configured channels. Uses arbiter_decision.confidence (= consensus_score).", "output_var": "published_debunk", "mode": {"conditional": {"condition": "legal_decision.approved == true"}}, "agent_name": "impact-comms"}, {"depends_on": ["communicate", "investigate"], "name": "archive_record", "timeout_secs": 60, "prompt_template": "Immutable logging of final reports, investigation findings, and debunks for reproducibility.", "output_var": "archived_record", "agent_name": "archivist"}], "stages": {"output_mapping": {"arbiter_decision.confidence": "arbiter_decision.consensus_score"}}, "settings": {"max_concurrent_claims": 10, "global_timeout_secs": 600, "failure_mode": "escalate-human", "log_all_verdicts": true, "provenance_graph": true, "self_improvement": true, "ontology_sync": true, "cost_hold_flag_path": "output/orchestrator/COST_HOLD", "firecrawl_enabled": true, "f2_weighting_enabled": true, "instance_hardness_routing": true, "mini_debate_enabled": true, "cib_temporal_windows": [2, 12, 72], "embedding_cache": "sqlite"}}
+{
+  "name": "disinfo-pipeline",
+  "version": "3.0.0",
+  "description": "End-to-end disinformation detection: Firecrawl web backend, claim extraction, orchestrator gate, parallel multi-agent verification, instance-hardness routing, adversarial mini-debate, Bayesian+F2 consensus, multi-window CIB, and impact comms.",
+  "author": "librefang",
+  "tags": [
+    "osint",
+    "disinformation",
+    "pipeline",
+    "fact-check",
+    "slovak",
+    "czech",
+    "firecrawl",
+    "instance-hardness",
+    "f2-score"
+  ],
+  "steps": [
+    {
+      "agent": "claim-extractor",
+      "prompt_template": "Accept raw input. Extract atomic claims via Firecrawl (Imp 11), assign UUIDs, write to ontology, build dispatch queue. Watchdog uses firecrawl_search for cross-domain discovery (Imp 17).",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "name": "ingest",
+      "output_var": "dispatch_queue"
+    },
+    {
+      "agent": "injection-shield",
+      "prompt_template": "Blocks adversarial inputs, prompt injections, and poisoned data in the extracted claims before orchestration.",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "name": "sanitize",
+      "output_var": "sanitized_queue",
+      "depends_on": [
+        "ingest"
+      ]
+    },
+    {
+      "agent": "orchestrator",
+      "prompt_template": "Deduplication gate: skip already-verified claims. Cost guard: hold if hourly cost > $5. Circuit breaker: batch if >20 claims/5min. Outputs approved dispatch_queue.",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "name": "orchestrate",
+      "output_var": "approved_queue",
+      "depends_on": [
+        "sanitize"
+      ]
+    },
+    {
+      "agent": "stance-detector",
+      "prompt_template": "Classifies stance (SUPPORTS, REFUTES, UNRELATED) using BGE-M3 cross-encoder logic (Improvement 38).",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "name": "stance-detect",
+      "output_var": "stance_queue",
+      "depends_on": [
+        "orchestrate"
+      ]
+    },
+    {
+      "agent": "ml-classifier",
+      "prompt_template": "Fast linguistic + structural first-pass. No web access. Confidence capped at 0.80. Returns verdict JSON for arbiter.",
+      "mode": "fan_out",
+      "timeout_secs": 10,
+      "name": "verify-fast",
+      "output_var": "verdict_ml",
+      "depends_on": [
+        "stance-detect"
+      ]
+    },
+    {
+      "agent": "inquisitor",
+      "prompt_template": "Deep CRAAP + adversarial multi-source verification. Min 10 sources (or 3 for targeted_verify path). Triggers archivist for claims >180 days. Checks COST_HOLD flag before starting.",
+      "mode": "fan_out",
+      "timeout_secs": 120,
+      "name": "verify-deep",
+      "output_var": "verdict_inquisitor",
+      "depends_on": [
+        "stance-detect"
+      ]
+    },
+    {
+      "agent": "visual-analyst",
+      "prompt_template": "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if stance_queue.visual_analyst is non-empty.",
+      "mode": "fan_out",
+      "timeout_secs": 60,
+      "name": "verify-visual",
+      "output_var": "verdict_visual",
+      "depends_on": [
+        "stance-detect"
+      ]
+    },
+    {
+      "agent": "kg-consistency-checker",
+      "prompt_template": "Knowledge graph consistency checking against local Neo4j/SQLite graph (Improvement 37).",
+      "mode": "fan_out",
+      "timeout_secs": 30,
+      "name": "verify-kg",
+      "output_var": "verdict_kg",
+      "depends_on": [
+        "stance-detect"
+      ]
+    },
+    {
+      "agent": "narrative-tracker",
+      "prompt_template": "Campaign detection: multi-window CIB analysis (2h/12h/72h), cluster related claims, score coordinated inauthentic behaviour, emit CampaignAlert if threshold met.",
+      "mode": "fan_out",
+      "timeout_secs": 90,
+      "name": "narrative-scan",
+      "output_var": "narrative_brief",
+      "depends_on": [
+        "orchestrate"
+      ]
+    },
+    {
+      "agent": "arbiter",
+      "prompt_template": "Bayesian+F2 weighted merge of all verdicts. Instance-hardness routing. Adversarial mini-debate for borderline claims. Applies safety override rules. Emits: auto-publish | monitor | escalate-human | false-debunk.",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "name": "consensus",
+      "output_var": "arbiter_decision",
+      "depends_on": [
+        "verify-fast",
+        "verify-deep",
+        "verify-visual",
+        "verify-kg"
+      ]
+    },
+    {
+      "agent": "investigator",
+      "prompt_template": "Deep actor/network investigation: provenance graph, financial flows, account network analysis. Only on escalated or high-CIB claims.",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "name": "investigate",
+      "output_var": "investigation_report",
+      "depends_on": [
+        "consensus"
+      ]
+    },
+    {
+      "agent": "legal-reviewer",
+      "prompt_template": "Slovak \u00a7373 constraint: Requires human review before publishing verdicts about local entities.",
+      "mode": "sequential",
+      "timeout_secs": 3600,
+      "name": "legal-gate",
+      "output_var": "legal_decision",
+      "depends_on": [
+        "consensus"
+      ]
+    },
+    {
+      "agent": "impact-comms",
+      "prompt_template": "Generate bilingual (SK+EN) debunk summary, factcheck overlay, push to configured channels. Uses arbiter_decision.confidence (= consensus_score).",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "name": "communicate",
+      "output_var": "published_debunk",
+      "depends_on": [
+        "legal-gate"
+      ]
+    },
+    {
+      "agent": "archivist",
+      "prompt_template": "Immutable logging of final reports, investigation findings, and debunks for reproducibility.",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "name": "archive_record",
+      "output_var": "archived_record",
+      "depends_on": [
+        "communicate",
+        "investigate"
+      ]
+    }
+  ],
+  "stages": {
+    "output_mapping": {
+      "arbiter_decision.confidence": "arbiter_decision.consensus_score"
+    }
+  },
+  "settings": {
+    "max_concurrent_claims": 10,
+    "global_timeout_secs": 600,
+    "failure_mode": "escalate-human",
+    "log_all_verdicts": true,
+    "provenance_graph": true,
+    "self_improvement": true,
+    "ontology_sync": true,
+    "cost_hold_flag_path": "output/orchestrator/COST_HOLD",
+    "firecrawl_enabled": true,
+    "f2_weighting_enabled": true,
+    "instance_hardness_routing": true,
+    "mini_debate_enabled": true,
+    "cib_temporal_windows": [
+      2,
+      12,
+      72
+    ],
+    "embedding_cache": "sqlite"
+  }
+}
