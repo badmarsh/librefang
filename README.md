@@ -338,9 +338,9 @@ The `gart-synthesizer` agent has been promoted from `agents/speculative/` to `ag
 
 1. **Source-rater provenance dependency** (even after FIX-1): Credibility scores depend on external registry coverage. Lesser-known Slovak portals may be absent from NewsGuard/MBFC, resulting in `credibility_confidence < 2` and neutral fallback scores rather than meaningful ratings.
 
-2. **Transformer classifier training data quality**: SlovakBERT is trained on FakeNewsDetection_DRES. Claims from domains, time periods, or narrative types outside that distribution may be misclassified. The model has not been validated on post-2025 Slovak disinformation campaigns.
+2. **Transformer classifier training data quality**: SlovakBERT is trained on FakeNewsDetection_DRES. Claims from domains, time periods, or narrative types outside that distribution may be misclassified. The model has not been validated on post-2025 Slovak disinformation campaigns. (See evaluation plan based on arXiv:2004.10964).
 
-3. **CIB detection window thresholds empirically unvalidated**: The 2h/12h/72h temporal windows and SBERT 0.75/0.82 similarity thresholds were not calibrated against confirmed Slovak CIB campaigns. They are adapted from general social media research and may over- or under-trigger.
+3. **CIB detection window thresholds empirically unvalidated**: The 2h/12h/72h temporal windows and SBERT 0.75/0.82 similarity thresholds were not calibrated against confirmed Slovak CIB campaigns. Target values have been identified based on recent empirical calibration (arXiv:2505.10867), but remain unvalidated specifically on confirmed Slovak campaigns and may over- or under-trigger.
 
 4. **Slovak legal constraints on automated verdict publication**: Under Slovak defamation law (§373 Trestného zákona), automated verdicts naming specific outlets or journalists cannot be published without human review and corroboration from independent wire services. This system must NEVER be used to publish verdicts without operator human oversight.
 
@@ -351,9 +351,9 @@ The `gart-synthesizer` agent has been promoted from `agents/speculative/` to `ag
 
 | Feature | Description | Dependency |
 |---|---|---|
-| Temporal Graph Networks (TGN) | Continuous-time CIB detection replacing discrete windows | GPU + Rossi et al. (2020) training data |
+| Temporal Graph Networks (TGN) | Continuous-time CIB detection replacing discrete windows | GPU + arXiv:2006.10637 training data |
 | QSVM Classifier | Quantum SVM for narrative classification | Google Willow 105-qubit QPU (unavailable) |
-| ZK Attestation | Zero-knowledge proof attestation for verdicts | ZK cryptographic infrastructure |
+| ZK Attestation | Zero-knowledge proof attestation for verdicts | 📋 PLANNED (halo2 crate) |
 | Liquid Neural Networks | Continuous-time windowless CIB detection | LNN training framework |
 | A2A External Claim Federation | External claims from CEDMO/Demagog.sk via Google A2A | Partner agreements |
 

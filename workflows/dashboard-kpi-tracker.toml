@@ -17,6 +17,7 @@ timezone    = "Europe/Bratislava"
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "fetch_logs"
+agent_name    = "devops:ops"
 description = "Read recent session-logs and workflow output states."
 prompt_template = "Read recent session-logs and workflow output states."
 action      = "read_metrics"
@@ -27,7 +28,7 @@ output_var = "raw_metrics_data"
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "calculate_kpis"
-agent       = "data-scientist"
+agent_name = "data-scientist"
 depends_on  = ["fetch_logs"]
 input       = "raw_metrics_data"
 description = "Process logs into KPI metrics: Research Velocity (reports/hr), Fact-Check Accuracy (verification success rate), Agent Uptime (ping success %)."
@@ -40,6 +41,7 @@ output_var = "kpi_json"
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "push_to_dashboard"
+agent_name    = "devops:ops"
 description = "Write the calculated KPIs to the command-center local data store or API."
 prompt_template = "Write the calculated KPIs to the command-center local data store or API."
 action      = "write_result"

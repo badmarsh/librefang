@@ -45,14 +45,14 @@ output_var = "dispatch_queue"
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "hc-verify-fast"
-agent       = "ml-classifier"
+agent_name = "ml-classifier"
 depends_on  = ["inject"]
 mode = "fan_out"
 timeout_secs = 15
 
 [[steps]]
 name          = "hc-verify-deep"
-agent       = "inquisitor"
+agent_name = "inquisitor"
 depends_on  = ["inject"]
 mode = "fan_out"
 timeout_secs = 150
@@ -62,7 +62,7 @@ timeout_secs = 150
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "hc-consensus"
-agent       = "disinfo-orchestrator"
+agent_name = "disinfo-orchestrator"
 descends_on = ["hc-verify-fast", "hc-verify-deep"]
 depends_on  = ["hc-verify-fast", "hc-verify-deep"]
 wait        = "all_required_parallel_complete"
@@ -94,7 +94,7 @@ on_fail     = "write_result(status='fail') + trigger_alert"
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "alert"
-agent       = "orchestrator"
+agent_name = "orchestrator"
 description = "On health-check failure: write human-review task, send proactive-agent alert, log to routing_log.json."
 prompt_template = "On health-check failure: write human-review task, send proactive-agent alert, log to routing_log.json."
 depends_on  = ["assert"]

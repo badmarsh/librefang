@@ -6,7 +6,7 @@ author      = "librefang"
 
 [[steps]]
 name          = "run_audit"
-agent       = "security-auditor"
+agent_name = "security-auditor"
 action      = "execute_security_checklist"
 input       = "repository_diff"
 timeout_secs = 120

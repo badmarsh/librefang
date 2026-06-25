@@ -53,6 +53,7 @@ pub mod peer;
 pub mod registry;
 pub mod trusted_peers;
 pub mod transport;
+pub mod federation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EncryptionMode {

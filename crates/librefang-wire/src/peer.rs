@@ -989,7 +989,7 @@ impl PeerNode {
 
         // Verify handshake ack and derive session key
         let ack = read_message(&mut reader).await?;
-        let session_key = match &ack.kind {
+        let (session_key, use_encryption) = match &ack.kind {
             WireMessageKind::Response(WireResponse::HandshakeAck {
                 node_id: ack_node_id,
                 nonce: ack_nonce,
@@ -1034,17 +1034,28 @@ impl PeerNode {
                 }
                 // SECURITY (#4269): ECDH-derived session_key when both
                 // peers brought an ephemeral; legacy fallback otherwise.
-                match ack_eph {
+                let mut use_encryption = false;
+                let key = match ack_eph {
                     Some(remote_eph) => {
                         let transcript = crate::kex::handshake_transcript(&our_nonce, ack_nonce);
+                        use_encryption = true;
                         our_kex
                             .derive_session_key(remote_eph, &transcript)
                             .map_err(|e| {
                                 WireError::HandshakeFailed(format!("X25519 ECDH failed: {e}"))
                             })?
                     }
-                    None => derive_session_key(&self.config.shared_secret, &our_nonce, ack_nonce),
+                    None => {
+                        if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Required {
+                            return Err(WireError::HandshakeFailed("Peer does not support required ChaCha20Poly1305 encryption".into()));
+                        }
+                        derive_session_key(&self.config.shared_secret, &our_nonce, ack_nonce)
+                    }
+                };
+                if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Plaintext {
+                    use_encryption = false;
                 }
+                (key, use_encryption)
             }
             WireMessageKind::Response(WireResponse::Error { code, message }) => {
                 return Err(WireError::HandshakeFailed(format!(
@@ -1058,7 +1069,7 @@ impl PeerNode {
             }
         };
 
-        // SECURITY: Send agent message with per-message HMAC authentication
+        // SECURITY: Send agent message with per-message HMAC authentication or ChaCha20Poly1305 encryption
         let msg = WireMessage {
             id: uuid::Uuid::new_v4().to_string(),
             kind: WireMessageKind::Request(WireRequest::AgentMessage {
@@ -1067,9 +1078,19 @@ impl PeerNode {
                 sender: sender.map(|s| s.to_string()),
             }),
         };
-        write_message_authenticated(&mut writer, &msg, &session_key).await?;
+        
+        if use_encryption {
+            write_message_encrypted(&mut writer, &msg, &session_key).await?;
+        } else {
+            write_message_authenticated(&mut writer, &msg, &session_key).await?;
+        }
 
-        let response = read_message_authenticated(&mut reader, &session_key).await?;
+        let response = if use_encryption {
+            read_message_encrypted_observed(&mut reader, &session_key, node_id).await?
+        } else {
+            read_message_authenticated_observed(&mut reader, &session_key, node_id).await?
+        };
+        
         match response.kind {
             WireMessageKind::Response(WireResponse::AgentResponse { text }) => Ok(text),
             WireMessageKind::Response(WireResponse::Error { code, message }) => Err(
@@ -1680,6 +1701,7 @@ pub async fn write_message_encrypted(
     let len_bytes = (total_len as u32).to_be_bytes();
     
     writer.write_all(&len_bytes).await?;
+    writer.write_all(&[1u8]).await?; // Mode: 1 = Encrypted
     writer.write_all(&nonce_bytes).await?;
     writer.write_all(&encrypted).await?;
     writer.flush().await?;

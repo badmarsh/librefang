@@ -13,7 +13,7 @@ tags        = ["feedback", "bayesian", "ensemble", "self-improvement", "audit-fi
 
 [[steps]]
 name          = "read-review-queue"
-agent       = "writer"
+agent_name = "writer"
 description = "Read confirmed verdicts from writer.pending_review queue (human-approved items only)."
 prompt_template = "Read confirmed verdicts from writer.pending_review queue (human-approved items only)."
 trigger     = "schedule:*/15 * * * * | webhook:writer.verdict_confirmed"
@@ -23,7 +23,7 @@ notes       = "Only processes verdicts with human_confirmed = true. Skips auto-p
 
 [[steps]]
 name          = "ingest-to-ensemble-stats"
-agent       = "archivist"
+agent_name = "archivist"
 description = "Ingest confirmed verdicts into ensemble.agent_stats, requiring minimum 2 independent reviews for borderline P_fake [0.45, 0.75] claims."
 prompt_template = "Ingest confirmed verdicts into ensemble.agent_stats, requiring minimum 2 independent reviews for borderline P_fake [0.45, 0.75] claims."
 depends_on  = ["read-review-queue"]
@@ -42,7 +42,7 @@ notes       = """
 
 [[steps]]
 name          = "trigger-weight-recompute"
-agent       = "disinfo-orchestrator"
+agent_name = "disinfo-orchestrator"
 description = "Trigger Bayesian weight recomputation when threshold is reached and quality threshold is met."
 prompt_template = "Trigger Bayesian weight recomputation when threshold is reached and quality threshold is met."
 depends_on  = ["ingest-to-ensemble-stats"]
@@ -54,7 +54,7 @@ notes       = "Orchestrator recomputes w_i = (1-e_i) / sum(1-e_j) and writes to 
 
 [[steps]]
 name          = "archive-feedback-record"
-agent       = "archivist"
+agent_name = "archivist"
 description = "Immutable log of the feedback ingestion batch and any weight changes."
 prompt_template = "Immutable log of the feedback ingestion batch and any weight changes."
 depends_on  = ["trigger-weight-recompute"]

@@ -24,7 +24,7 @@ tags        = ["osint", "disinformation", "pipeline", "fact-check", "slovak", "c
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "ingest"
-agent       = "claim-extractor"
+agent_name = "claim-extractor"
 description = "Accept raw input. Extract atomic claims via Firecrawl (Imp 11), assign UUIDs, write to ontology, build dispatch queue. Watchdog uses firecrawl_search for cross-domain discovery (Imp 17)."
 prompt_template = "Accept raw input. Extract atomic claims via Firecrawl (Imp 11), assign UUIDs, write to ontology, build dispatch queue. Watchdog uses firecrawl_search for cross-domain discovery (Imp 17)."
 trigger     = "manual|webhook|watchdog|collector-hand"
@@ -37,7 +37,7 @@ notes       = "Imp 11: firecrawl_scrape (onlyMainContent=true) fetches JS-heavy 
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "sanitize"
-agent       = "injection-shield"
+agent_name = "injection-shield"
 description = "Blocks adversarial inputs, prompt injections, and poisoned data in the extracted claims before orchestration."
 prompt_template = "Blocks adversarial inputs, prompt injections, and poisoned data in the extracted claims before orchestration."
 depends_on  = ["ingest"]
@@ -52,7 +52,7 @@ timeout_secs = 15
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "orchestrate"
-agent       = "orchestrator"
+agent_name = "orchestrator"
 description = "Deduplication gate: skip already-verified claims. Cost guard: hold if hourly cost > $5. Circuit breaker: batch if >20 claims/5min. Outputs approved dispatch_queue."
 prompt_template = "Deduplication gate: skip already-verified claims. Cost guard: hold if hourly cost > $5. Circuit breaker: batch if >20 claims/5min. Outputs approved dispatch_queue."
 depends_on  = ["sanitize"]
@@ -65,7 +65,7 @@ timeout_secs = 15
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "stance-detect"
-agent       = "stance-detector"
+agent_name = "stance-detector"
 description = "Classifies stance (SUPPORTS, REFUTES, UNRELATED) using BGE-M3 cross-encoder logic (Improvement 38)."
 prompt_template = "Classifies stance (SUPPORTS, REFUTES, UNRELATED) using BGE-M3 cross-encoder logic (Improvement 38)."
 depends_on  = ["orchestrate"]
@@ -79,7 +79,7 @@ timeout_secs = 15
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "verify-fast"
-agent       = "ml-classifier"
+agent_name = "ml-classifier"
 description = "Fast linguistic + structural first-pass. No web access. Confidence capped at 0.80. Returns verdict JSON for arbiter."
 prompt_template = "Fast linguistic + structural first-pass. No web access. Confidence capped at 0.80. Returns verdict JSON for arbiter."
 depends_on  = ["stance-detect"]
@@ -91,7 +91,7 @@ notes       = "Imp 14: ml-classifier top_signals used as Affirmative argument in
 
 [[steps]]
 name          = "verify-deep"
-agent       = "inquisitor"
+agent_name = "inquisitor"
 description = "Deep CRAAP + adversarial multi-source verification. Min 10 sources (or 3 for targeted_verify path). Triggers archivist for claims >180 days. Checks COST_HOLD flag before starting."
 prompt_template = "Deep CRAAP + adversarial multi-source verification. Min 10 sources (or 3 for targeted_verify path). Triggers archivist for claims >180 days. Checks COST_HOLD flag before starting."
 depends_on  = ["stance-detect"]
@@ -103,7 +103,7 @@ notes       = "Imp 13: routing_path from orchestrator controls inquisitor depth 
 
 [[steps]]
 name          = "verify-visual"
-agent       = "visual-analyst"
+agent_name = "visual-analyst"
 description = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if stance_queue.visual_analyst is non-empty."
 prompt_template = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if stance_queue.visual_analyst is non-empty."
 depends_on  = ["stance-detect"]
@@ -115,7 +115,7 @@ timeout_secs = 60
 
 [[steps]]
 name          = "verify-kg"
-agent       = "kg-consistency-checker"
+agent_name = "kg-consistency-checker"
 description = "Knowledge graph consistency checking against local Neo4j/SQLite graph (Improvement 37)."
 prompt_template = "Knowledge graph consistency checking against local Neo4j/SQLite graph (Improvement 37)."
 depends_on  = ["stance-detect"]
@@ -130,7 +130,7 @@ timeout_secs = 30
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "narrative-scan"
-agent       = "narrative-tracker"
+agent_name = "narrative-tracker"
 description = "Campaign detection: multi-window CIB analysis (2h/12h/72h), cluster related claims, score coordinated inauthentic behaviour, emit CampaignAlert if threshold met."
 prompt_template = "Campaign detection: multi-window CIB analysis (2h/12h/72h), cluster related claims, score coordinated inauthentic behaviour, emit CampaignAlert if threshold met."
 depends_on  = ["orchestrate"]
@@ -148,7 +148,7 @@ notes       = "Imp 16: cib-detector now runs three temporal windows (2h/12h/72h)
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "consensus"
-agent       = "arbiter"
+agent_name = "arbiter"
 description = "Bayesian+F2 weighted merge of all verdicts. Instance-hardness routing. Adversarial mini-debate for borderline claims. Applies safety override rules. Emits: auto-publish | monitor | escalate-human | false-debunk."
 prompt_template = "Bayesian+F2 weighted merge of all verdicts. Instance-hardness routing. Adversarial mini-debate for borderline claims. Applies safety override rules. Emits: auto-publish | monitor | escalate-human | false-debunk."
 depends_on  = ["verify-fast", "verify-deep", "verify-visual", "verify-kg"]
@@ -168,7 +168,7 @@ notes       = "Imp 13: hardness_index H = u_epi*(1-max_conf) routes claims: H<0.
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "investigate"
-agent       = "investigator"
+agent_name = "investigator"
 description = "Deep actor/network investigation: provenance graph, financial flows, account network analysis. Only on escalated or high-CIB claims."
 prompt_template = "Deep actor/network investigation: provenance graph, financial flows, account network analysis. Only on escalated or high-CIB claims."
 depends_on  = ["consensus"]
@@ -182,7 +182,7 @@ timeout_secs = 300
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "legal-gate"
-agent         = "legal-reviewer"
+agent_name = "legal-reviewer"
 description   = "Slovak §373 constraint: Requires human review before publishing verdicts about local entities."
 prompt_template = "Slovak §373 constraint: Requires human review before publishing verdicts about local entities."
 depends_on    = ["consensus"]
@@ -197,7 +197,7 @@ timeout_secs  = 3600
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "communicate"
-agent       = "impact-comms"
+agent_name = "impact-comms"
 description = "Generate bilingual (SK+EN) debunk summary, factcheck overlay, push to configured channels. Uses arbiter_decision.confidence (= consensus_score)."
 prompt_template = "Generate bilingual (SK+EN) debunk summary, factcheck overlay, push to configured channels. Uses arbiter_decision.confidence (= consensus_score)."
 depends_on  = ["legal-gate"]
@@ -212,7 +212,7 @@ timeout_secs = 60
 # ─────────────────────────────────────────────
 [[steps]]
 name          = "archive_record"
-agent       = "archivist"
+agent_name = "archivist"
 description = "Immutable logging of final reports, investigation findings, and debunks for reproducibility."
 prompt_template = "Immutable logging of final reports, investigation findings, and debunks for reproducibility."
 depends_on  = ["communicate", "investigate"]

@@ -93,6 +93,11 @@ action  = "check_all_scorers_ready"
 event   = "pipeline.rerun.disinfo-orchestrator"
 action  = "aggregate_verdicts"
 
+# --- Federated Learning Sync (Wave 5, Gap 5) ---
+[[triggers]]
+event   = "orchestrator.federated_sync.requested"
+action  = "aggregate_fedavg_weights"
+
 # --- A2A External Claim Federation (Wave 5, Improvement 18) ---
 # Reference: github.com/google/A2A — Google A2A protocol (Linux Foundation standard, 2025)
 # This trigger accepts claims submitted by external partner organisations

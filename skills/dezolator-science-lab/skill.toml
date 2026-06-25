@@ -1,0 +1,39 @@
+[skill]
+name = "dezolator-science-lab"
+version = "1.0.0"
+description = "Cutting-edge Computational Social Science Lab. Simulates complex contagion of disinformation across synthetic topologies (Barabási-Albert, Watts-Strogatz). Models cognitive vulnerability, echo-chambers, and interventions (inoculation, de-amplification) using NDlib and NetworkX."
+author = "librefang"
+license = "Apache-2.0"
+tags = [
+    "simulation",
+    "computational-science",
+    "network-science",
+    "epidemiology",
+    "complex-contagion",
+    "disinformation",
+    "abm"
+]
+
+[runtime]
+type  = "python"
+entry = "main.py"
+
+[tools]
+# The API exposes functions that agents can invoke
+provided = [
+    { name = "generate_topology", description = "Generates a synthetic social network topology (scale-free, small-world) for simulation." },
+    { name = "simulate_contagion", description = "Runs a complex contagion simulation (Linear Threshold, Independent Cascade) on a network to project disinformation spread." },
+    { name = "simulate_intervention", description = "Simulates the effect of an intervention (e.g., node blocking, inoculation/pre-bunking) on the contagion spread." }
+]
+
+[requirements]
+tools        = []
+capabilities = []
+
+[source]
+type = "local"
+
+[config]
+default_network_size = 1000
+default_topology_type = "scale-free"
+default_contagion_model = "independent-cascade"

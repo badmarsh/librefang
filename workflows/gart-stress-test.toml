@@ -5,17 +5,17 @@ cron = "0 2 * * *" # Run at 2 AM daily
 
 [[stage]]
 id = "521e7aa9-f4f3-433a-b4d7-9cd8b77ba4ec"
-agent = "gart-synthesizer"
+agent_name = "gart-synthesizer"
 action = "generate_claims"
 
 [[stage]]
 id = "9b8900be-229f-453e-929e-db427f108421"
-agent = "watchdog"
+agent_name = "watchdog"
 action = "ingest_synthetic"
 depends_on = ["synthesize"]
 
 [[stage]]
 id = "f72b7d06-95e5-4edb-8b65-ef7b35b1d7b3"
-agent = "disinfo-orchestrator"
+agent_name = "disinfo-orchestrator"
 action = "measure_f2_degradation"
 depends_on = ["inject"]

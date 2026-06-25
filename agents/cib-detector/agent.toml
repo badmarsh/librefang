@@ -242,6 +242,11 @@ so the orchestrator can reference infrastructure evidence in its rationale.
 """
 
 [cib.coordination_index]
+# Calibration note: Target thresholds for temporal_windows and sbert_threshold
+# are based on recent empirical validation from TikTok CIB campaigns.
+# Source: arXiv:2505.10867
+# Target temporal_windows: ["1h", "6h", "24h"]
+# Target sbert_threshold: 0.85
 method = "continuous_spectrum"    # Nizzoli et al. 2021
 superspreader_similarity_threshold = 0.70
 propagation_graph_enabled = true

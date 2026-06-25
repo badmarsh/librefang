@@ -70,7 +70,7 @@ async fn boot(config: KernelConfig) -> Harness {
 /// Passkey enabled, api_key set so auth is enforced on non-public routes.
 async fn boot_enabled() -> Harness {
     let mut cfg = base_config();
-    cfg.api_key = "test-secret-key".to_string();
+    cfg.api_key = "test-secret-key".to_string().into();
     cfg.dashboard_user = "admin".to_string();
     cfg.passkey_enabled = true;
     cfg.passkey_rp_id = "localhost".to_string();

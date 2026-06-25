@@ -150,7 +150,7 @@ async fn terminal_health_403_when_terminal_disabled() {
 async fn terminal_health_401_when_api_key_set_and_no_bearer() {
     let h = boot_with(|cfg| {
         cfg.terminal.tmux_enabled = false;
-        cfg.api_key = "test-secret-key".to_string();
+        cfg.api_key = "test-secret-key".to_string().into();
     })
     .await;
     let (status, _) = send(&h, request(Method::GET, "/api/terminal/health", None)).await;
@@ -162,7 +162,7 @@ async fn terminal_health_401_when_api_key_set_and_no_bearer() {
 async fn terminal_health_401_when_bearer_is_wrong() {
     let h = boot_with(|cfg| {
         cfg.terminal.tmux_enabled = false;
-        cfg.api_key = "test-secret-key".to_string();
+        cfg.api_key = "test-secret-key".to_string().into();
     })
     .await;
     let (status, _) = send(
@@ -179,7 +179,7 @@ async fn terminal_health_401_when_bearer_is_wrong() {
 async fn terminal_health_200_with_correct_bearer() {
     let h = boot_with(|cfg| {
         cfg.terminal.tmux_enabled = false;
-        cfg.api_key = "test-secret-key".to_string();
+        cfg.api_key = "test-secret-key".to_string().into();
     })
     .await;
     let (status, body) = send(
@@ -224,7 +224,7 @@ async fn list_windows_403_when_tmux_disabled() {
 async fn list_windows_401_takes_precedence_over_tmux_disabled() {
     let h = boot_with(|cfg| {
         cfg.terminal.tmux_enabled = false;
-        cfg.api_key = "test-secret-key".to_string();
+        cfg.api_key = "test-secret-key".to_string().into();
     })
     .await;
     let (status, _) = send(&h, request(Method::GET, "/api/terminal/windows", None)).await;

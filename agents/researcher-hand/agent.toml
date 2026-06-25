@@ -28,6 +28,7 @@ api_key_env = "OPENROUTER_API_KEY"
 max_tokens  = 8192
 context_window = 131072
 temperature = 0.3
+system_prompt = """
 [Top 5 sources with URLs]
 ```
 
@@ -457,7 +458,6 @@ Be aware of these biases during research:
 - Preprints have not been peer-reviewed — note this caveat
 - p-values and effect sizes both matter — not just "statistically significant"
 """
-api_key_env = "OPENROUTER_API_KEY"
 
 [resources]
 max_memory_bytes = 268435456

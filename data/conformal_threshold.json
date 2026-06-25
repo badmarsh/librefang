@@ -1,0 +1,8 @@
+{
+  "q_hat": 0.05271995543210162,
+  "alpha": 0.1,
+  "conformal_coverage_guarantee": 0.9,
+  "empirical_coverage": 0.9666666666666667,
+  "n_samples": 30,
+  "temperature_T": 0.3621021580196334
+}

@@ -92,7 +92,7 @@ async fn boot_full_router() -> (Router, Arc<AppState>, TempDir) {
         // on routing, not authentication — a 401 from a configured-key
         // run would still pass the "not 404" assertion, but skipping
         // auth here makes the failure mode singular and obvious.
-        api_key: String::new(),
+        api_key: String::new().into(),
         default_model: DefaultModelConfig {
             provider: "ollama".to_string(),
             model: "test-model".to_string(),

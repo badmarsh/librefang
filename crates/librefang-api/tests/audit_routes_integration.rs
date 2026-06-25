@@ -90,7 +90,7 @@ fn build_audit_harness(api_key: &str, users: Vec<(&str, &str, &str)>) -> AuditHa
 
     let api_key_owned = api_key.to_string();
     let test = TestAppState::with_builder(MockKernelBuilder::new().with_config(move |cfg| {
-        cfg.api_key = api_key_owned;
+        cfg.api_key = api_key_owned.into();
         cfg.users = user_configs;
     }))
     .with_api_key(api_key)

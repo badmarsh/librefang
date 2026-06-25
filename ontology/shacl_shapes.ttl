@@ -1,0 +1,49 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix disinfo: <http://librefang.ai/ontology/disinformation#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+
+# Shape for Claim enforcement
+disinfo:ClaimShape
+    a sh:NodeShape ;
+    sh:targetClass disinfo:Claim ;
+    sh:property [
+        sh:path dc:title ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "A Claim MUST have exactly one or more dc:title properties (the literal claim string)." ;
+    ] ;
+    sh:property [
+        sh:path dc:date ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "A Claim MUST have exactly one dc:date." ;
+    ] .
+
+# Shape for Source enforcement
+disinfo:SourceShape
+    a sh:NodeShape ;
+    sh:targetClass disinfo:Source ;
+    sh:property [
+        sh:path dc:identifier ;
+        sh:datatype xsd:anyURI ;
+        sh:minCount 1 ;
+        sh:message "A Source MUST have a resolvable dc:identifier (URL)." ;
+    ] .
+
+# Shape for Actor enforcement
+disinfo:ActorShape
+    a sh:NodeShape ;
+    sh:targetClass disinfo:Actor ;
+    sh:property [
+        sh:path dc:title ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "An Actor MUST have a dc:title." ;
+    ] ;
+    sh:property [
+        sh:path disinfo:madeClaim ;
+        sh:class disinfo:Claim ;
+        sh:message "If an Actor made a claim, it MUST point to a valid disinfo:Claim entity." ;
+    ] .

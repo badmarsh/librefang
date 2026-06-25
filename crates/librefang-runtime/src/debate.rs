@@ -7,8 +7,6 @@
 //! 
 //! Reference: arXiv:2603.xxxxx (Deep Multi-Agent Debate for Disinformation)
 
-use librefang_types::agent::AgentId;
-
 /// Represents a role in the multi-agent debate.
 pub enum DebatePersona {
     FactChecker,

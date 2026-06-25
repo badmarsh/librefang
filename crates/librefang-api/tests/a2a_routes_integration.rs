@@ -57,7 +57,7 @@ async fn boot(api_key: &str) -> Harness {
     let config = KernelConfig {
         home_dir: tmp.path().to_path_buf(),
         data_dir: tmp.path().join("data"),
-        api_key: api_key.to_string(),
+        api_key: api_key.to_string().into(),
         default_model: DefaultModelConfig {
             provider: "ollama".to_string(),
             model: "test-model".to_string(),
@@ -80,7 +80,7 @@ async fn boot(api_key: &str) -> Harness {
         app,
         _tmp: tmp,
         state,
-        api_key: api_key.to_string(),
+        api_key: api_key.to_string().into(),
     }
 }
 

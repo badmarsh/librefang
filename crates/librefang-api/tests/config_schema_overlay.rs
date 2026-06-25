@@ -206,6 +206,7 @@ fn every_kernel_config_struct_field_is_exposed_via_overlay() {
         "provider_api_keys",    // /providers (sensitive too)
         "auth_profiles",        // /users (sensitive structure)
         "channel_role_mapping", // /users (channel→role auth derivation)
+        "audit_journal_mirror", // handled under compliance/audit scope
         // Identity / flat scalars that ARE represented but as root_level
         // entries on the synthetic "general" section, not as their own
         // section descriptor. The `every_root_level_field_exists` test
