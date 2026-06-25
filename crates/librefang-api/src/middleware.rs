@@ -1635,6 +1635,51 @@ pub async fn security_headers(request: Request<Body>, next: Next) -> Response<Bo
     response
 }
 
+pub async fn slovak_legal_compliance_gate(
+    req: Request<Body>,
+    next: Next,
+) -> Result<Response<Body>, StatusCode> {
+    if req.method() != axum::http::Method::POST && req.method() != axum::http::Method::PUT && req.method() != axum::http::Method::PATCH {
+        return Ok(next.run(req).await);
+    }
+    
+    let content_type = req.headers().get(axum::http::header::CONTENT_TYPE);
+    let is_json = content_type.is_some_and(|v| v.as_bytes().starts_with(b"application/json"));
+    if !is_json {
+        return Ok(next.run(req).await);
+    }
+
+    let (parts, body) = req.into_parts();
+    // 5MB limit
+    let bytes = match axum::body::to_bytes(body, 5 * 1024 * 1024).await {
+        Ok(b) => b,
+        Err(_) => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+        let text = json.to_string().to_lowercase();
+        // If it's a verdict or contains disinfo_verdict
+        if text.contains("verdict") {
+            let is_slovak_outlet = text.contains("hlavnespravy") || 
+                                   text.contains("infovojna") || 
+                                   text.contains("slobodnyvysielac") || 
+                                   text.contains("zemavek") ||
+                                   text.contains(".sk");
+            
+            if is_slovak_outlet && !text.contains("human_reviewed_at") {
+                tracing::warn!("Blocked automated verdict publication under §373 Trestného zákona (missing human_reviewed_at)");
+                // 451 Unavailable For Legal Reasons
+                let mut res = Response::new(Body::from("451 Unavailable For Legal Reasons: Slovak outlet verdicts require human_reviewed_at timestamp"));
+                *res.status_mut() = StatusCode::from_u16(451).unwrap();
+                return Ok(res);
+            }
+        }
+    }
+
+    let req = Request::from_parts(parts, Body::from(bytes));
+    Ok(next.run(req).await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

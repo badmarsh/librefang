@@ -9,6 +9,9 @@
     "max_output_tokens": 4096,
     "input_cost_per_m": 0.0,
     "output_cost_per_m": 0.0,
+    "mmlu_score": 89.5,
+    "latency_ms": 250,
+    "routing_preference": "quality",
     "supports_tools": true,
     "supports_vision": false,
     "supports_streaming": true

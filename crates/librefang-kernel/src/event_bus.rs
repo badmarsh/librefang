@@ -98,6 +98,19 @@ impl EventBus {
             "Publishing event"
         );
 
+        // Enforce HITL constraint on automated verdict publication
+        if let EventPayload::System(librefang_types::event::SystemEvent::TaskCompleted { result, .. }) = &event.payload {
+            let res_lower = result.to_lowercase();
+            if res_lower.contains("verdict") && 
+               (res_lower.contains("hlavnespravy") || res_lower.contains("infovojna") || 
+                res_lower.contains("slobodnyvysielac") || res_lower.contains("zemavek") || res_lower.contains(".sk")) {
+                if !res_lower.contains("human_reviewed_at") {
+                    warn!("Blocked automated verdict event from being published due to missing HITL approval");
+                    return; // Drop the event technically enforcing the constraint
+                }
+            }
+        }
+
         // Wrap once, share via Arc clones — no payload deep-clone per subscriber
         // and no deep-clone for the history ring either.
         let event = Arc::new(event);

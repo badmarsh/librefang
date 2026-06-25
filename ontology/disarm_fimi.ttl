@@ -1,0 +1,82 @@
+@prefix : <http://librefang.ai/ontology/disarm#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix fimi: <http://librefang.ai/ontology/fimi#> .
+@base <http://librefang.ai/ontology/disarm> .
+
+<http://librefang.ai/ontology/disarm> rdf:type owl:Ontology ;
+    rdfs:comment "DISARM/FIMI domain ontology layer (Tseng et al. arXiv:2601.15109)" .
+
+### Classes
+
+:DisarmTTP rdf:type owl:Class ;
+    rdfs:label "DisarmTTP" ;
+    rdfs:comment "A DISARM v1.5 Tactic, Technique, or Procedure detected in the monitored information environment." .
+
+fimi:FIMICampaign rdf:type owl:Class ;
+    rdfs:label "FIMICampaign" ;
+    rdfs:comment "A coordinated FIMI campaign spanning multiple DISARM TTPs." .
+
+fimi:EvidenceAtom rdf:type owl:Class ;
+    rdfs:label "EvidenceAtom" ;
+    rdfs:comment "An atomic, independently verifiable evidence unit for a DISARM TTP hypothesis." .
+
+### Object Properties
+
+:partOfCampaign rdf:type owl:ObjectProperty ;
+    rdfs:domain :DisarmTTP ;
+    rdfs:range fimi:FIMICampaign ;
+    rdfs:label "PART_OF_CAMPAIGN" ;
+    rdfs:comment "TTP is part of a broader FIMI campaign." .
+
+fimi:supportsTTPClaim rdf:type owl:ObjectProperty ;
+    rdfs:domain <http://librefang.ai/ontology/core#Claim> ;
+    rdfs:range fimi:EvidenceAtom ;
+    rdfs:label "SUPPORTS_TTP_CLAIM" .
+
+fimi:refutesTTPClaim rdf:type owl:ObjectProperty ;
+    rdfs:domain <http://librefang.ai/ontology/core#Claim> ;
+    rdfs:range fimi:EvidenceAtom ;
+    rdfs:label "REFUTES_TTP_CLAIM" .
+
+fimi:mappedToTTP rdf:type owl:ObjectProperty ;
+    rdfs:domain <http://librefang.ai/ontology/core#NarrativeCluster> ;
+    rdfs:range :DisarmTTP ;
+    rdfs:label "MAPPED_TO_TTP" .
+
+### Data Properties
+
+:ttpId rdf:type owl:DatatypeProperty ;
+    rdfs:domain :DisarmTTP ;
+    rdfs:range xsd:string .
+
+:phase rdf:type owl:DatatypeProperty ;
+    rdfs:domain :DisarmTTP ;
+    rdfs:range xsd:string .
+
+:confidence rdf:type owl:DatatypeProperty ;
+    rdfs:domain :DisarmTTP ;
+    rdfs:range xsd:float .
+
+:oddsRatio rdf:type owl:DatatypeProperty ;
+    rdfs:domain :DisarmTTP ;
+    rdfs:range xsd:float .
+
+:pValue rdf:type owl:DatatypeProperty ;
+    rdfs:domain :DisarmTTP ;
+    rdfs:range xsd:float .
+
+:status rdf:type owl:DatatypeProperty ;
+    rdfs:domain :DisarmTTP ;
+    rdfs:range xsd:string .
+
+fimi:targetCountry rdf:type owl:DatatypeProperty ;
+    rdfs:domain fimi:FIMICampaign ;
+    rdfs:range xsd:string .
+
+fimi:verdict rdf:type owl:DatatypeProperty ;
+    rdfs:domain fimi:EvidenceAtom ;
+    rdfs:range xsd:string .

@@ -59,6 +59,13 @@ kg_query_field = "archivist.kg_known_bad_claims"  # pre-computed by archivist
 #   - Override source credibility weight to neutral (0.50) regardless of source rating
 # Reference: Alliance for Europe, "Information Laundering in Slovakia", March 2026.
 
+[ontology]
+# Gap 7 Fix: Do not rely solely on LLM prompts for categorization.
+# Load the formal disinformation typology to enforce structural tagging.
+path = "ontology/disinformation_ontology.ttl"
+format = "turtle"
+strict_enforcement = true
+
 
 [[fallback_models]]
 provider = "freellmpool"

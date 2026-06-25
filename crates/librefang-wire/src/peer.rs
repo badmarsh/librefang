@@ -18,7 +18,7 @@ use dashmap::DashMap;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use aes_gcm::{aead::Aead, Aes256Gcm, Nonce};
+use chacha20poly1305::{aead::Aead, ChaCha20Poly1305};
 use rand_core::{OsRng, RngCore};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -1653,7 +1653,7 @@ pub async fn write_message_authenticated(
 ///
 /// SECURITY: this is the entry point for every read that happens *before* the peer has authenticated (inbound `Handshake`, outbound `HandshakeAck`), so the declared frame length is capped at [`MAX_PREHANDSHAKE_MESSAGE_SIZE`] — the cap is enforced before the body buffer is allocated, so an unauthenticated peer cannot pin a `MAX_MESSAGE_SIZE`-sized allocation by claiming a huge frame and stalling.
 
-/// SECURITY: Write an AES-256-GCM encrypted framed message.
+/// SECURITY: Write an ChaCha20Poly1305 encrypted framed message.
 pub async fn write_message_encrypted(
     writer: &mut tokio::net::tcp::OwnedWriteHalf,
     msg: &WireMessage,
@@ -1664,14 +1664,14 @@ pub async fn write_message_encrypted(
     let key_bytes = hex::decode(session_key)
         .map_err(|_| WireError::HandshakeFailed("Invalid session key hex".into()))?;
     if key_bytes.len() != 32 {
-        return Err(WireError::HandshakeFailed("Session key must be 32 bytes for AES-256".into()));
+        return Err(WireError::HandshakeFailed("Session key must be 32 bytes for ChaCha20Poly1305".into()));
     }
     
-    let cipher = <Aes256Gcm as aes_gcm::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
+    let cipher = <ChaCha20Poly1305 as chacha20poly1305::aead::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
     
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = chacha20poly1305::Nonce::from_slice(&nonce_bytes);
     
     let encrypted = cipher.encrypt(nonce, json_bytes.as_ref())
         .map_err(|_| WireError::HandshakeFailed("Encryption failed".into()))?;
@@ -1686,7 +1686,7 @@ pub async fn write_message_encrypted(
     Ok(())
 }
 
-/// SECURITY: Read an AES-256-GCM encrypted framed message.
+/// SECURITY: Read a ChaCha20Poly1305 encrypted framed message.
 pub async fn read_message_encrypted_observed(
     reader: &mut tokio::net::tcp::OwnedReadHalf,
     session_key: &str,
@@ -1722,14 +1722,14 @@ pub async fn read_message_encrypted_observed(
     let key_bytes = hex::decode(session_key)
         .map_err(|_| WireError::HandshakeFailed("Invalid session key hex".into()))?;
     if key_bytes.len() != 32 {
-        return Err(WireError::HandshakeFailed("Session key must be 32 bytes for AES-256".into()));
+        return Err(WireError::HandshakeFailed("Session key must be 32 bytes for ChaCha20Poly1305".into()));
     }
     
-    let cipher = <Aes256Gcm as aes_gcm::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let cipher = <ChaCha20Poly1305 as chacha20poly1305::aead::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
+    let nonce = chacha20poly1305::Nonce::from_slice(nonce_bytes);
 
     let decrypted = cipher.decrypt(nonce, encrypted)
-        .map_err(|_| WireError::HandshakeFailed("AES-GCM decryption/authentication failed".into()))?;
+        .map_err(|_| WireError::HandshakeFailed("ChaCha20Poly1305 decryption/authentication failed".into()))?;
 
     let msg = decode_message(&decrypted)?;
     if let Some(unk) = classify_unknown(&decrypted, &msg) {

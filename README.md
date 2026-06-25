@@ -21,11 +21,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/librefang/librefang/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/librefang/librefang/ci.yml?style=flat-square&label=CI" alt="CI" /></a>
+  <a href="https://github.com/badmarsh/librefang/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/badmarsh/librefang/ci.yml?style=flat-square&label=CI" alt="CI" /></a>
   <img src="https://img.shields.io/badge/language-Rust-orange?style=flat-square" alt="Rust" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT" />
-  <img src="https://img.shields.io/github/stars/librefang/librefang?style=flat-square" alt="Stars" />
-  <img src="https://img.shields.io/github/v/release/librefang/librefang?style=flat-square" alt="Latest Release" />
+  <img src="https://img.shields.io/github/stars/badmarsh/librefang?style=flat-square" alt="Stars" />
+  <img src="https://img.shields.io/github/v/release/badmarsh/librefang?style=flat-square" alt="Latest Release" />
   <a href="https://discord.gg/DzTYqAZZmc"><img src="https://img.shields.io/discord/1481633471507071129?style=flat-square&logo=discord&label=Discord" alt="Discord" /></a>
   <a href="https://deepwiki.com/librefang/librefang"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 </p>

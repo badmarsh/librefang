@@ -1,0 +1,36 @@
+{
+  "domains": {
+    "sme.sk": {
+      "score": 0.95,
+      "notes": "Established quality daily."
+    },
+    "dennikn.sk": {
+      "score": 0.95,
+      "notes": "Established quality daily."
+    },
+    "aktuality.sk": {
+      "score": 0.90,
+      "notes": "Major news portal."
+    },
+    "infovojna.bz": {
+      "score": 0.05,
+      "notes": "Known disinformation hub."
+    },
+    "slobodnyvysielac.sk": {
+      "score": 0.10,
+      "notes": "Conspiracy internet radio."
+    },
+    "zemavek.sk": {
+      "score": 0.05,
+      "notes": "Antisemitic/conspiracy magazine."
+    },
+    "hlavnespravy.sk": {
+      "score": 0.15,
+      "notes": "Prolific pro-Kremlin outlet."
+    },
+    "badatel.net": {
+      "score": 0.05,
+      "notes": "Health disinformation and pseudoscience."
+    }
+  }
+}

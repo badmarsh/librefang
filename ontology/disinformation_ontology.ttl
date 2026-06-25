@@ -1,0 +1,167 @@
+@prefix : <http://librefang.ai/ontology/disinformation#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xml: <http://www.w3.org/XML/1998/namespace> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix fimi: <http://librefang.ai/ontology/fimi#> .
+@base <http://librefang.ai/ontology/disinformation> .
+
+<http://librefang.ai/ontology/disinformation> rdf:type owl:Ontology ;
+    dc:title "Disinformation and FIMI Taxonomy Ontology" ;
+    dc:description "A full OWL/SKOS ontology purpose-built for disinformation taxonomy, mapping Foreign Information Manipulation and Interference (FIMI) concepts and DISARM tactics." ;
+    owl:versionInfo "1.0.0" .
+
+### SKOS Concept Scheme
+
+:DisinformationTaxonomy rdf:type skos:ConceptScheme ;
+    dc:title "Disinformation Tactics and Techniques Taxonomy" ;
+    dc:creator "LibreFang Project" ;
+    skos:hasTopConcept :Tactic, :Technique, :ActorType, :ArtifactType, :FIMIPhase .
+
+### Top-Level Concepts
+
+:Tactic rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Tactic"@en ;
+    skos:definition "The highest-level objective of a disinformation campaign (e.g., Plan, Prepare, Execute)."@en ;
+    skos:topConceptOf :DisinformationTaxonomy .
+
+:Technique rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Technique"@en ;
+    skos:definition "The specific method used to achieve a tactical objective."@en ;
+    skos:topConceptOf :DisinformationTaxonomy .
+
+:ActorType rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Actor Type"@en ;
+    skos:topConceptOf :DisinformationTaxonomy .
+
+:ArtifactType rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Artifact Type"@en ;
+    skos:topConceptOf :DisinformationTaxonomy .
+
+:FIMIPhase rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "FIMI Phase"@en ;
+    skos:topConceptOf :DisinformationTaxonomy .
+
+### Tactics (DISARM Inspired)
+
+:TacticPlan rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Tactic ;
+    skos:broader :Tactic ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Plan"@en .
+
+:TacticPrepare rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Tactic ;
+    skos:broader :Tactic ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Prepare"@en .
+
+:TacticExecute rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Tactic ;
+    skos:broader :Tactic ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Execute"@en .
+
+:TacticAmplify rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Tactic ;
+    skos:broader :Tactic ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Amplify"@en .
+
+:TacticAssess rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Tactic ;
+    skos:broader :Tactic ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Assess"@en .
+
+### Techniques
+
+:TechDeepfake rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Technique ;
+    skos:broader :Technique ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Deepfake / AI-Generated Media"@en ;
+    skos:definition "Use of artificial intelligence to generate misleading audio, video, or images."@en .
+
+:TechAstroturfing rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Technique ;
+    skos:broader :Technique ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Astroturfing"@en ;
+    skos:definition "Masking the sponsors of a message or organization to make it appear as though it originates from and is supported by grassroots participants."@en .
+
+:TechBotnet rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Technique ;
+    skos:broader :Technique ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Botnet Amplification"@en ;
+    skos:definition "Using automated accounts to artificially amplify a narrative."@en .
+
+:TechTrollFarm rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Technique ;
+    skos:broader :Technique ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Troll Farm"@en ;
+    skos:definition "Coordinated groups of individuals paid to post inflammatory or disruptive content."@en .
+
+:TechFabricatedNews rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Technique ;
+    skos:broader :Technique ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Fabricated News Outlet"@en ;
+    skos:definition "Creating websites that mimic legitimate news organizations to spread disinformation."@en .
+
+:TechHackAndLeak rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :Technique ;
+    skos:broader :Technique ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Hack and Leak"@en ;
+    skos:definition "Illegally obtaining private data and selectively releasing it to shape public perception."@en .
+
+### Actor Types
+
+:ActorStateSponsored rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :ActorType ;
+    skos:broader :ActorType ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "State-Sponsored Actor"@en .
+
+:ActorProxy rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :ActorType ;
+    skos:broader :ActorType ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Proxy Entity"@en .
+
+:ActorFinanciallyMotivated rdf:type owl:Class, skos:Concept ;
+    rdfs:subClassOf :ActorType ;
+    skos:broader :ActorType ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Financially Motivated Actor"@en .
+
+### Properties
+
+:usesTechnique rdf:type owl:ObjectProperty ;
+    rdfs:domain :Tactic ;
+    rdfs:range :Technique ;
+    rdfs:label "uses_technique" ;
+    rdfs:comment "A tactic utilizes a specific technique." .
+
+:employedBy rdf:type owl:ObjectProperty ;
+    rdfs:domain :Technique ;
+    rdfs:range :ActorType ;
+    rdfs:label "employed_by" ;
+    rdfs:comment "A technique is employed by a specific actor." .
+
+:targets rdf:type owl:ObjectProperty ;
+    rdfs:domain :Technique ;
+    rdfs:range owl:Thing ;
+    rdfs:label "targets" ;
+    rdfs:comment "The target of a disinformation technique (e.g., an election, a demographic)." .

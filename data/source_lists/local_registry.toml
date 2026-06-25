@@ -1,0 +1,15 @@
+# Local Fallback Source Registry for LibreFang
+# Used by source-rater when external APIs (NewsGuard, MBFC, etc.) return < 2 signals.
+# Scores are from 0.0 (confirmed disinformation) to 1.0 (highly trusted).
+
+[sources."slovensky-vecernik.sk"]
+score = 0.20
+notes = "Known hyper-partisan outlet, low factual reporting."
+
+[sources."pravdive-spravy.sk"]
+score = 0.05
+notes = "Confirmed disinformation portal spreading Kremlin narratives."
+
+[sources."lokalne-noviny.sk"]
+score = 0.85
+notes = "Legitimate regional newspaper, high factual reporting."

@@ -96,3 +96,8 @@ result
 
 # graphify knowledge-graph output (local-only, regenerable).
 graphify-out/
+
+# security keys
+privatekey
+publickey
+daemon.log

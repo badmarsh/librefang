@@ -13,6 +13,8 @@ pub mod helpers;
 pub mod mock_driver;
 pub mod mock_kernel;
 pub mod test_app;
+pub mod cib_validation;
+pub mod ontology_tests;
 
 pub use helpers::{assert_json_error, assert_json_ok, test_request};
 pub use mock_driver::{FailingLlmDriver, MockLlmDriver};

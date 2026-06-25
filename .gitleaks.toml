@@ -20,6 +20,12 @@ title = "LibreFang gitleaks config"
 # Inherit gitleaks' built-in rule set; we only layer allowlist entries on top.
 useDefault = true
 
+[[rules]]
+id = "generic-private-key-file"
+description = "Catch generic privatekey and publickey files"
+regex = '''(?i)(privatekey|publickey)'''
+tags = ["key", "LibreFang"]
+
 [allowlist]
 description = "Paths and patterns where high-entropy strings are expected and are not real credentials."
 

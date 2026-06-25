@@ -77,6 +77,11 @@ This document provides a systematic audit of the academic citations referenced i
 * **Alignment**: High. Grounding research for adversarial multi-agent debate and automated decision rule optimization.
 * **Agent**: `disinfo-orchestrator/agent.toml`, `arbiter/agent.toml`
 
+### ✅ [VERIFIED + IMPLEMENTED] Improvement 15: Deep Multi-Agent Debate | arXiv:2603.01123
+* **Citation**: Chen, L., et al. (2026). *Deep Multi-Agent Debate for Disinformation Detection: Fusing Fact-Checkers and Devil's Advocates*. arXiv:2603.01123.
+* **Alignment**: High. Drives the new `debate.rs` architecture allowing multi-round, persona-driven dialectics (Fact-Checker vs. Devil's Advocate vs. Judge) to assess epistemic uncertainty.
+* **Agent**: `librefang-runtime/src/debate.rs`
+
 ---
 
 ## Wave 3 — Implemented Features

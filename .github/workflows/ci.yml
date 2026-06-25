@@ -308,6 +308,8 @@ jobs:
       # flipped to --strict. See docs/architecture/api-conventions.md.
       - name: Sentinel-pattern lint (warn-only)
         run: scripts/check-no-empty-string-sentinels.sh
+      - name: Evaluate Slovak post-2025 model shift
+        run: python3 scripts/eval_slovak_post2025.py
 
   # ── WASM skill guest SDK + example ──────────────────────────────────────────────
   # `sdk/rust/librefang-skill` and `examples/custom-skill-wasm` are independent

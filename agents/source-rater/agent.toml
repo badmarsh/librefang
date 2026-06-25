@@ -25,6 +25,7 @@ temperature = 0.0
 [source_lists]
 known_good_path = "data/source_lists/known_good.txt"
 known_bad_path  = "data/source_lists/known_bad.txt"
+local_registry_path = "data/local_slovak_registry.json"
 reload_on_change = true
 
 system_prompt = """
@@ -68,10 +69,10 @@ When not overridden, retrieve ratings for the source domain from at least three 
 ### FUSION ALGORITHM
 - Compute the final `credibility_score` as the weighted mean of all available sources:
   `credibility_score = sum(score_i * weight_i) / sum(weight_i)` for all available sources.
-- Calibrate the count of agreeing sources into `credibility_confidence` (number of independent sources found, e.g. 1 to 4).
+- Calibrate the count of agreeing sources into `credibility_confidence` (number of independent sources found, e.g. 1 to 5).
 - If `credibility_confidence` < 2:
-  - Flag the item: set `needs_human_review = true` and `credibility_basis = "needs_human_review_insufficient_sources"`.
-  - Assign a neutral fallback `credibility_score = 0.50`.
+  - FIRST FALLBACK: Check if the domain exists in `local_registry_path` (your local registry). If found, use its score and set `credibility_basis = "local_registry_fallback"`.
+  - SECOND FALLBACK: If not found in local registry, flag the item: set `needs_human_review = true`, `credibility_basis = "needs_human_review_insufficient_sources"`, and assign a neutral fallback `credibility_score = 0.50`.
 
 ## OUTPUT FORMAT (strict JSON)
 ```json

@@ -43,6 +43,21 @@ case "$GIT_DIR" in
 esac
 
 # ---------------------------------------------------------------------------
+# 0. Operational cleanliness guard.
+#
+# Ensure no patch_*.py or fix_*.py scripts are committed to the root directory
+# to maintain operational maturity.
+# ---------------------------------------------------------------------------
+ROOT_PATCH_FILES=$(git diff --cached --name-only | grep -E '^(patch_|fix_).*\.py$' || true)
+if [ -n "$ROOT_PATCH_FILES" ]; then
+    echo "scripts/commit.sh: ERROR - Operational cleanliness violation." >&2
+    echo "  The following patch/fix scripts were staged in the root directory:" >&2
+    echo "$ROOT_PATCH_FILES" | sed 's/^/  - /' >&2
+    echo "  Move them to scripts/ or delete them before committing." >&2
+    exit 5
+fi
+
+# ---------------------------------------------------------------------------
 # 1. Concurrent-commit guard.
 #
 # `.git/index.lock` is git's own atomicity primitive — it always exists for

@@ -14,6 +14,9 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+rustls = { version = "0.23" }
+tokio-rustls = { version = "0.26" }
+x509-certificate = { version = "0.23" }
 async-trait = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
@@ -27,13 +30,10 @@ base64 = { workspace = true }
 aes-gcm = { workspace = true }
 rand_core = { version = "0.6", features = ["getrandom"] }
 
-chacha20poly1305 = { workspace = true, optional = true }
+chacha20poly1305 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 
 [lints]
 workspace = true
-
-[features]
-encryption = ["dep:chacha20poly1305"]

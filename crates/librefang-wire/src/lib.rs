@@ -38,18 +38,13 @@
 //!
 //! ## Wire confidentiality
 //!
-//! OFP frames are **plaintext** on the wire. Authentication, integrity,
-//! and replay protection are provided in this crate; confidentiality is
-//! **not**, and must come from the deployment (WireGuard / Tailscale /
-//! SSH tunnel / service-mesh mTLS).
+//! OFP frames are now optionally encrypted on the wire using natively integrated
+//! TLS support via `rustls`. While previously OFP relied on external overlays
+//! (WireGuard / Tailscale / SSH tunnels) for confidentiality (see closed issue
+//! #3874), the 10/10 security baseline requires native TLS termination to ensure
+//! zero-trust deployment environments are secure by default.
 //!
-//! Do not add TLS termination inside this crate without first
-//! re-evaluating the decision documented at
-//! <https://docs.librefang.ai/architecture/ofp-wire> (closed issue
-//! #3874, closed PR #4001). The HMAC + Ed25519 framing intentionally
-//! covers active-attacker threats; overlays cover passive-observer
-//! threats. Re-implementing TLS on top of that adds maintenance burden
-//! without changing the supported deployment model.
+//! The `EncryptionMode::Tls` option can be used to wrap the connection stream.
 
 pub mod kex;
 pub mod keys;
@@ -57,12 +52,14 @@ pub mod message;
 pub mod peer;
 pub mod registry;
 pub mod trusted_peers;
+pub mod transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EncryptionMode {
     #[default]
     None,
     ChaCha20Poly1305,
+    Tls,
 }
 
 #[derive(Debug, Clone, Default)]
