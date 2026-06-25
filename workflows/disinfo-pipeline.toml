@@ -83,7 +83,7 @@ agent       = "ml-classifier"
 description = "Fast linguistic + structural first-pass. No web access. Confidence capped at 0.80. Returns verdict JSON for arbiter."
 prompt_template = "Fast linguistic + structural first-pass. No web access. Confidence capped at 0.80. Returns verdict JSON for arbiter."
 depends_on  = ["stance-detect"]
-parallel    = true
+mode = "fan_out"
 input       = "stance_queue.ml_classifier"
 output_var = "verdict_ml"
 timeout_secs = 10
@@ -95,7 +95,7 @@ agent       = "inquisitor"
 description = "Deep CRAAP + adversarial multi-source verification. Min 10 sources (or 3 for targeted_verify path). Triggers archivist for claims >180 days. Checks COST_HOLD flag before starting."
 prompt_template = "Deep CRAAP + adversarial multi-source verification. Min 10 sources (or 3 for targeted_verify path). Triggers archivist for claims >180 days. Checks COST_HOLD flag before starting."
 depends_on  = ["stance-detect"]
-parallel    = true
+mode = "fan_out"
 input       = "stance_queue.inquisitor"
 output_var = "verdict_inquisitor"
 timeout_secs = 120
@@ -107,7 +107,7 @@ agent       = "visual-analyst"
 description = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if stance_queue.visual_analyst is non-empty."
 prompt_template = "Multimodal forensics: ELA, EXIF, deepfake detection, OCR. Only runs if stance_queue.visual_analyst is non-empty."
 depends_on  = ["stance-detect"]
-parallel    = true
+mode = "fan_out"
 condition   = "len(stance_queue.visual_analyst) > 0"
 input       = "stance_queue.visual_analyst"
 output_var = "verdict_visual"
@@ -119,7 +119,7 @@ agent       = "kg-consistency-checker"
 description = "Knowledge graph consistency checking against local Neo4j/SQLite graph (Improvement 37)."
 prompt_template = "Knowledge graph consistency checking against local Neo4j/SQLite graph (Improvement 37)."
 depends_on  = ["stance-detect"]
-parallel    = true
+mode = "fan_out"
 input       = "stance_queue"
 output_var = "verdict_kg"
 timeout_secs = 30
@@ -134,7 +134,7 @@ agent       = "narrative-tracker"
 description = "Campaign detection: multi-window CIB analysis (2h/12h/72h), cluster related claims, score coordinated inauthentic behaviour, emit CampaignAlert if threshold met."
 prompt_template = "Campaign detection: multi-window CIB analysis (2h/12h/72h), cluster related claims, score coordinated inauthentic behaviour, emit CampaignAlert if threshold met."
 depends_on  = ["orchestrate"]
-parallel    = true
+mode = "fan_out"
 condition   = "len(approved_queue.narrative_tracker) > 0"
 input       = "approved_queue.narrative_tracker"
 output_var = "narrative_brief"
@@ -178,7 +178,21 @@ output_var = "investigation_report"
 timeout_secs = 300
 
 # ─────────────────────────────────────────────
-# STAGE 5b: PUBLISH PATH
+# STAGE 5b: LEGAL GATE (Slovak §373 constraint)
+# ─────────────────────────────────────────────
+[[steps]]
+name          = "legal-gate"
+agent         = "legal-reviewer"
+description   = "Slovak §373 constraint: Requires human review before publishing verdicts about local entities."
+prompt_template = "Slovak §373 constraint: Requires human review before publishing verdicts about local entities."
+depends_on    = ["consensus"]
+condition     = "arbiter_decision.decision in ['auto-publish', 'false-debunk', 'monitor']"
+input         = ["arbiter_decision"]
+output_var    = "legal_decision"
+timeout_secs  = 3600
+
+# ─────────────────────────────────────────────
+# STAGE 5c: PUBLISH PATH
 # Bilingual debunk generation and channel distribution
 # ─────────────────────────────────────────────
 [[steps]]
@@ -186,9 +200,9 @@ name          = "communicate"
 agent       = "impact-comms"
 description = "Generate bilingual (SK+EN) debunk summary, factcheck overlay, push to configured channels. Uses arbiter_decision.confidence (= consensus_score)."
 prompt_template = "Generate bilingual (SK+EN) debunk summary, factcheck overlay, push to configured channels. Uses arbiter_decision.confidence (= consensus_score)."
-depends_on  = ["consensus"]
-condition   = "arbiter_decision.decision in ['auto-publish', 'false-debunk', 'monitor']"
-input       = ["arbiter_decision", "verdict_inquisitor"]
+depends_on  = ["legal-gate"]
+condition   = "legal_decision.approved == true"
+input       = ["arbiter_decision", "verdict_inquisitor", "legal_decision"]
 output_var = "published_debunk"
 timeout_secs = 60
 

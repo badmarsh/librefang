@@ -6932,8 +6932,8 @@ impl Default for MemoryDecayConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameEncryptionMode {
-    #[default]
     Plaintext,
+    #[default]
     Required,
     Opportunistic,
 }

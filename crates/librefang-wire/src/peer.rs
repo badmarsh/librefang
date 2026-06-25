@@ -868,7 +868,7 @@ impl PeerNode {
                     }
                     None => {
                         if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Required {
-                            return Err(WireError::HandshakeFailed("Peer does not support required AES-256-GCM encryption".into()));
+                            return Err(WireError::HandshakeFailed("Peer does not support required ChaCha20Poly1305 encryption".into()));
                         }
                         derive_session_key(&self.config.shared_secret, &our_nonce, ack_nonce)
                     }
@@ -1289,7 +1289,7 @@ impl PeerNode {
                     }
                     _ => {
                         if node.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Required {
-                            return Err(WireError::HandshakeFailed("Peer does not support required AES-256-GCM encryption".into()));
+                            return Err(WireError::HandshakeFailed("Peer does not support required ChaCha20Poly1305 encryption".into()));
                         }
                         derive_session_key(&node.config.shared_secret, nonce, &ack_nonce)
                     }

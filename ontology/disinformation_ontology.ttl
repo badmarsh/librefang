@@ -165,3 +165,68 @@
     rdfs:range owl:Thing ;
     rdfs:label "targets" ;
     rdfs:comment "The target of a disinformation technique (e.g., an election, a demographic)." .
+
+### Knowledge Graph Entities (Schema mapping)
+
+:Claim rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Claim"@en ;
+    skos:definition "A discrete checkable factual assertion."@en .
+
+:Source rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Source"@en ;
+    skos:definition "A news outlet, webpage, document, or social media post used as evidence."@en .
+
+:NarrativeCluster rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Narrative Cluster"@en ;
+    skos:definition "A group of semantically related claims indicating a coordinated disinformation narrative."@en .
+
+:FIMICampaign rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "FIMI Campaign"@en ;
+    skos:definition "A coordinated FIMI campaign spanning multiple DISARM TTPs."@en .
+
+:Actor rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Actor"@en ;
+    skos:definition "A person, outlet, organization, or account making or amplifying claims."@en .
+
+### Formal Graph Edge Properties
+
+:madeClaim rdf:type owl:ObjectProperty ;
+    rdfs:domain :Actor ;
+    rdfs:range :Claim ;
+    rdfs:label "MADE" ;
+    rdfs:comment "Actor made or published the claim." .
+
+:supportedBy rdf:type owl:ObjectProperty ;
+    rdfs:domain :Claim ;
+    rdfs:range :Source ;
+    rdfs:label "SUPPORTED_BY" ;
+    rdfs:comment "Source supports the claim." .
+
+:refutedBy rdf:type owl:ObjectProperty ;
+    rdfs:domain :Claim ;
+    rdfs:range :Source ;
+    rdfs:label "REFUTED_BY" ;
+    rdfs:comment "Source refutes the claim." .
+
+:belongsToNarrative rdf:type owl:ObjectProperty ;
+    rdfs:domain :Claim ;
+    rdfs:range :NarrativeCluster ;
+    rdfs:label "BELONGS_TO" ;
+    rdfs:comment "Claim is part of a narrative cluster." .
+
+:amplifiedBy rdf:type owl:ObjectProperty ;
+    rdfs:domain :Claim ;
+    rdfs:range :Actor ;
+    rdfs:label "AMPLIFIED_BY" ;
+    rdfs:comment "Actor amplified/shared the claim." .
+
+:partOfCampaign rdf:type owl:ObjectProperty ;
+    rdfs:domain :NarrativeCluster ;
+    rdfs:range :FIMICampaign ;
+    rdfs:label "PART_OF_CAMPAIGN" ;
+    rdfs:comment "Narrative cluster is part of a broader FIMI campaign." .

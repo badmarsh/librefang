@@ -101,3 +101,5 @@ graphify-out/
 privatekey
 publickey
 daemon.log
+*privatekey*
+*.key

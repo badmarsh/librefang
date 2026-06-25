@@ -47,14 +47,14 @@ output_var = "dispatch_queue"
 name          = "hc-verify-fast"
 agent       = "ml-classifier"
 depends_on  = ["inject"]
-parallel    = true
+mode = "fan_out"
 timeout_secs = 15
 
 [[steps]]
 name          = "hc-verify-deep"
 agent       = "inquisitor"
 depends_on  = ["inject"]
-parallel    = true
+mode = "fan_out"
 timeout_secs = 150
 
 # ─────────────────────────────────────────────
@@ -106,16 +106,15 @@ timeout_secs = 15
 # ─────────────────────────────────────────────
 [output]
 path        = "output/health-check/latest.json"
-schema      = {
-  run_at                  = "ISO8601",
-  status                  = "pass|fail",
-  verdict                 = "DISINFORMATION|SUSPICIOUS|UNCERTAIN|CREDIBLE",
-  weighted_fake_score     = 0.0,
-  confidence              = 0.0,
-  expected_verdict        = "string",
-  expected_confidence_min = 0.0,
-  assertion_results       = [],
-  stage_timings_ms        = {},
-  failure_reason          = "string or null"
-}
+[output.schema]
+run_at                  = "ISO8601"
+status                  = "pass|fail"
+verdict                 = "DISINFORMATION|SUSPICIOUS|UNCERTAIN|CREDIBLE"
+weighted_fake_score     = 0.0
+confidence              = 0.0
+expected_verdict        = "string"
+expected_confidence_min = 0.0
+assertion_results       = []
+stage_timings_ms        = {}
+failure_reason          = "string or null"
 retain_history = 30   # keep last 30 days of health-check results

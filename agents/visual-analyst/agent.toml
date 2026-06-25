@@ -16,15 +16,15 @@ skills = [
 ]
 
 [model]
-provider    = "freellmpool"
-model       = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider    = "qwen"
+model       = "qwen3-vl-plus"
+api_key_env = "QWEN_API_KEY"
 max_tokens  = 4096
-context_window = 32768
+context_window = 128000
 temperature = 0.2
 [model.fallback]
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+model = "qwen-vl-plus"
+api_key_env = "QWEN_API_KEY"
 
 system_prompt = """
 You are the Visual Analyst Agent for LibreFang — the multimodal disinformation detector.
@@ -77,14 +77,14 @@ VISUAL EVIDENCE OUTPUT FORMAT:
 
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "qwen"
+model = "qwen-vl-plus"
+api_key_env = "QWEN_API_KEY"
 
 [[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+provider = "openrouter"
+model = "nvidia/nemotron-nano-12b-v2-vl:free"
+api_key_env = "OPENROUTER_API_KEY"
 
 [visual.benchmark]
 eval_dataset = "Deepfake-Eval-2024"
@@ -93,9 +93,9 @@ expected_auc_floor = 0.65   # below this, trigger alert
 reevaluation_schedule = "weekly_gart"
 
 [visual.multimodal]
-audio_visual_fusion = true          # Phase 1: flag for future
-text_visual_fusion = true           # OCR → claim pipe
-modalities_active = ["image", "ocr_text"]
-modalities_planned = ["audio", "video"]
+audio_visual_fusion = true
+text_visual_fusion = true
+modalities_active = ["image", "ocr_text", "audio", "video"]
+modalities_planned = []
 # Ref: Tao et al. (2024) arXiv:2406.06965 (multi-modal deepfake survey)
 # Ref: Passive Deepfake Detection Survey arXiv:2411.17911
