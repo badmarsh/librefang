@@ -49,6 +49,28 @@ def get_mock_output(workflow_name, step_name):
             "evaluate-bypass-rate": "BYPASS_DETECTED (Rate: 5%)",
             "diagnostic-root-cause": "Missing ontology term mapping for novel slang.",
             "log-gart-results": "Logged successfully."
+        },
+        "desolator-omni-ingest": {
+            "dynamic-osint-ingestion": ["claim_raw_1", "claim_raw_2"],
+            "collect-raw-claims": ["claim_raw_1", "claim_raw_2"],
+            "cross-lingual-translation": "{'claim_raw_1': 'translated_1', 'claim_raw_2': 'translated_2'}",
+            "disinfo-triage-vlm": "['translated_1']",
+            "wikidata-graph-enrichment": "{'translated_1': 'Entity: Politician X, Status: Active'}",
+            "orchestrator-handover": "HANDOVER_SUCCESS"
+        },
+        "msm-historical-audit-engine": {
+            "agentic-archive-retrieval": ["Prediction: 2024 collapse", "Prediction: Market boom"],
+            "collect-extractions": ["Prediction: 2024 collapse", "Prediction: Market boom"],
+            "historical-outcome-alignment": "Deviation found: Market did not boom.",
+            "moe-debate-audit": "DEBATE_CONCLUDED",
+            "ontological-narrative-mapping": "Mapped to Taxonomy: False Prognosis."
+        },
+        "agentic-security-redteam": {
+            "codebase-surface-mapping": "Surface mapped: Auth controller.",
+            "automated-exploit-generation": ["exploit_payload_1.py", "exploit_payload_2.py"],
+            "collect-exploits": ["exploit_payload_1.py", "exploit_payload_2.py"],
+            "dynamic-sandbox-execution": "Exploit payload 2 successful.",
+            "zero-day-vulnerability-reasoning": "HIGH_SEVERITY: Privilege escalation in Auth controller."
         }
     }
     return mocks.get(workflow_name, {}).get(step_name, "MOCK_SUCCESS")
@@ -103,3 +125,6 @@ if __name__ == '__main__':
     run_workflow('workflows/c1a4f7d2-meme-deepfake-triage.json', {"asset_url": "http://evil.com/meme.jpg", "source_url": "http://twitter.com/bad"})
     run_workflow('workflows/consensus-vote.json', {"claim_id": "c_999", "claim_text": "Aliens landed in NY."})
     run_workflow('workflows/gart-evaluation.json', {"last_log": "bypass_rate: 10%"})
+    run_workflow('workflows/desolator-omni-ingest.json', {"feed_url": "http://telegram.me/bad_actors"})
+    run_workflow('workflows/b609beef-5d94-4fb8-8211-38f280874983.json', {"archive_source": "Dennik N", "target_narrative": "Election fraud claims 2024"})
+    run_workflow('workflows/security-scan.json', {"diff": "+os.system('rm -rf /')"})

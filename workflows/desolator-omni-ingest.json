@@ -1,0 +1,66 @@
+{
+  "id": "e7b12d83-4a11-4f90-8b1e-b83c57a2f1c1",
+  "name": "desolator-omni-ingest",
+  "description": "State-of-the-art OSINT monitor: dynamic cross-lingual ingestion, LLM-based disinformation triage, graph enrichment, and orchestrator handover.",
+  "trigger": {
+    "event": "scheduled",
+    "schedule": "*/15 * * * *",
+    "description": "Runs every 15 minutes across core RSS and social endpoints"
+  },
+  "steps": [
+    {
+      "name": "dynamic-osint-ingestion",
+      "timeout_secs": 180,
+      "error_mode": "skip",
+      "mode": "fan_out",
+      "prompt_template": "Ingest target feed {{input.feed_url}}. Extract high-traction claims (velocity > threshold). Return raw claim JSON.",
+      "output_var": "raw_claims",
+      "agent": "collector-hand"
+    },
+    {
+      "name": "collect-raw-claims",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "mode": "collect",
+      "prompt_template": "unused",
+      "agent": "system"
+    },
+    {
+      "name": "cross-lingual-translation",
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "mode": "sequential",
+      "prompt_template": "Translate all non-English claims from {{raw_claims}} to English. Output mapping of original to translated.",
+      "output_var": "translated_claims",
+      "agent": "translator"
+    },
+    {
+      "name": "disinfo-triage-vlm",
+      "timeout_secs": 300,
+      "error_mode": "fail",
+      "mode": "sequential",
+      "prompt_template": "Analyze {{translated_claims}}. Score each claim for potential demagoguery, CIB, and falsifiability. Filter to high-impact_score (>75).",
+      "output_var": "triaged_claims",
+      "agent": "analyst"
+    },
+    {
+      "name": "wikidata-graph-enrichment",
+      "timeout_secs": 240,
+      "error_mode": "skip",
+      "mode": "sequential",
+      "prompt_template": "For each entity in {{triaged_claims}}, perform Wikidata and Knowledge Graph lookup. Return enriched context.",
+      "output_var": "enriched_context",
+      "agent": "researcher-hand"
+    },
+    {
+      "name": "orchestrator-handover",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "mode": "sequential",
+      "prompt_template": "Handover to disinfo-pipeline orchestrator. Claims: {{triaged_claims}}. Context: {{enriched_context}}.",
+      "output_var": "handover_status",
+      "agent": "orchestrator"
+    }
+  ],
+  "created_at": "2026-06-26T10:00:00Z"
+}

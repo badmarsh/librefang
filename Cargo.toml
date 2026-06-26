@@ -29,6 +29,7 @@ members = [
     "crates/librefang-extensions",
     "crates/librefang-telemetry",
     "crates/librefang-rl-export",
+    "crates/librefang-graph",
     "xtask",
     "crates/librefang-testing",
     "conformance/acp",

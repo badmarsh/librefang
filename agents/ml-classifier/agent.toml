@@ -2,6 +2,8 @@
 # arXiv:2508.10143 — Agent 1: ML Classifier
 # Part of fix: Fix 1 — Replace fake ml-classifier with real trained model
 # WP3: Uncertainty Quantification — uq-scorer skill added (Puczyńska & Djenouri 2024 DOI:10.60097/ACIG/200200)
+#   Replaced standard Bayesian UQ with Conformal Prediction (Angelopoulos & Bates, 2021)
+#   to provide distribution-free coverage guarantees for stronger legal safety.
 #   fallback_models now use 3 distinct provider families (nvidia, gemini, freellmpool) for
 #   genuine Deep Ensemble UQ variance — was 4×identical freellmpool/Meta-Llama-3_3-70B.
 #
@@ -87,3 +89,25 @@ sequence_classification_max_length = 512
 #   Gerulata/SlovakBERT: huggingface.co/gerulata/slovakbert
 #   Reimers & Gurevych (2019) SBERT: arXiv:1908.10084
 #   FakeNewsDetection_DRES: github.com/FFarhangian/FakeNewsDetection_DRES
+
+[classifier.temporal_recalibration]
+# Compensates for pre-2025 training cutoff of frozen transformer models (e.g., gerulata/slovakbert).
+# Implements temporal re-calibration strategies (Luu et al., 2022, arXiv:2111.07408)
+# and Retrieval-Augmented Inference (Lazaridou et al., 2022, arXiv:2203.05115).
+enabled = true
+retrieval_augmented_inference = true
+temporal_decay_factor = 0.85
+
+[classifier.uncertainty]
+# Implements Conformal Prediction for Uncertainty Quantification
+# Reference: Angelopoulos & Bates (2021), arXiv:2107.07511
+method = "conformal_prediction"
+confidence_level = 0.90
+distribution_free_guarantee = true
+
+[classifier.calibration]
+# Modern deep network calibration beyond standard Platt Scaling.
+# Reference: Guo et al. (2017), arXiv:1706.04599
+method = "temperature_scaling"
+temperature_bounds = [0.5, 2.5]
+calibration_corpus = "IMPROVE-1-modern"

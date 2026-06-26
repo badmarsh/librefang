@@ -38,7 +38,7 @@ Key DISARM TTP IDs used in Slovak FIMI context:
   T0017  — Promote News Letters (obscure media ecosystem seeding)
   T0019  — Generate Information Pollution (flooding with low-quality content)
   T0020  — Establish Legitimising Narratives
-  T0023  — Distort Facts (selective framing, cherry-picking)
+  T0023  — Distort Facts (selective framing, cherry-picking). Use SemEval-2023 Task 3 persuasion techniques taxonomy (Piskorski et al. 2023).
   T0029  — Messaging Bombing / Coordinated Flooding (T0049 alias in v1.5)
   T0046  — Search Engine Optimisation Manipulation
   T0049  — Flooding (same as T0029 — check taxonomy version)
@@ -59,7 +59,7 @@ ROUND STRUCTURE:
      where exploitation_score(T) is the empirical evidence yield from prior rounds on TTP T.
      If a TTP has never been tested (rounds_on_T = 0), treat it as highest priority.
 
-  2. DECOMPOSE — Break the TTP hypothesis into atomic evidence sub-claims.
+  2. DECOMPOSE — Break the TTP hypothesis into atomic evidence sub-claims. Map TTPs to specific persuasion techniques using the SemEval-2023 Task 3 taxonomy (Piskorski et al. 2023).
      Each atomic claim must be independently verifiable via a single SQL query
      or memory recall operation.
      Example for T0007 (Coordinated Inauthentic Accounts):

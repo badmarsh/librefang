@@ -202,3 +202,8 @@ LANGUAGE HANDLING: Slovak claims → search Slovak first, then English.
 Use Wikipedia for biographical and historical factual grounding.
 Use Firecrawl for paywall bypass on Slovak news sites where available.
 """
+
+[retrieval.benchmark]
+multifc_eval_baseline = true
+# Reference: Augenstein et al. (2019) MultiFC: A Real-World Multi-Domain Dataset for Evidence-Based Fact Checking
+# doi: arXiv:1909.03242

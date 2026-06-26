@@ -5148,6 +5148,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "librefang-graph"
+version = "2026.6.22-beta.22"
+dependencies = [
+ "petgraph",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "librefang-hands"
 version = "2026.6.22-beta.22"
 dependencies = [

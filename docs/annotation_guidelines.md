@@ -105,7 +105,7 @@ Each review queue entry includes `u_ale` (aleatory) and `u_epi` (epistemic) unce
 
 ### Krippendorff's Alpha Requirement
 * α ≥ 0.65: Acceptable annotation quality — Bayesian weight loop runs normally.
-* α ∈ [0.50, 0.65): Warning zone — team lead must review annotation disagreements.
+* α ∈ [0.50, 0.65): Warning zone — team lead must review annotation disagreements. Active Learning for borderline claim selection (Settles, 2012) will automatically deprioritize redundant high-agreement claims and focus human review on borderline decision boundaries to efficiently recover α.
 * α < 0.50: Critical — pipeline weight updates **automatically paused**; annotation session suspended pending calibration review.
 * α is recomputed every 50 verdicts and logged to `output/annotation_quality.log`.
 
@@ -122,3 +122,13 @@ Before confirming any verdict, verify:
 - [ ] Uncertainty fields have been reviewed (u_ale, u_epi)
 - [ ] Laundering risk has been considered if flagged
 - [ ] For P_fake in [0.45, 0.75]: a second independent annotator has been assigned
+
+---
+
+## 9. Slovak/CEE Disinformation Corpus Validation
+
+To validate the pipeline's performance against regional realities, we continuously build and validate a localized ground truth corpus using methodology adapted from Buntain et al. (2023) *Measuring the Reliability of Fact-Checking Tools*:
+
+* **Source Material**: Existing fact-checker verdicts from Demagog.sk and AFP Slovakia are scraped and transformed into a standardized ground truth.
+* **Corpus Balancing**: Ensure the corpus is stratified across key FIMI topics (e.g., Ukraine, NATO, EU, domestic elections).
+* **Validation Baseline**: Pipeline models (e.g., `ml-classifier`, `triplet-fact-checker`) must be evaluated against this regional corpus bi-weekly to detect domain drift.
