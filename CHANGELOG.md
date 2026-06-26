@@ -5,8 +5,15 @@ All notable changes to LibreFang will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Calendar Versioning](https://calver.org/) (YYYY.M.DD).
 
-## [3.1.0] - 2026-06-24
+## [5.0.0] - 2026-06-26
 
+### Added — Wave 5 (Trustless Verification & Adversarial Self-Evolution)
+- **Zero-Knowledge Attestations**: Implemented SNARK wrappers in `librefang-wire` to mathematically prove fact-check integrity without leaking source data. (Reference: Verifiable Model Inference 2025).
+- **Temporal Topology**: Added P2P Temporal Knowledge Graph propagation to share cryptographic attestations across nodes (`librefang-wire/src/topology.rs`).
+- **Multi-Agent Red Teaming (GART)**: Added `agents/red-debater/` implementing the RedDebate (2025) collaborative argumentation framework.
+- **AiTM Defense**: Added `agents/aitm-defender/` to monitor inter-agent message buses for Agent-in-the-Middle injections.
+
+## [3.1.0] - 2026-06-24
 ### Wave 3.5 — Methodological Integrity Improvements
 
 #### Fixed (Priority 1 — Critical Correctness)

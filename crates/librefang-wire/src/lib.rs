@@ -46,14 +46,16 @@
 //!
 //! The `EncryptionMode::Tls` option can be used to wrap the connection stream.
 
+pub mod federation;
 pub mod kex;
 pub mod keys;
 pub mod message;
 pub mod peer;
 pub mod registry;
-pub mod trusted_peers;
+pub mod topology;
 pub mod transport;
-pub mod federation;
+pub mod trusted_peers;
+pub mod zk_attest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EncryptionMode {

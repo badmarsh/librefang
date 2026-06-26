@@ -265,7 +265,7 @@ See [Comparison](https://docs.librefang.ai/getting-started/comparison#16-securit
 
 ## Mediálny Dezolator — Disinformation Detection Pipeline
 
-Pipeline version: **v3.1.0** — Wave 3.5 Methodological Integrity Improvements
+Pipeline version: **v5.0.0** — Wave 5 Trustless Verification & Adversarial Self-Evolution
 
 An open-source, MCP-orchestrated multi-agent disinformation detection pipeline for the Slovak and Central European media landscape.
 
@@ -298,6 +298,9 @@ An open-source, MCP-orchestrated multi-agent disinformation detection pipeline f
 | 3.5 | **TRANSPARENCY-1**: Weight history audit trail + automatic weight revert | ✅ Implemented |
 | 3.5 | **TRANSPARENCY-2**: Full citation audit (CITATION_AUDIT.md) | ✅ Implemented |
 | 3.5 | **TRANSPARENCY-3**: Annotation guidelines + ethics framework | ✅ Implemented |
+| 5 | **ZK-ATTEST**: Zero-Knowledge proofs for fact-check integrity | ✅ Implemented |
+| 5 | **GART-DEBATE**: RedDebate adversarial argumentation | ✅ Implemented |
+| 5 | **AITM-DEFEND**: Agent-in-the-Middle communication defense | ✅ Implemented |
 
 ### Wave 3.5 — Methodological Integrity Improvements
 
@@ -356,6 +359,22 @@ The `gart-synthesizer` agent has been promoted from `agents/speculative/` to `ag
 | ZK Attestation | Zero-knowledge proof attestation for verdicts | 📋 PLANNED (halo2 crate) |
 | Liquid Neural Networks | Continuous-time windowless CIB detection | LNN training framework |
 | A2A External Claim Federation | External claims from CEDMO/Demagog.sk via Google A2A | Partner agreements |
+
+### Wave 5 — Trustless Verification & Adversarial Self-Evolution
+
+**Version 5.0.0** introduces cryptographic and adversarial safeguards:
+
+#### ZK-ATTEST: Fact-check integrity proofs
+Implemented SNARK wrappers in `librefang-wire` to mathematically prove fact-check integrity without leaking source data. Shared via Temporal Topology P2P.
+> References: Verifiable Model Inference (2025); zk-img (arXiv:2211.04775)
+
+#### GART-DEBATE: RedDebate adversarial argumentation
+Added the `red-debater` agent to continuously synthesize adversarial disinformation and debate the inquisitor to map logic gaps.
+> Reference: RedDebate: Multi-Agent Collaborative Argumentation for LLM Safety (2025)
+
+#### AITM-DEFEND: Agent-in-the-Middle communication defense
+Added the `aitm-defender` agent to monitor inter-agent message buses for context shifts and injected payload manipulation.
+> Reference: Agent-in-the-Middle: Intercepting and Manipulating Multi-Agent Systems (2025)
 
 ### Wave 4 — Citation Repair & Academic Uplift
 
