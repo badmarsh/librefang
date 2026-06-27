@@ -59,10 +59,7 @@ impl TemporalGraph {
     pub fn get_active_edges_at(&self, timestamp: DateTime<Utc>) -> Vec<&TemporalEdge> {
         self.edges
             .iter()
-            .filter(|e| {
-                e.valid_from <= timestamp
-                    && e.valid_to.is_none_or(|end| timestamp <= end)
-            })
+            .filter(|e| e.valid_from <= timestamp && e.valid_to.is_none_or(|end| timestamp <= end))
             .collect()
     }
 }

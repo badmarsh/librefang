@@ -824,7 +824,10 @@ impl AuditLog {
         }
 
         // Mirror Tier-2 event if enabled
-        if self.journal_mirror.load(std::sync::atomic::Ordering::Relaxed) {
+        if self
+            .journal_mirror
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             #[cfg(target_os = "linux")]
             {
                 tracing::info!(

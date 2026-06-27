@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/librefang-graph",
     "crates/librefang-types",
     "crates/librefang-subprocess",
     "crates/librefang-memory",

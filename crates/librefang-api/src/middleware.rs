@@ -1639,10 +1639,13 @@ pub async fn slovak_legal_compliance_gate(
     req: Request<Body>,
     next: Next,
 ) -> Result<Response<Body>, StatusCode> {
-    if req.method() != axum::http::Method::POST && req.method() != axum::http::Method::PUT && req.method() != axum::http::Method::PATCH {
+    if req.method() != axum::http::Method::POST
+        && req.method() != axum::http::Method::PUT
+        && req.method() != axum::http::Method::PATCH
+    {
         return Ok(next.run(req).await);
     }
-    
+
     let content_type = req.headers().get(axum::http::header::CONTENT_TYPE);
     let is_json = content_type.is_some_and(|v| v.as_bytes().starts_with(b"application/json"));
     if !is_json {
@@ -1660,12 +1663,12 @@ pub async fn slovak_legal_compliance_gate(
         let text = json.to_string().to_lowercase();
         // If it's a verdict or contains disinfo_verdict
         if text.contains("verdict") {
-            let is_slovak_outlet = text.contains("hlavnespravy") || 
-                                   text.contains("infovojna") || 
-                                   text.contains("slobodnyvysielac") || 
-                                   text.contains("zemavek") ||
-                                   text.contains(".sk");
-            
+            let is_slovak_outlet = text.contains("hlavnespravy")
+                || text.contains("infovojna")
+                || text.contains("slobodnyvysielac")
+                || text.contains("zemavek")
+                || text.contains(".sk");
+
             if is_slovak_outlet && !text.contains("human_reviewed_at") {
                 tracing::warn!("Blocked automated verdict publication under §373 Trestného zákona (missing human_reviewed_at)");
                 // 451 Unavailable For Legal Reasons
@@ -3346,12 +3349,16 @@ mod tests {
     async fn slovak_legal_compliance_gate_blocks_missing_human_reviewed_at() {
         let app: Router = Router::new()
             .route("/test", axum::routing::post(|| async { "ok" }))
-            .layer(axum::middleware::from_fn(super::slovak_legal_compliance_gate));
+            .layer(axum::middleware::from_fn(
+                super::slovak_legal_compliance_gate,
+            ));
 
         // Missing human_reviewed_at => should be blocked (451)
         let req = Request::post("/test")
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"verdict": "blocked", "source": "hlavnespravy.sk"}"#))
+            .body(Body::from(
+                r#"{"verdict": "blocked", "source": "hlavnespravy.sk"}"#,
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status().as_u16(), 451);
@@ -3367,7 +3374,9 @@ mod tests {
         // Not a slovak outlet => should pass (200)
         let req3 = Request::post("/test")
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"verdict": "allowed", "source": "bbc.co.uk"}"#))
+            .body(Body::from(
+                r#"{"verdict": "allowed", "source": "bbc.co.uk"}"#,
+            ))
             .unwrap();
         let resp3 = app.clone().oneshot(req3).await.unwrap();
         assert_eq!(resp3.status(), StatusCode::OK);

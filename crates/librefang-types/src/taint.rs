@@ -80,11 +80,7 @@ pub struct TaintedValue<T> {
 
 impl<T> TaintedValue<T> {
     /// Creates a new tainted value with the given labels.
-    pub fn new(
-        value: T,
-        labels: HashSet<TaintLabel>,
-        source: impl Into<String>,
-    ) -> Self {
+    pub fn new(value: T, labels: HashSet<TaintLabel>, source: impl Into<String>) -> Self {
         let mut sources = std::collections::BTreeSet::new();
         sources.insert(source.into());
         Self {
@@ -217,13 +213,13 @@ impl TaintSink {
         }
     }
 
-    /// Sink for MCP tool calls into an external MCP server — blocks
-    /// secrets and PII since the arguments are shipped verbatim to a
-    /// process outside the kernel's control.
     pub fn mcp_tool_call() -> Self {
         let mut blocked = HashSet::new();
         blocked.insert(TaintLabel::Secret);
         blocked.insert(TaintLabel::Pii);
+        blocked.insert(TaintLabel::ExternalNetwork);
+        blocked.insert(TaintLabel::UntrustedAgent);
+        blocked.insert(TaintLabel::UserInput);
         Self {
             name: "mcp_tool_call".to_string(),
             blocked_labels: blocked,

@@ -23,18 +23,27 @@ mod tests {
     #[test]
     fn test_zk_attestation_pass() {
         let circuit = CIBAttestationCircuit::new(0.85, 0.75);
-        assert!(circuit.verify_proof(), "Proof should be valid when score >= threshold");
+        assert!(
+            circuit.verify_proof(),
+            "Proof should be valid when score >= threshold"
+        );
     }
 
     #[test]
     fn test_zk_attestation_fail() {
         let circuit = CIBAttestationCircuit::new(0.60, 0.75);
-        assert!(!circuit.verify_proof(), "Proof should fail when score < threshold");
+        assert!(
+            !circuit.verify_proof(),
+            "Proof should fail when score < threshold"
+        );
     }
-    
+
     #[test]
     fn test_zk_attestation_edge_case() {
         let circuit = CIBAttestationCircuit::new(0.75, 0.75);
-        assert!(circuit.verify_proof(), "Proof should pass when score == threshold");
+        assert!(
+            circuit.verify_proof(),
+            "Proof should pass when score == threshold"
+        );
     }
 }

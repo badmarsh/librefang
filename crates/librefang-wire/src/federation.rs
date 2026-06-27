@@ -63,7 +63,7 @@ mod tests {
         aggregator.aggregate(vec![node1, node2]);
 
         assert_eq!(aggregator.round, 1);
-        
+
         let w1 = aggregator.global_weights.get("layer1.weight").unwrap();
         // 0.5 + ((0.1 + 0.3) / 2) = 0.5 + 0.2 = 0.7
         assert!((*w1 - 0.7).abs() < f64::EPSILON);
@@ -72,7 +72,7 @@ mod tests {
         // 1.0 + ((-0.2 + 0.0) / 2) = 1.0 - 0.1 = 0.9
         assert!((*w2 - 0.9).abs() < f64::EPSILON);
     }
-    
+
     #[test]
     fn test_fedavg_empty_nodes() {
         let mut initial = HashMap::new();

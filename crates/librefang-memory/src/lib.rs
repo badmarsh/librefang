@@ -18,7 +18,6 @@ pub mod channel_binding_store;
 pub mod chunker;
 pub mod consolidation;
 pub mod decay;
-pub mod temporal_kg;
 pub mod goal_run_store;
 pub mod http_vector_store;
 pub mod idempotency;
@@ -35,6 +34,7 @@ pub mod roster_store;
 pub mod semantic;
 pub mod session;
 pub mod structured;
+pub mod temporal_kg;
 pub mod usage;
 pub mod workflow_store;
 

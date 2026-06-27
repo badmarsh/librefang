@@ -867,13 +867,19 @@ impl PeerNode {
                             })?
                     }
                     None => {
-                        if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Required {
-                            return Err(WireError::HandshakeFailed("Peer does not support required ChaCha20Poly1305 encryption".into()));
+                        if self.config.frame_encryption
+                            == librefang_types::config::FrameEncryptionMode::Required
+                        {
+                            return Err(WireError::HandshakeFailed(
+                                "Peer does not support required ChaCha20Poly1305 encryption".into(),
+                            ));
                         }
                         derive_session_key(&self.config.shared_secret, &our_nonce, ack_nonce)
                     }
                 };
-                if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Plaintext {
+                if self.config.frame_encryption
+                    == librefang_types::config::FrameEncryptionMode::Plaintext
+                {
                     use_encryption = false;
                 }
 
@@ -1046,13 +1052,19 @@ impl PeerNode {
                             })?
                     }
                     None => {
-                        if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Required {
-                            return Err(WireError::HandshakeFailed("Peer does not support required ChaCha20Poly1305 encryption".into()));
+                        if self.config.frame_encryption
+                            == librefang_types::config::FrameEncryptionMode::Required
+                        {
+                            return Err(WireError::HandshakeFailed(
+                                "Peer does not support required ChaCha20Poly1305 encryption".into(),
+                            ));
                         }
                         derive_session_key(&self.config.shared_secret, &our_nonce, ack_nonce)
                     }
                 };
-                if self.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Plaintext {
+                if self.config.frame_encryption
+                    == librefang_types::config::FrameEncryptionMode::Plaintext
+                {
                     use_encryption = false;
                 }
                 (key, use_encryption)
@@ -1078,7 +1090,7 @@ impl PeerNode {
                 sender: sender.map(|s| s.to_string()),
             }),
         };
-        
+
         if use_encryption {
             write_message_encrypted(&mut writer, &msg, &session_key).await?;
         } else {
@@ -1090,7 +1102,7 @@ impl PeerNode {
         } else {
             read_message_authenticated_observed(&mut reader, &session_key, node_id).await?
         };
-        
+
         match response.kind {
             WireMessageKind::Response(WireResponse::AgentResponse { text }) => Ok(text),
             WireMessageKind::Response(WireResponse::Error { code, message }) => Err(
@@ -1309,13 +1321,19 @@ impl PeerNode {
                             })?
                     }
                     _ => {
-                        if node.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Required {
-                            return Err(WireError::HandshakeFailed("Peer does not support required ChaCha20Poly1305 encryption".into()));
+                        if node.config.frame_encryption
+                            == librefang_types::config::FrameEncryptionMode::Required
+                        {
+                            return Err(WireError::HandshakeFailed(
+                                "Peer does not support required ChaCha20Poly1305 encryption".into(),
+                            ));
                         }
                         derive_session_key(&node.config.shared_secret, nonce, &ack_nonce)
                     }
                 };
-                if node.config.frame_encryption == librefang_types::config::FrameEncryptionMode::Plaintext {
+                if node.config.frame_encryption
+                    == librefang_types::config::FrameEncryptionMode::Plaintext
+                {
                     use_encryption = false;
                 }
 
@@ -1678,25 +1696,29 @@ pub async fn write_message_encrypted(
     session_key: &str,
 ) -> Result<(), WireError> {
     let json_bytes = serde_json::to_vec(msg)?;
-    
+
     let key_bytes = hex::decode(session_key)
         .map_err(|_| WireError::HandshakeFailed("Invalid session key hex".into()))?;
     if key_bytes.len() != 32 {
-        return Err(WireError::HandshakeFailed("Session key must be 32 bytes for ChaCha20Poly1305".into()));
+        return Err(WireError::HandshakeFailed(
+            "Session key must be 32 bytes for ChaCha20Poly1305".into(),
+        ));
     }
-    
-    let cipher = <ChaCha20Poly1305 as chacha20poly1305::aead::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
-    
+
+    let cipher = <ChaCha20Poly1305 as chacha20poly1305::aead::KeyInit>::new_from_slice(&key_bytes)
+        .map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
+
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = chacha20poly1305::Nonce::from_slice(&nonce_bytes);
-    
-    let encrypted = cipher.encrypt(nonce, json_bytes.as_ref())
+
+    let encrypted = cipher
+        .encrypt(nonce, json_bytes.as_ref())
         .map_err(|_| WireError::HandshakeFailed("Encryption failed".into()))?;
-        
+
     let total_len = nonce_bytes.len() + encrypted.len();
     let len_bytes = (total_len as u32).to_be_bytes();
-    
+
     writer.write_all(&len_bytes).await?;
     writer.write_all(&[1u8]).await?; // Mode: 1 = Encrypted
     writer.write_all(&nonce_bytes).await?;
@@ -1729,7 +1751,9 @@ pub async fn read_message_encrypted_observed(
     }
 
     if len < 12 + 16 + 2 {
-        return Err(WireError::HandshakeFailed("Message too short for encrypted frame".into()));
+        return Err(WireError::HandshakeFailed(
+            "Message too short for encrypted frame".into(),
+        ));
     }
 
     let mut frame = vec![0u8; len as usize];
@@ -1741,14 +1765,18 @@ pub async fn read_message_encrypted_observed(
     let key_bytes = hex::decode(session_key)
         .map_err(|_| WireError::HandshakeFailed("Invalid session key hex".into()))?;
     if key_bytes.len() != 32 {
-        return Err(WireError::HandshakeFailed("Session key must be 32 bytes for ChaCha20Poly1305".into()));
+        return Err(WireError::HandshakeFailed(
+            "Session key must be 32 bytes for ChaCha20Poly1305".into(),
+        ));
     }
-    
-    let cipher = <ChaCha20Poly1305 as chacha20poly1305::aead::KeyInit>::new_from_slice(&key_bytes).map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
+
+    let cipher = <ChaCha20Poly1305 as chacha20poly1305::aead::KeyInit>::new_from_slice(&key_bytes)
+        .map_err(|_| WireError::HandshakeFailed("Invalid key length".into()))?;
     let nonce = chacha20poly1305::Nonce::from_slice(nonce_bytes);
 
-    let decrypted = cipher.decrypt(nonce, encrypted)
-        .map_err(|_| WireError::HandshakeFailed("ChaCha20Poly1305 decryption/authentication failed".into()))?;
+    let decrypted = cipher.decrypt(nonce, encrypted).map_err(|_| {
+        WireError::HandshakeFailed("ChaCha20Poly1305 decryption/authentication failed".into())
+    })?;
 
     let msg = decode_message(&decrypted)?;
     if let Some(unk) = classify_unknown(&decrypted, &msg) {

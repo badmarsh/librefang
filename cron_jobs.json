@@ -5,6 +5,7 @@
       "agent_id": "5bb35868-43b9-5452-956d-cd6d908d5ded",
       "name": "Hourly collection cycle for Denník N intelligence",
       "enabled": true,
+      "session_mode": "new",
       "schedule": {
         "kind": "cron",
         "expr": "0 * * * *",
@@ -34,6 +35,7 @@
       "agent_id": "queue-monitor",
       "name": "Queue Monitor schedule",
       "enabled": true,
+      "session_mode": "new",
       "schedule": {
         "kind": "cron",
         "expr": "*/15 * * * *",

@@ -65,7 +65,8 @@ pub(crate) fn cmd_workflow_create(file: PathBuf) {
         );
         std::process::exit(1);
     });
-    let json_body: serde_json::Value = if file.extension().and_then(|e| e.to_str()) == Some("toml") {
+    let json_body: serde_json::Value = if file.extension().and_then(|e| e.to_str()) == Some("toml")
+    {
         let toml_val: toml::Value = toml::from_str(&contents).unwrap_or_else(|e| {
             eprintln!("Invalid TOML: {}", e);
             std::process::exit(1);

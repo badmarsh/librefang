@@ -484,7 +484,6 @@ pub async fn execute_tool_raw(
             Some(url) => {
                 // Taint check: block URLs containing secrets/PII from being exfiltrated
                 if let Some(violation) = check_taint_net_fetch(url) {
-
                     return ToolResult {
                         tool_use_id: tool_use_id.to_string(),
                         content: format!("Taint violation: {violation}"),
@@ -501,8 +500,12 @@ pub async fn execute_tool_raw(
                 if let Some(body_text) = body {
                     let tainted_body = librefang_types::taint::TaintedValue::new(
                         body_text,
-                        { let mut s = std::collections::HashSet::new(); s.insert(librefang_types::taint::TaintLabel::UntrustedAgent); s },
-                        "llm_tool_call"
+                        {
+                            let mut s = std::collections::HashSet::new();
+                            s.insert(librefang_types::taint::TaintLabel::UntrustedAgent);
+                            s
+                        },
+                        "llm_tool_call",
                     );
                     if let Some(violation) =
                         check_taint_outbound_text(body_text, &TaintSink::net_fetch())
@@ -523,8 +526,12 @@ pub async fn execute_tool_raw(
                         if let Some(vs) = value.as_str() {
                             let tainted_vs = librefang_types::taint::TaintedValue::new(
                                 vs,
-                                { let mut s = std::collections::HashSet::new(); s.insert(librefang_types::taint::TaintLabel::UntrustedAgent); s },
-                                "llm_tool_call"
+                                {
+                                    let mut s = std::collections::HashSet::new();
+                                    s.insert(librefang_types::taint::TaintLabel::UntrustedAgent);
+                                    s
+                                },
+                                "llm_tool_call",
                             );
                             if let Some(violation) =
                                 check_taint_outbound_header(name, vs, &TaintSink::net_fetch())
@@ -754,11 +761,14 @@ pub async fn execute_tool_raw(
             if !is_full_exec {
                 let tainted_command = librefang_types::taint::TaintedValue::new(
                     command,
-                    { let mut s = std::collections::HashSet::new(); s.insert(librefang_types::taint::TaintLabel::UntrustedAgent); s },
-                    "llm_tool_call"
+                    {
+                        let mut s = std::collections::HashSet::new();
+                        s.insert(librefang_types::taint::TaintLabel::UntrustedAgent);
+                        s
+                    },
+                    "llm_tool_call",
                 );
                 if let Some(violation) = check_taint_shell_exec(&tainted_command) {
-
                     return ToolResult {
                         tool_use_id: tool_use_id.to_string(),
                         content: format!("Taint violation: {violation}"),

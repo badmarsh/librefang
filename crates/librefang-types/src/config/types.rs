@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use super::DEFAULT_API_LISTEN;
 
-use zeroize::Zeroizing;
 use std::fmt;
+use zeroize::Zeroizing;
 
 /// A String wrapper that zeroes its memory on drop and redacts its Debug output.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -6929,7 +6929,9 @@ impl Default for MemoryDecayConfig {
 }
 
 /// How encryption is applied to wire protocol frames.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum FrameEncryptionMode {
     Plaintext,

@@ -9,7 +9,7 @@ impl QsvmModelStub {
     pub fn new() -> Self {
         Self
     }
-    
+
     pub fn predict(&self, _features: &[f32]) -> Result<i32, &'static str> {
         // Return a mock classification result
         Ok(1)

@@ -31,7 +31,11 @@ pub(super) fn check_taint_shell_exec(command: &TaintedValue<&str>) -> Option<Str
         if command.value.contains(pattern) {
             let mut labels = command.labels.clone();
             labels.insert(TaintLabel::ExternalNetwork);
-            let tainted = TaintedValue { value: command.value, labels, sources: command.sources.clone() };
+            let tainted = TaintedValue {
+                value: command.value,
+                labels,
+                sources: command.sources.clone(),
+            };
             if let Err(violation) = tainted.check_sink(&TaintSink::shell_exec()) {
                 warn!(command = crate::str_utils::safe_truncate_str(command.value, 80), %violation, "Shell taint check failed");
                 return Some(violation.to_string());

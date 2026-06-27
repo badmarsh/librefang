@@ -1,10 +1,10 @@
 //! Deep Multi-Agent Debate for Disinformation Detection
-//! 
+//!
 //! This module implements a state-of-the-art methodology where multiple
 //! distinct agent personas (e.g., Fact-Checker, Devil's Advocate, and Judge)
 //! engage in a multi-round debate to surface logical fallacies, assess epistemic
 //! uncertainty, and reach a high-confidence consensus regarding claims.
-//! 
+//!
 //! Reference: arXiv:2603.xxxxx (Deep Multi-Agent Debate for Disinformation)
 
 /// Represents a role in the multi-agent debate.
