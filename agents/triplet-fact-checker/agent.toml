@@ -284,3 +284,8 @@ memory_store("triplet_fact_checker.output", <json>)
 file_write("triplet_fact_checker_output.json")
 event_publish("triplet_fact_checker.output.ready")
 """
+
+[retrieval.benchmark]
+multifc_eval_baseline = true
+# Reference: Augenstein et al. (2019) MultiFC: A Real-World Multi-Domain Dataset for Evidence-Based Fact Checking
+# doi: arXiv:1909.03242

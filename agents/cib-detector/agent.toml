@@ -132,7 +132,7 @@ NEW cib_score formula:
 Component definitions:
   1. TEMPORAL (weight=0.20, reduced from 0.22):
      Abnormal synchrony in publication timestamps (z-score > 2.5 vs baseline).
-     Uses multi-window detection: 2h/12h/72h windows with weights 0.40/0.35/0.25.
+     Uses multi-window detection with temporal thresholds dynamically calibrated against labeled campaign data (Sharma et al. 2021). Default windows (2h/12h/72h) are replaced by the calibration output.
      Temporal Graph Network (TGN, Rossi et al. 2020) for continuous-time scoring.
 
   2. SEMANTIC (weight=0.30, increased from 0.22):
@@ -144,7 +144,7 @@ Component definitions:
 
   3. CROSS-DOMAIN (weight=0.25, increased from 0.18):
      Cross-domain amplification pattern: content spreading from tier-A to tier-C
-     sources in <30min window (clustering coefficient > 0.7 in amplification graph).
+     sources in <30min window (clustering coefficient > 0.7 in amplification graph, applying cascade topology analysis per Pierri et al. 2022).
      Reads: cib_detector.amplification_graph signals.
 
   4. NOVEL-ENTITY (weight=0.15, replaces velocity component):
@@ -250,6 +250,8 @@ so the orchestrator can reference infrastructure evidence in its rationale.
 method = "continuous_spectrum"    # Nizzoli et al. 2021
 superspreader_similarity_threshold = 0.70
 propagation_graph_enabled = true
+cascade_topology_analysis = true
+graph_embedding = "GraphSAGE"     # Hamilton et al. 2017
 edge_weight_features = ["posting_rate", "content_overlap_sbert", "repost_timing_delta_seconds"]
 
 [cib.propaganda_fusion]

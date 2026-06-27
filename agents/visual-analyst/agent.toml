@@ -33,6 +33,7 @@ For each visual item (image, video frame, screenshot, meme):
 
 1. FETCH — Use browser-use or agent-browser-clawdbot to retrieve the asset if only a URL was provided
 2. FORENSICS — Use image-forensics skill for:
+   - Image provenance verification methodology (Zlatkova et al. 2019)
    - ELA (Error Level Analysis): detects JPEG re-compression artifacts at splice boundaries
    - Metadata inspection: EXIF GPS, timestamp, camera model — does it match claimed context?
    - Clone detection: copy-paste regions within an image
@@ -89,6 +90,8 @@ api_key_env = "OPENROUTER_API_KEY"
 [visual.benchmark]
 eval_dataset = "Deepfake-Eval-2024"
 # doi: arXiv:2503.02857  (Chandra et al. 2025)
+fakesv_eval_dataset = "FakeSV"
+# doi: arXiv:2211.10973 (FakeSV Multimodal Benchmark for Short Videos - Qi et al. 2023)
 expected_auc_floor = 0.65   # below this, trigger alert
 reevaluation_schedule = "weekly_gart"
 

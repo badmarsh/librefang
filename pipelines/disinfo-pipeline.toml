@@ -141,9 +141,9 @@ notes       = """
 
 [[stage]]
 id          = "score"
-label       = "Parallel Scoring (7-agent)"
-agents      = ["ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker", "source-rater", "kg-consistency-checker", "temporal-checker"]
-description = "Seven independent agents score each claim concurrently and write results to MCP context."
+label       = "Parallel Scoring (8-agent)"
+agents      = ["ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker", "source-rater", "kg-consistency-checker", "temporal-checker", "framing-detector"]
+description = "Eight independent agents score each claim concurrently and write results to MCP context."
 notes       = """
   Agent weights (adaptive via Bayesian update — Improvement 1 / F2 update — Improvement 15):
     ml-classifier        w = 0.21  (e ≈ 0.18)
@@ -200,6 +200,16 @@ notes       = """
   Condition: only activates when claim_extractor.output contains visual_assets (URLs to images/video).
   Output: visual_analyst.output → disinfo-orchestrator reads it as 6th optional signal.
   Overlay images (nano-banana-pro factcheck badges) passed to writer and impact-comms.
+"""
+
+[[stage]]
+id          = "network-topology"
+label       = "Social Graph & Network Topology"
+agents      = ["network-mapper"]
+sequential  = true
+description = "Builds a persistent actor graph, detects communities, and profiles actors."
+notes       = """
+  Runs after CIB detection. Identifies apex nodes and bridge nodes using PageRank and betweenness centrality.
 """
 
 [[stage]]
@@ -330,7 +340,7 @@ notes       = """
 [[context_key]]
 key    = "claim_extractor.output"
 writer = "claim-extractor"
-readers = ["claim-decomposer", "stance-detector", "ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker", "source-rater", "kg-consistency-checker", "temporal-checker", "cib-detector", "cross-lingual-aligner"]
+readers = ["claim-decomposer", "stance-detector", "ml-classifier", "coherence-checker", "wiki-checker", "triplet-fact-checker", "source-rater", "kg-consistency-checker", "temporal-checker", "cib-detector", "cross-lingual-aligner", "framing-detector"]
 
 [[context_key]]
 key    = "claim_decomposer.output"
@@ -391,6 +401,11 @@ readers = ["disinfo-orchestrator"]
 key    = "temporal_checker.output"
 writer = "temporal-checker"
 readers = ["disinfo-orchestrator"]
+
+[[context_key]]
+key    = "framing_detector.output"
+writer = "framing-detector"
+readers = ["disinfo-orchestrator", "narrative-tracker"]
 
 [[context_key]]
 key    = "cross_lingual_aligner.output"
@@ -506,3 +521,8 @@ readers = ["disinfo-orchestrator", "writer"]
 key    = "orchestrator.uq_summary"
 writer = "disinfo-orchestrator"
 readers = ["writer", "impact-comms"]
+
+[[context_key]]
+key    = "network_mapper.output"
+writer = "network-mapper"
+readers = ["disinfo-orchestrator"]

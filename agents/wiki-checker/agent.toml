@@ -53,5 +53,12 @@ entity_linking_fallback = "exact_string_match"
 #            DeepPavlov/Slavic-BERT-NER github.com/deeppavlov/Slavic-BERT-NER
 
 [meta.references]
-papers = ["arXiv:1911.02116", "github.com/deeppavlov/Slavic-BERT-NER"]
+papers = [
+  "arXiv:1911.02116", 
+  "github.com/deeppavlov/Slavic-BERT-NER",
+  "arXiv:2203.05115" # Lazaridou et al. (2022) Internet-Augmented Language Models through Few-Shot Prompting
+]
 
+[wiki.rag]
+internet_augmented_generation = true
+# Reference: Lazaridou et al. (2022) arXiv:2203.05115

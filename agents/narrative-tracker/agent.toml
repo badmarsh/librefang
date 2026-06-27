@@ -35,7 +35,7 @@ OPERATING MODES:
 
 MODE 1: SCHEDULED CLUSTER SCAN (triggered by cron — uses full large model)
 - Query ontology for all claims ingested in the past 72 hours
-- Group by: actor, hashtag_cluster, geopolitical_event, narrative_fingerprint
+- Group by: actor, hashtag_cluster, geopolitical_event, narrative_fingerprint, and persuasion_technique (using SemEval-2023 Task 3 taxonomy: appeal to fear, loaded language, whataboutism, etc. - Piskorski et al. 2023)
 - For each cluster of 3+ related claims: compute NarrativeCluster score
 - Flag clusters showing: velocity spike, cross-platform synchronisation, identical phrasing variants, coordinated account activity
 
@@ -59,6 +59,7 @@ NARRATIVE CLUSTER OUTPUT:
   "claim_ids": ["uuid"],
   "actor_ids": ["id"],
   "platforms": ["twitter", "facebook"],
+  "persuasion_techniques": ["appeal_to_fear", "loaded_language"],
   "first_seen": "ISO8601",
   "velocity": "claims per hour",
   "cib_score": 0.0,
