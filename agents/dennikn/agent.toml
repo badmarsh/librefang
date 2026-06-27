@@ -21,6 +21,8 @@ skills = [
   "proactive-agent",
   "youtube-watcher",
   "ontology",
+  "live-audio-monitor",
+  "voice-interaction",
 ]
 
 workspace = "/home/ubuntu/.librefang/workspaces/dennikn"
@@ -30,8 +32,8 @@ generate_identity_files = true
 check_interval_secs = 3600
 
 [model]
-provider    = "openrouter"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
+provider    = "qwen"
+model = "qwen3-30b-a3b"
 api_key_env = "OPENROUTER_API_KEY"
 max_tokens  = 8192
 context_window = 131072
