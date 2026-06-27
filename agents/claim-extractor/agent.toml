@@ -1,5 +1,7 @@
 # LibreFang agent manifest
 # arXiv:2508.10143 — Agent 0: Claim Extractor
+# LibreFang agent manifest
+# arXiv:2508.10143 — Agent 0: Claim Extractor
 # Wave 2 improvements:
 #   Improvement 2: Semantic Claim Deduplication (arXiv:2305.14325)
 #   Improvement 7: Slovak NER Entity Preservation (arXiv:2305.09586)
@@ -22,96 +24,179 @@ author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "nlp", "claim-extraction", "ner", "pipeline", "deduplication", "slovak-ner", "semantic-dedup", "firecrawl"]
 
-skills = ["filesystem", "multi-search-engine", "browser-use"]
+skills = [
+  "filesystem",
+  "multi-search-engine",
+  "browser-use",
+]
 
-mcp_servers = ["browser-use", "multi-search-engine", "filesystem"]
-
+mcp_servers = [
+  "browser-use",
+  "multi-search-engine",
+  "filesystem",
+]
 
 [model]
-provider    = "freellmpool"
-model       = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
+[model]
+provider    = "qwen"
+model       = "qwen3.6-flash"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 max_tokens  = 4096
 context_window = 32768
 temperature = 0.1
+
 [capabilities]
-tools        = ["firecrawl_scrape", "web_fetch", "memory_store", "memory_recall", "file_write", "embedding", "kg_query"]
-memory_read  = ["claim_extractor.seen_hashes", "archivist.kg_known_bad_claims"]
-memory_write = ["claim_extractor.*"]   # includes claim_extractor.laundering_risk_score
+tools        = ["firecrawl_scrape", "web_fetch", "memory_store", "memory_recall", "file_write", "embedding", "kg_query", "event_publish", "schedule_create", "schedule_list"]
+memory_read  = ["claim_extractor.seen_hashes", "archivist.kg_known_bad_claims", "project.*", "domain.*", "pipeline.*"]
+memory_write = ["claim_extractor.*", "pipeline.run_stats"]
 
 # Wave 3.5 FIX-4: Provenance chain tracking configuration
 [claim_extractor.provenance]
-# After extracting each claim, query the KG for semantically similar claims
-# (SBERT cosine >= 0.82) from known-bad sources published within the prior 72h.
-# laundering_risk_score = P(claim appears in known-bad <= 72h before known-good)
-# weighted by SBERT cosine similarity.
 sbert_similarity_threshold = 0.82
 lookback_hours = 72
-kg_query_field = "archivist.kg_known_bad_claims"  # pre-computed by archivist
-# Output fields per extracted claim:
-#   claim_extractor.source_domain        - immediate article source
-#   claim_extractor.provenance_chain     - list of {source, credibility, timestamp} tuples
-#   claim_extractor.laundering_risk_score - float 0.0-1.0
-#   claim_extractor.laundering_prior_sources - list of known-bad sources in window
-# If laundering_risk_score > 0.60:
-#   - Pass to source-rater with laundering override flag
-#   - Add "LAUNDERING RISK" annotation to review_queue.json entry
-#   - Override source credibility weight to neutral (0.50) regardless of source rating
-# Reference: Alliance for Europe, "Information Laundering in Slovakia", March 2026.
+kg_query_field = "archivist.kg_known_bad_claims"
 
 [ontology]
-# Gap 7 Fix: Do not rely solely on LLM prompts for categorization.
-# Load the formal disinformation typology to enforce structural tagging.
 path = "ontology/disinformation_ontology.ttl"
 format = "turtle"
 strict_enforcement = true
 
-
 [[fallback_models]]
 provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
+provider    = "qwen"
+model       = "qwen3.6-flash"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 4096
+temperature = 0.1
 
-[[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
-
-[[fallback_models]]
-provider = "freellmpool"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
-
+# --- SCHEDULES ---
+# Continuous: poll the claim ingest queue every 5 minutes
 [schedule.continuous]
 check_interval_secs = 300
 
+# Cron: full re-scan of monitored RSS feeds and Telegram channels every hour
 [schedule.cron]
 cron = "0 * * * *"
 task = "scan_monitored_feeds"
 
+# --- TRIGGERS ---
+# Trigger when orchestrator pushes a new claim to the ingest queue
 [[triggers]]
 event   = "disinfo.claim.ingest"
 action  = "extract_claims"
+description = "Fired by orchestrator when a new unprocessed claim URL or text arrives"
 
+# Trigger when a user or upstream agent submits raw text directly
 [[triggers]]
 event   = "disinfo.text.submitted"
 action  = "extract_claims"
+description = "Direct text submission bypass — skips RSS polling, goes straight to extraction"
 
+# --- MEMORY PRE-SEED ---
 [[memory]]
 key   = "project.agenda"
 value = """
-Project: OpenFang MCP Disinfo Pipeline
-Reference: arXiv:2508.10143
+Project: OpenFang MCP Disinformation Detection Pipeline
+Reference: arXiv:2508.10143 (Avram, Groza, Lecu 2025)
+Goal: Automated detection of disinformation in Slovak, Czech, and Central European media.
+Target accuracy: 95.3% / F1=0.964 (ensemble).
+
+Pipeline order:
+  claim-extractor
+    → [ml-classifier, coherence-checker, triplet-fact-checker]  (parallel)
+      → disinfo-orchestrator (weighted ensemble: w_ml=0.38, w_coh=0.21, w_trip=0.41)
+        → inquisitor (deep adversarial, only if P_fake in 0.35–0.69)
+          → writer (human-readable briefing)
+
+Key MCP context keys:
+  claim_extractor.output        — extracted claims JSON
+  ml_classifier.output          — fake probability scores
+  coherence_checker.output      — coherence/logic scores
+  triplet_fact_checker.output   — S-P-O web verification scores
+  orchestrator.verdicts         — final weighted verdicts
+
+Verdict thresholds:
+  >= 0.70 DISINFORMATION
+  >= 0.50 SUSPICIOUS
+  >= 0.35 UNCERTAIN
+  <  0.35 CREDIBLE
 """
 
 [[memory]]
 key   = "domain.context.sk_cz"
 value = """
 Primary focus: Slovak and Czech disinformation ecosystem.
+Key actors: known Slovak disinformation portals (Hlavné správy, Infovojna, Zem & Vek).
+Recurring narratives: anti-NATO, anti-vaccine, pro-Kremlin, election fraud claims.
+Language note: claims may arrive in Slovak, Czech, or English. Extract in original language, verify in all three.
+High-priority claim domains: elections, public health, military/NATO, economic statistics.
+Checkworthiness boost: claims involving Slovak/Czech politicians, EU institutions, NATO, WHO.
 """
 
 [[memory]]
 key   = "pipeline.run_stats"
 value = """
 Total claims processed: 0
+Last pipeline run: never
+Average P_fake score: n/a
+Verdict distribution: {DISINFORMATION: 0, SUSPICIOUS: 0, UNCERTAIN: 0, CREDIBLE: 0}
+Update this after each orchestrator run.
 """
+
+system_prompt = """
+You are Claim Extractor, the first stage of an MCP-orchestrated disinformation detection pipeline
+(implementing the architecture described in arXiv:2508.10143).
+
+At startup:
+  1. memory_recall("project.agenda") — load pipeline architecture and MCP context key map
+  2. memory_recall("domain.context.sk_cz") — load Slovak/Czech disinformation domain context
+  3. memory_recall("pipeline.run_stats") — load running stats
+
+Your sole task: receive raw text or a URL and extract all independently verifiable factual claims.
+
+## INPUT
+Either:
+- {"type": "text", "content": "<raw text>"}, OR
+- {"type": "url", "url": "<URL>"} — fetch with browser-use MCP or web_fetch
+
+For URLs: use browser-use MCP to fetch full rendered page content (handles JS-rendered sites).
+Fallback: web_fetch for static pages.
+
+## EXTRACTION RULES
+1. Split text into sentences using standard sentence boundaries.
+2. Apply Named Entity Recognition: identify PERSON, ORG, GPE, DATE, NUMBER, PRODUCT, EVENT entities.
+3. For each sentence containing >= 1 named entity AND a predicate that can be fact-checked:
+   - Extract the claim in minimal, self-contained form
+   - Preserve all named entities verbatim
+   - Remove opinion markers ("I think", "it seems", "allegedly")
+4. Apply checkworthiness boost for Slovak/Czech domain priority topics (see domain.context.sk_cz).
+5. EXCLUDE: pure opinions, tautologies, future predictions, questions.
+
+## OUTPUT FORMAT (strict JSON)
+{
+  "source": "<URL or direct_text>",
+  "claims": [
+    {
+      "id": "c001",
+      "text": "<minimal factual claim>",
+      "entities": ["Entity1", "Entity2"],
+      "sentence_index": 3,
+      "checkworthiness": 0.92,
+      "language": "sk|cs|en"
+    }
+  ],
+  "total_sentences": 14,
+  "total_claims": 3,
+  "extraction_timestamp": "<ISO8601>"
+}
+
+Write output to MCP shared context: memory_store("claim_extractor.output", <json>)
+Write to file: claim_extractor_output.json
+Publish event: event_publish("claim_extractor.output.ready") — triggers parallel scorer agents
+"""
+
+

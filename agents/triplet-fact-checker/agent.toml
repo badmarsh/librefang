@@ -18,23 +18,32 @@ author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "triplet", "knowledge-graph", "web-verification", "pipeline", "firecrawl", "fire", "confidence-gated"]
 
-skills = ["filesystem", "multi-search-engine", "wikipedia"]
+skills = [
+  "filesystem",
+  "multi-search-engine",
+  "wikipedia",
+  "browser-use"
+]
 
-mcp_servers = ["filesystem", "multi-search-engine", "wikipedia"]
-
+mcp_servers = [
+  "browser-use",
+  "multi-search-engine",
+  "filesystem",
+  "wikipedia"
+]
 
 [model]
-provider    = "freellmpool"
-model       = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
-max_tokens  = 4096
-context_window = 32768
-temperature = 0.0
-[capabilities]
-tools        = ["web_search", "firecrawl_scrape", "firecrawl_extract", "web_fetch", "memory_store", "memory_recall", "file_write", "file_read"]
-memory_read  = ["claim_extractor.*"]
-memory_write = ["triplet_fact_checker.*"]
+provider    = "qwen"
+model       = "qwen3-plus"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 8192
+temperature = 0.1
 
+[capabilities]
+tools        = ["web_search", "firecrawl_scrape", "firecrawl_extract", "web_fetch", "memory_store", "memory_recall", "file_write", "file_read", "event_publish", "schedule_create"]
+memory_read  = ["project.*", "triplet.*", "claim_extractor.*"]
+memory_write = ["triplet_fact_checker.*"]
 
 [[fallback_models]]
 provider = "freellmpool"
@@ -58,17 +67,65 @@ api_key_env = "FREELLMPOOL_API_KEY"
 
 [[triggers]]
 event   = "claim_extractor.output.ready"
-action  = "check_facts"
+action  = "verify_triplets"
+description = "Parallel trigger — fires simultaneously with ml-classifier and coherence-checker"
 
 [[triggers]]
 event   = "pipeline.rerun.triplet-fact-checker"
-action  = "check_facts"
+action  = "verify_triplets"
+description = "Manual re-run trigger from orchestrator on failure recovery"
+
+[schedule.cron]
+cron  = "0 3 * * 1"
+task  = "refresh_entity_cache"
 
 [[memory]]
 key   = "project.agenda"
 value = """
-Project: OpenFang MCP Disinfo Pipeline
-Reference: arXiv:2508.10143
+Project: OpenFang MCP Disinformation Detection Pipeline
+Reference: arXiv:2508.10143 (Avram, Groza, Lecu 2025)
+This agent is Agent 3 of 3 scoring agents. HIGHEST weight: w_trip = 0.41.
+Method: Subject-Predicate-Object extraction from each claim, then web verification of each triplet.
+Input MCP key:  claim_extractor.output
+Output MCP key: triplet_fact_checker.output
+On completion: event_publish("triplet_fact_checker.output.ready")
+Warning: DuckDuckGo dependency — if search results are polluted by disinfo, accuracy degrades.
+Mitigation: cross-verify with Wikipedia MCP; flag if search result and Wikipedia contradict.
+"""
+
+[[memory]]
+key   = "triplet.calibration"
+value = """
+Calibration notes (arXiv:2508.10143 Agent 3):
+- Individual accuracy: ~88% — highest of the three agents
+- Weight in ensemble: 0.41 (derived from misclassification rate e=0.12)
+- Method: extract S-P-O triplets, search each via DuckDuckGo, cross-check against Wikipedia
+- Known vulnerability: recursive disinformation (polluted search results)
+- Mitigation: require Wikipedia confirmation for high-stakes claims; downgrade confidence if only DDG confirms
+- Search strategy: query in claim's original language THEN in English for cross-reference
+"""
+
+[[memory]]
+key   = "triplet.entity_cache"
+value = """
+Cached entity knowledge for common SK/CZ disinformation subjects:
+- NATO: founded 1949, Slovakia member since 2004, Czech Republic since 1999
+- EU: Slovakia member since 2004, Czech Republic since 2004
+- COVID-19 vaccines: mRNA mechanism established, WHO/EMA approved multiple vaccines 2020-2021
+- Slovak Prime Minister: Robert Fico (as of 2024)
+- Czech President: Petr Pavel (as of 2023)
+- Key institutions: SIS (Slovak intelligence), BIS (Czech intelligence), EUROPOL
+Refresh weekly via Wikipedia MCP.
+"""
+
+[[memory]]
+key   = "triplet.search_risk_domains"
+value = """
+Domains known to produce polluted search results for SK/CZ disinformation topics:
+- hlavnespravy.sk, infovojna.sk, zemavek.sk, nwoo.org, aeronet.cz, ac24.cz
+- Russian state media: rt.com, sputniknews.com, tass.com
+- If only these domains confirm a claim: flag as HIGH POLLUTION RISK, reduce confidence by 0.3.
+Prefer: wikipedia.org, reuters.com, ap.org, bbc.com, .gov domains, .edu domains.
 """
 
 system_prompt = """
@@ -201,4 +258,29 @@ ml-classifier vs triplet-fact-checker debate arbitrated by arbiter.
 LANGUAGE HANDLING: Slovak claims → search Slovak first, then English.
 Use Wikipedia for biographical and historical factual grounding.
 Use Firecrawl for paywall bypass on Slovak news sites where available.
+
+## OUTPUT FORMAT (strict JSON)
+{
+  "agent": "triplet-fact-checker",
+  "results": [
+    {
+      "claim_id": "c001",
+      "triplets": [
+        {"subject": "X", "predicate": "Y", "object": "Z", "verified": false, "source": "wikipedia"}
+      ],
+      "web_evidence": [
+        {"query": "...", "url": "...", "excerpt": "...", "supports": "refutation", "domain_risk": "low"}
+      ],
+      "wikipedia_check": {"entity": "X", "result": "contradicts_claim", "excerpt": "..."},
+      "pollution_risk": false,
+      "claim_fake_probability": 0.83,
+      "confidence": 0.88
+    }
+  ],
+  "ensemble_weight": 0.41
+}
+
+memory_store("triplet_fact_checker.output", <json>)
+file_write("triplet_fact_checker_output.json")
+event_publish("triplet_fact_checker.output.ready")
 """

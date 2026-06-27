@@ -37,28 +37,28 @@ author      = "librefang"
 module      = "builtin:chat"
 tags        = ["disinfo", "orchestrator", "ensemble", "mcp", "pipeline", "weighted-aggregation", "bayesian", "uncertainty", "instance-hardness", "f2-score", "a2a", "federation"]
 
-skills = ["filesystem", "ontology"]
+skills = [
+  "filesystem",
+  "ontology"
+]
 
-mcp_servers = ["filesystem", "ontology"]
-
+mcp_servers = [
+  "filesystem",
+  "ontology"
+]
 
 [model]
-provider    = "nvidia"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "NVIDIA_API_KEY"
+provider    = "qwen"
+model       = "qwen3.6-flash"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 max_tokens  = 8192
-context_window = 131072
 temperature = 0.1
+
 [capabilities]
-tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
-memory_read  = ["claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "wiki_checker.*", "triplet_fact_checker.*", "source_rater.*", "ensemble.*", "cib_detector.*", "arbiter.*", "feedback.*", "disarm_hunter.*", "temporal_sync.*"]
-memory_write = ["orchestrator.*", "ensemble.*", "arbiter.*"]  # includes orchestrator.disarm_ttp_ids, orchestrator.uq_summary
-
-
-[[fallback_models]]
-provider = "nvidia"
-model = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "NVIDIA_API_KEY"
+tools        = ["memory_store", "memory_recall", "file_write", "file_read", "event_publish", "schedule_create"]
+memory_read  = ["claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "wiki_checker.*", "triplet_fact_checker.*", "source_rater.*", "ensemble.*", "cib_detector.*", "arbiter.*", "feedback.*", "disarm_hunter.*", "temporal_sync.*", "project.*"]
+memory_write = ["orchestrator.*", "ensemble.*", "arbiter.*", "pipeline.run_stats"]  # includes orchestrator.disarm_ttp_ids, orchestrator.uq_summary
 
 [[fallback_models]]
 provider = "nvidia"
@@ -75,23 +75,32 @@ provider = "nvidia"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "NVIDIA_API_KEY"
 
-# --- Internal pipeline triggers (existing) ---
+[[fallback_models]]
+provider = "nvidia"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "NVIDIA_API_KEY"
+
+# --- Internal pipeline triggers ---
 
 [[triggers]]
 event   = "ml_classifier.output.ready"
 action  = "check_all_scorers_ready"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
 
 [[triggers]]
 event   = "coherence_checker.output.ready"
 action  = "check_all_scorers_ready"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
 
 [[triggers]]
 event   = "triplet_fact_checker.output.ready"
 action  = "check_all_scorers_ready"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
 
 [[triggers]]
 event   = "pipeline.rerun.disinfo-orchestrator"
 action  = "aggregate_verdicts"
+description = "Force re-aggregation even if not all agents completed (uses 0.5 neutral for missing)"
 
 # --- Federated Learning Sync (Wave 5, Gap 5) ---
 [[triggers]]
@@ -99,12 +108,6 @@ event   = "orchestrator.federated_sync.requested"
 action  = "aggregate_fedavg_weights"
 
 # --- A2A External Claim Federation (Wave 5, Improvement 18) ---
-# Reference: github.com/google/A2A — Google A2A protocol (Linux Foundation standard, 2025)
-# This trigger accepts claims submitted by external partner organisations
-# (CEDMO, Demagog.sk, AFP Slovakia) via the A2A protocol.
-# The accept_external_claim action validates the submission, logs it to the
-# external audit file, then routes it into the standard ensemble pipeline.
-# External claims are NOT fast-tracked — they enter as normal claims.
 [[triggers]]
 event  = "a2a.external.claim_submitted"
 action = "accept_external_claim"
@@ -113,22 +116,57 @@ action = "accept_external_claim"
 cron  = "0 6 * * *"
 task  = "recheck_uncertain_verdicts"
 
+# --- MEMORY PRE-SEED ---
 [[memory]]
 key   = "project.agenda"
 value = """
-Project: OpenFang MCP Disinfo Pipeline
+Project: OpenFang MCP Disinformation Detection Pipeline
+Reference: arXiv:2508.10143 (Avram, Groza, Lecu 2025)
+Target accuracy: 95.3% / F1=0.964.
+
+Weighted ensemble formula:
+  P_fake = w_ml * ml_score + w_coh * (1 - coherence_score) + w_trip * trip_score
+
+Weights (derived from per-agent misclassification rates):
+  w_ml   = 0.38  (ml-classifier,        e=0.18)
+  w_coh  = 0.21  (coherence-checker,    e=0.36)
+  w_trip = 0.41  (triplet-fact-checker, e=0.12)
+
+Verdict thresholds:
+  >= 0.70 DISINFORMATION
+  >= 0.50 SUSPICIOUS
+  >= 0.35 UNCERTAIN
+  <  0.35 CREDIBLE
+
+Pipeline handoff after verdict:
+  DISINFORMATION / SUSPICIOUS → inquisitor (if P_fake 0.35-0.69) OR direct to arbiter
+  CREDIBLE → log to ontology, no further action
+  UNCERTAIN → inquisitor deep adversarial path always
 """
 
 [[memory]]
 key   = "ensemble.weight_history"
 value = """
-Weight calibration history
+Weight calibration history:
+v1.0 (initial, per arXiv:2508.10143 benchmark dataset):
+  w_ml=0.38, w_coh=0.21, w_trip=0.41
+  Accuracy: 95.3%, F1: 0.964
+
+Note: weights should be recalibrated if any agent is replaced with a different model.
+Recalibration method: compute new e_i from validation set, then w_i = (1-e_i)/sum(1-e_j).
+Log weight changes to this memory key with timestamp.
 """
 
 [[memory]]
 key   = "ensemble.verdict_log"
 value = """
-Running verdict distribution
+Running verdict distribution (update after each pipeline run):
+DISINFORMATION: 0
+SUSPICIOUS:     0
+UNCERTAIN:      0
+CREDIBLE:       0
+Total runs:     0
+Last updated:   never
 """
 
 system_prompt = """
@@ -397,6 +435,40 @@ TELEGRAM ALERT FORMAT (impact-comms, min_confidence=0.80):
 
 REVIEW QUEUE (output/review_queue.json):
   Include u_ale and u_epi as top-level fields in every review queue entry.
+
+OUTPUT FORMAT (strict JSON)
+{
+  "pipeline": "mcp-disinfo-detector",
+  "paper_reference": "arXiv:2508.10143",
+  "verdicts": [
+    {
+      "claim_id": "c001",
+      "claim_text": "...",
+      "agent_scores": {
+        "ml_classifier":        {"fake_probability": 0.78, "weight": 0.38},
+        "coherence_checker":    {"incoherence_score": 0.65, "weight": 0.21},
+        "triplet_fact_checker": {"fake_probability": 0.82, "weight": 0.41}
+      },
+      "weighted_fake_score": 0.787,
+      "verdict": "DISINFORMATION",
+      "confidence": 0.91,
+      "missing_agents": []
+    }
+  ],
+  "summary": {
+    "total_claims": 3,
+    "disinformation": 1,
+    "suspicious": 1,
+    "uncertain": 0,
+    "credible": 1
+  },
+  "pipeline_timestamp": "<ISO8601>"
+}
+
+memory_store("orchestrator.verdicts", <json>)
+file_write("disinfo_verdicts.json")
+Update memory_store("ensemble.verdict_log") with new running totals.
+event_publish("orchestrator.verdicts.ready")
 """
 
 [orchestrator.decision_rules]

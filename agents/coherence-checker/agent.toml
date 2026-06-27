@@ -1,11 +1,27 @@
 # LibreFang agent manifest
 # arXiv:2508.10143 — Agent 2: Coherence Checker
 name = "coherence-checker"
+<<<<<<< HEAD
 version = "1.0.0"
 description = "LLM-based coherence and logical consistency checker for extracted claims"
 author = "librefang"
 module = "builtin:chat"
 tags = ["disinfo", "coherence", "logic", "llm", "pipeline"]
+=======
+version = "1.1.0"
+description = "LLM-based coherence and logical consistency checker. Triggered in parallel with ml-classifier and triplet-fact-checker."
+author      = "openfang"
+module      = "builtin:chat"
+tags        = ["disinfo", "coherence", "logic", "llm", "pipeline"]
+
+skills = [
+  "filesystem",
+]
+
+mcp_servers = [
+  "filesystem",
+]
+>>>>>>> remotes/openfang/feat/disinfo-mcp-pipeline
 
 skills = ["filesystem"]
 
@@ -13,6 +29,7 @@ mcp_servers = ["filesystem"]
 
 
 [model]
+<<<<<<< HEAD
 provider    = "freellmpool"
 model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
@@ -22,6 +39,134 @@ temperature = 0.0
 [capabilities]
 tools = ["memory_store", "memory_recall", "file_write", "file_read", "http_fetch"]
 memory_read = ["claim_extractor.*"]
+=======
+provider    = "qwen"
+model       = "qwen3.6-flash"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 4096
+temperature = 0.2
+
+# --- TRIGGERS ---
+[[triggers]]
+event   = "claim_extractor.output.ready"
+action  = "check_coherence"
+description = "Parallel trigger — fires simultaneously with ml-classifier and triplet-fact-checker"
+
+[[triggers]]
+event   = "pipeline.rerun.coherence-checker"
+action  = "check_coherence"
+description = "Manual re-run trigger from orchestrator on failure recovery"
+
+# --- MEMORY PRE-SEED ---
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinformation Detection Pipeline
+Reference: arXiv:2508.10143 (Avram, Groza, Lecu 2025)
+This agent is Agent 2 of 3 scoring agents. Weight in ensemble: w_coh = 0.21.
+Note: coherence score is INVERTED in the ensemble formula:
+  coh_contribution = w_coh * (1.0 - coherence_score)
+So coherence_score=0.0 (incoherent) → maximum contribution to P_fake.
+Input MCP key:  claim_extractor.output
+Output MCP key: coherence_checker.output
+On completion: event_publish("coherence_checker.output.ready")
+"""
+
+[[memory]]
+key   = "coherence.calibration"
+value = """
+Calibration notes (arXiv:2508.10143 Agent 2):
+- Individual accuracy: ~64% — intentionally limited, no external lookups
+- Weight in ensemble: 0.21 (lowest, reflects standalone accuracy)
+- Score inversion: coherence_score is inverted in P_fake formula
+- Mandate: assess ONLY internal coherence + LLM prior knowledge. Never web-search.
+- Known strengths: catching self-contradictions, logical fallacies, implausible statistics
+- Known weaknesses: cannot detect factual errors that are internally coherent
+"""
+
+[[memory]]
+key   = "coherence.fallacy_library"
+value = """
+Logical fallacies to detect (with SK/CZ context notes):
+1. false_dichotomy: 'Buď s nami, alebo proti nám' (Either with us or against us)
+2. appeal_to_authority_unnamed: 'Vedci tvrdia...' without naming scientists
+3. correlation_causation: economic stats blamed on single political actor
+4. slippery_slope: 'Ak prijmeme migrantov, Slovensko zanikne'
+5. hasty_generalisation: single incident generalised to entire group
+6. straw_man: misrepresenting EU/NATO position then refuting the misrepresentation
+7. appeal_to_fear: health/safety panic without supporting data
+8. whataboutism: deflecting factual claim by pointing to unrelated issue
+SK/CZ disinformation frequently combines: appeal_to_fear + unnamed_authority + false_dichotomy.
+"""
+
+[[memory]]
+key   = "coherence.narrative_patterns"
+value = """
+Recurring narrative structures in SK/CZ disinformation (coherence red flags):
+1. 'Globalist conspiracy': claims that contradicts each other but are united by common enemy framing
+2. 'Health panic reversal': claim X is dangerous + claim mainstream says X is safe → incoherent on its face
+3. 'Historical revisionism': claims about WWII/communism that contradict established Slovak/Czech historiography
+4. 'EU/NATO betrayal': internally contradictory claims about sovereignty
+Flag when a claim's internal framing pattern matches these structures.
+"""
+
+system_prompt = """
+You are Coherence Checker, the third agent in an MCP-orchestrated disinformation detection pipeline
+(arXiv:2508.10143, Agent 2). Weight in ensemble: w_coh = 0.21 (inverted: incoherence raises P_fake).
+
+At startup:
+  1. memory_recall("project.agenda") — load pipeline context and inversion note
+  2. memory_recall("coherence.calibration") — load calibration
+  3. memory_recall("coherence.fallacy_library") — load fallacy detection patterns
+  4. memory_recall("coherence.narrative_patterns") — load SK/CZ narrative red flags
+
+You are triggered by: event claim_extractor.output.ready
+
+## INPUT
+memory_recall("claim_extractor.output")
+
+## MANDATE
+Evaluate ONLY internal coherence and LLM prior knowledge. Do NOT use web search or external lookups.
+External verification is the job of triplet-fact-checker.
+
+## EVALUATION DIMENSIONS
+1. INTERNAL COHERENCE — self-contradictions, implausible causality, timeline inconsistencies
+2. FACTUAL PLAUSIBILITY — contradicts scientific consensus or well-known historical facts
+3. NARRATIVE COHERENCE — cross-claim contradictions within the same source
+4. LOGICAL FALLACIES — check against fallacy_library (see memory)
+5. NARRATIVE PATTERN MATCH — check against narrative_patterns (see memory)
+
+## CALIBRATION
+coherence_score 0.0 = highly incoherent/suspicious, 1.0 = fully coherent.
+Confidence cap: 0.64 (individual accuracy ceiling per paper).
+
+## OUTPUT FORMAT (strict JSON)
+{
+  "agent": "coherence-checker",
+  "evaluations": [
+    {
+      "claim_id": "c001",
+      "coherence_score": 0.35,
+      "incoherence_signals": ["Internal contradiction: ...", "Logical fallacy: ..."],
+      "fallacies_detected": ["false_dichotomy", "appeal_to_fear"],
+      "narrative_pattern_match": "globalist_conspiracy",
+      "plausibility_verdict": "IMPLAUSIBLE",
+      "confidence": 0.64,
+      "note": "Coherence alone insufficient — weighted 0.21 in ensemble"
+    }
+  ]
+}
+
+memory_store("coherence_checker.output", <json>)
+file_write("coherence_checker_output.json")
+event_publish("coherence_checker.output.ready")
+"""
+
+[capabilities]
+tools = ["memory_store", "memory_recall", "file_write", "file_read", "event_publish"]
+memory_read  = ["project.*", "coherence.*", "claim_extractor.*"]
+>>>>>>> remotes/openfang/feat/disinfo-mcp-pipeline
 memory_write = ["coherence_checker.*"]
 
 

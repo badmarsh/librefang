@@ -20,9 +20,7 @@ module      = "builtin:http_scorer"
 tags        = ["disinfo", "ml", "classifier", "tfidf", "pipeline"]
 
 skills = ["filesystem", "uq-scorer"]
-
 mcp_servers = ["filesystem"]
-
 
 [http_scorer]
 endpoint = "http://127.0.0.1:${ML_CLASSIFIER_PORT:-8090}/score"
@@ -32,16 +30,18 @@ timeout_seconds = 5
 fallback_score  = 0.5
 
 [capabilities]
-tools        = ["memory_store", "memory_recall", "file_write", "file_read"]
-memory_read  = ["claim_extractor.*", "disarm_hunter.session_results"]
+tools        = ["memory_store", "memory_recall", "file_write", "file_read", "event_publish"]
+memory_read  = ["claim_extractor.*", "disarm_hunter.session_results", "project.*", "classifier.*"]
 memory_write = ["ml_classifier.*"]  # includes uq_variance, uq_method, uq_flag, providers_used
 
-[[triggers]]
-event   = "claim_extractor.output.ready"
-action  = "classify_claims"
+[model]
+provider    = "qwen"
+model       = "qwen3.6-flash"
+api_key_env = "DASHSCOPE_API_KEY"
+base_url    = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+max_tokens  = 2048
+temperature = 0.0
 
-# WP3: Three DISTINCT provider families for Deep Ensemble UQ variance measurement.
-# All-identical fallbacks produce variance ≈ 0 (false low uncertainty) — now fixed.
 [[fallback_models]]
 provider    = "nvidia"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
@@ -58,19 +58,16 @@ model       = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
 [[triggers]]
+event   = "claim_extractor.output.ready"
+action  = "classify_claims"
+description = "Parallel trigger — fires at same time as coherence-checker and triplet-fact-checker"
+
+[[triggers]]
 event   = "pipeline.rerun.ml-classifier"
 action  = "classify_claims"
+description = "Manual re-run trigger from orchestrator on failure recovery"
 
 [classifier.bert]
-# Model priority order (Wave 3.5 FIX-2):
-#   1. Slovak-specific BERT: gerulata/slovakbert (best F1=0.8931 on held-out Slovak test set)
-#   2. Multilingual Slavic BERT: deeppavlov/bert-base-bg-cs-pl-ru-cased (SlavicBERT)
-#      Covers SK/CZ/RU/BG/PL natively. F1=0.8661. Ref: Arkhipov et al. arXiv:1912.07076.
-#   3. XLM-RoBERTa: facebook/xlm-roberta-base (cross-lingual fallback)
-#      Trained on 100 languages. F1 estimated ~0.82 zero-shot SK. Ref: Conneau et al. arXiv:1911.02116.
-#   4. TF-IDF + Logistic Regression (BASELINE ONLY — NOT recommended for production)
-#      Loses morphological variants and negation. Retained for CPU-only / RAM < 4096 MB.
-#      Served via scripts/serve_ml_classifier.py when PyTorch/Transformers unavailable.
 primary_model = "gerulata/slovakbert"
 secondary_model = "deeppavlov/bert-base-bg-cs-pl-ru-cased"
 tertiary_model = "facebook/xlm-roberta-base"
@@ -81,9 +78,99 @@ fallback_label = "BASELINE CLASSIFIER — NOT RECOMMENDED FOR PRODUCTION. Use tr
 fallback_trigger = "transformers_unavailable OR ram_mb < 4096"
 fallback_script = "scripts/serve_ml_classifier.py"
 sequence_classification_max_length = 512
-# References:
-#   Arkhipov et al. (2019) SlavicBERT: arXiv:1912.07076
-#   Conneau et al. (2020) XLM-RoBERTa: arXiv:1911.02116
-#   Gerulata/SlovakBERT: huggingface.co/gerulata/slovakbert
-#   Reimers & Gurevych (2019) SBERT: arXiv:1908.10084
-#   FakeNewsDetection_DRES: github.com/FFarhangian/FakeNewsDetection_DRES
+
+# --- MEMORY PRE-SEED ---
+[[memory]]
+key   = "project.agenda"
+value = """
+Project: OpenFang MCP Disinformation Detection Pipeline
+Reference: arXiv:2508.10143 (Avram, Groza, Lecu 2025)
+This agent is Agent 1 of 3 scoring agents. Weight in ensemble: w_ml = 0.38.
+Run in parallel with coherence-checker (w=0.21) and triplet-fact-checker (w=0.41).
+Input MCP key: claim_extractor.output
+Output MCP key: ml_classifier.output
+On completion: event_publish("ml_classifier.output.ready")
+"""
+
+[[memory]]
+key   = "classifier.calibration"
+value = """
+Calibration notes for LLM simulation of LR+TF-IDF classifier (arXiv:2508.10143 Agent 1):
+- Individual accuracy: ~82% on paper's benchmark dataset
+- Weight in ensemble: 0.38 (derived from misclassification rate e=0.18)
+- Known weaknesses: struggles with satire, sarcasm, and technically-true-but-misleading claims
+- Strong signals: ALL CAPS, multiple exclamation marks, vague attribution, absolute quantifiers
+- Weak signals: claims in formal register — defer these to triplet-fact-checker
+- Slovak/Czech specific: watch for Russophone loanwords used to frame claims (napr. 'fašista', 'banderovci')
+"""
+
+[[memory]]
+key   = "classifier.known_disinfo_patterns"
+value = """
+Known recurring disinformation linguistic patterns in SK/CZ media:
+1. 'Hlavné správy/Infovojna style': emotional opener + vague expert + call to share
+2. 'Translated RT/Sputnik': often contains unusual Czech/Slovak phrasing from machine translation
+3. 'Screenshot news': claim presented as fact but original source is unverifiable screenshot
+4. 'Statistic laundering': real statistic from one context reused in false context
+5. 'False bilingualism': claim stated in SK then subtly changed in CZ version
+Boost fake_probability for claims matching patterns 1-5.
+"""
+
+system_prompt = """
+You are ML Classifier, the second agent in an MCP-orchestrated disinformation detection pipeline
+(arXiv:2508.10143, Agent 1). Weight in ensemble: w_ml = 0.38.
+
+At startup:
+  1. memory_recall("project.agenda") — load pipeline context
+  2. memory_recall("classifier.calibration") — load calibration notes
+  3. memory_recall("classifier.known_disinfo_patterns") — load SK/CZ pattern library
+
+You are triggered by: event claim_extractor.output.ready
+
+## INPUT
+memory_recall("claim_extractor.output") — read claims from MCP shared context
+
+## PROCESSING
+For each claim:
+1. Tokenize and analyse linguistic features (see calibration notes)
+2. Check against known SK/CZ disinformation patterns (see known_disinfo_patterns)
+3. Assign FAKE probability score 0.0-1.0
+4. List top 3 signal phrases that most influenced the score
+
+## LINGUISTIC SIGNALS
+Fake signals (raise toward 1.0):
+- Extreme/absolute: 'always', 'never', '100%', 'proven', 'shocking', 'breaking', 'banned', 'secret'
+- Emotional: fear, outrage, urgency triggers
+- Vague attribution: 'sources say', 'experts claim' (unnamed)
+- Numbers without sources
+- ALL CAPS, multiple !!!
+- SK/CZ pattern matches (see known_disinfo_patterns)
+
+True signals (reduce toward 0.0):
+- Named sources with verifiable credentials
+- Hedged, qualified language
+- Verifiable dates, locations, institutions
+- Formal register, consistent terminology
+
+## OUTPUT FORMAT (strict JSON)
+{
+  "agent": "ml-classifier",
+  "scores": [
+    {
+      "claim_id": "c001",
+      "fake_probability": 0.78,
+      "top_signals": ["shocking", "they confirmed", "100% proven"],
+      "pattern_match": "pattern_1_emotional_opener",
+      "confidence": 0.82
+    }
+  ],
+  "model_info": {
+    "type": "logistic_regression_tfidf_simulation",
+    "ensemble_weight": 0.38
+  }
+}
+
+memory_store("ml_classifier.output", <json>)
+file_write("ml_classifier_output.json")
+event_publish("ml_classifier.output.ready")
+"""
