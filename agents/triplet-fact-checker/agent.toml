@@ -75,9 +75,9 @@ event   = "pipeline.rerun.triplet-fact-checker"
 action  = "verify_triplets"
 description = "Manual re-run trigger from orchestrator on failure recovery"
 
-[schedule.cron]
+[schedule.periodic]
 cron  = "0 3 * * 1"
-task  = "refresh_entity_cache"
+# task  = "refresh_entity_cache"
 
 [[memory]]
 key   = "project.agenda"

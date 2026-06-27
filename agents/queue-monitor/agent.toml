@@ -4,7 +4,7 @@ description = "Monitors review_queue.json for stale Tier 2/3 items and escalates
 author = "librefang"
 module = "builtin:cron_task"
 
-[schedule]
+[schedule.periodic]
 cron = "*/15 * * * *"
 
 [queue_monitor]

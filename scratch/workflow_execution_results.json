@@ -1,104 +1,187 @@
 [
   {
-    "name": "social-impact-accountability-v2",
-    "id": "85949c9f-20e4-40f0-96b6-5f8694f667ff",
-    "run_id": "8cf61797-a8dd-4544-ac73-0f45d88dc2ae",
-    "result": null
-  },
-  {
-    "name": "coordinated-debunk-engine",
-    "id": "0246c190-7987-4435-a6a3-7d717747e654",
-    "run_id": "6460c8b2-5f68-4c75-a005-e9569fa3ba57",
-    "result": null
-  },
-  {
-    "name": "meme-deepfake-triage",
-    "id": "e08863d6-3e44-4e51-a35f-cc7e70ab2a39",
-    "run_id": "69609e18-26b3-45ad-b37f-bea3a0e2a43c",
-    "result": null
-  },
-  {
-    "name": "gart-evaluation-cart",
-    "id": "42276915-c2de-4c94-824d-b53ba92e606f",
-    "run_id": "3281e888-f975-4161-bad2-e54a7df55dfd",
-    "result": null
-  },
-  {
-    "name": "health-check",
-    "id": "8b969c81-6e39-40e4-af59-9c3e50695a6e",
-    "run_id": "e59f9c97-dbfb-43e0-9d96-0909aa27768e",
-    "result": null
-  },
-  {
-    "name": "agentic-security-redteam",
-    "id": "49670afa-91fb-479b-b57a-b8b4abb7d7f7",
-    "run_id": "5cc157d3-1687-4abe-9be5-9e03950cc185",
-    "result": null
-  },
-  {
-    "name": "consensus-vote-protocol-v1",
-    "id": "813fb6f2-3282-44ef-8a4d-79a51c8b45d0",
-    "run_id": "7a11b35d-6116-4628-b017-e628799b22a8",
-    "result": null
-  },
-  {
-    "name": "health-check-critical",
-    "id": "b16595e1-9370-4d9f-bc95-c0af54f0c8c5",
-    "run_id": "6e59c341-5cac-4847-8876-45c9ac905319",
-    "result": null
-  },
-  {
-    "name": "investigative-report-generation-v1",
-    "id": "2a6e3272-0e5e-4f82-90ac-c345e784cd79",
-    "run_id": "867eb149-de51-480e-addf-21abf791e437",
-    "result": null
-  },
-  {
-    "name": "feedback-ingestion",
-    "id": "11ea59c1-6afe-402b-ac33-f2779c616957",
-    "run_id": "ccfb5998-ea05-426e-a9f0-70d33ca4414b",
-    "result": null
-  },
-  {
     "name": "dashboard-kpi-tracker",
     "id": "f85cd41f-cfed-49c7-90f6-0b4a1a14d42c",
-    "run_id": "c55a6fda-e94e-4597-9e3f-255d140a58d7",
-    "result": null
-  },
-  {
-    "name": "self-healing-pipeline",
-    "id": "decb30d8-d311-42d0-ab8e-01a3fd8b1d48",
-    "run_id": "22c3a82e-fad0-43e5-ace3-52eb3f08d359",
+    "run_id": "107eb337-dad1-445f-8cfc-4ab4cf71f03f",
     "result": null
   },
   {
     "name": "msm-historical-audit-engine",
     "id": "c538f4f8-ad4c-48b3-9599-b6d012f3a3a0",
-    "run_id": "a03426cc-df8c-47d2-956c-3532b0813cf7",
+    "run_id": "4b491528-4e29-47d1-8429-edd330092cbd",
+    "result": {
+      "completed_at": "2026-06-27T19:04:27.048938301+00:00",
+      "error": "Registry agent 'researcher-hand' not found for workflow step 'agentic-archive-retrieval' (referenced by name; ensure the agent is registered in the kernel)",
+      "id": "4b491528-4e29-47d1-8429-edd330092cbd",
+      "input": "{\"archive_source\":\"https://sme.sk/archives\",\"target_narrative\":\"Global economic collapse predicted in 2024\"}",
+      "output": null,
+      "started_at": "2026-06-27T19:04:27.048372201+00:00",
+      "state": "failed",
+      "step_results": [],
+      "workflow_id": "c538f4f8-ad4c-48b3-9599-b6d012f3a3a0",
+      "workflow_name": "msm-historical-audit-engine"
+    }
+  },
+  {
+    "name": "gart-evaluation-cart",
+    "id": "42276915-c2de-4c94-824d-b53ba92e606f",
+    "run_id": "c147eaed-3d38-4ba9-86a7-c97ba5fc2cdc",
+    "result": {
+      "completed_at": "2026-06-27T19:04:27.060043601+00:00",
+      "error": "Registry agent 'gart-synthesizer' not found for workflow step 'synthesize-adversarial-articles' (referenced by name; ensure the agent is registered in the kernel)",
+      "id": "c147eaed-3d38-4ba9-86a7-c97ba5fc2cdc",
+      "input": "Generic test input string for workflow execution.",
+      "output": null,
+      "started_at": "2026-06-27T19:04:27.050867901+00:00",
+      "state": "failed",
+      "step_results": [],
+      "workflow_id": "42276915-c2de-4c94-824d-b53ba92e606f",
+      "workflow_name": "gart-evaluation-cart"
+    }
+  },
+  {
+    "name": "consensus-vote-protocol-v1",
+    "id": "813fb6f2-3282-44ef-8a4d-79a51c8b45d0",
+    "run_id": "ac3f9c83-498a-4e57-a4c4-cb40a8409811",
+    "result": {
+      "completed_at": "2026-06-27T19:04:27.556616301+00:00",
+      "error": "Step 'provenance-init' failed: LLM driver error: Request failed: {\"error\":{\"message\":\"ovh/Meta-Llama-3_3-70B-Instruct is not a valid model ID\",\"code\":400},\"user_id\":\"user_2okVzkrhkR8LLZC6dDQCiY7ooyT\"} \u2014 raw: API error (400): {\"error\":{\"message\":\"ovh/Meta-Llama-3_3-70B-Instruct is not a valid model ID\",\"code\":400},\"user_id\":\"user_2okVzkrhkR8LLZC6dDQCiY7ooyT\"}",
+      "id": "ac3f9c83-498a-4e57-a4c4-cb40a8409811",
+      "input": "Generic test input string for workflow execution.",
+      "output": null,
+      "started_at": "2026-06-27T19:04:27.062202801+00:00",
+      "state": "failed",
+      "step_results": [],
+      "workflow_id": "813fb6f2-3282-44ef-8a4d-79a51c8b45d0",
+      "workflow_name": "consensus-vote-protocol-v1"
+    }
+  },
+  {
+    "name": "narrative-campaign-scan-v1",
+    "id": "877cfbe4-6513-45fb-b6b2-f4ff999fd079",
+    "run_id": "4aa08efd-ee68-46a3-bf5e-8e7bfec01792",
+    "result": {
+      "completed_at": "2026-06-27T19:05:20.279966554+00:00",
+      "error": "Registry agent 'analyst' not found for workflow step 'high-cib-triage' (referenced by name; ensure the agent is registered in the kernel)",
+      "id": "4aa08efd-ee68-46a3-bf5e-8e7bfec01792",
+      "input": "Generic test input string for workflow execution.",
+      "output": null,
+      "started_at": "2026-06-27T19:04:32.069935506+00:00",
+      "state": "failed",
+      "step_results": [
+        {
+          "agent_id": "27056585-b042-5e3d-94ed-8418442066e0",
+          "agent_name": "narrative-tracker",
+          "duration_ms": 48209,
+          "error": null,
+          "input_tokens": 31424,
+          "output": "The search results for \"narrative-tracker\" include various tools and resources for tracking narratives, such as the Narrative Tracker by DefiLlama, which provides real-time narrative performance analytics and trend identification. Additionally, there are books and solutions like the Narrative Tracker by WhistlePig Publishing and the Key Narrative Tracker by Innov8.AI Solutions, which offer tools for keeping track of narratives and monitoring social media platforms. The InfluenceMap Methane Narrative Tracker is also available, which uses analysis of policy engagement by companies and industry associations to identify frequently applied narratives.",
+          "output_tokens": 147,
+          "prompt": "Generic test input string for workflow execution.",
+          "step_name": "claim-cluster-scan"
+        }
+      ],
+      "workflow_id": "877cfbe4-6513-45fb-b6b2-f4ff999fd079",
+      "workflow_name": "narrative-campaign-scan-v1"
+    }
+  },
+  {
+    "name": "disinfo-pipeline",
+    "id": "37deb3f6-2810-429a-8972-998f782726f2",
+    "run_id": "e81988c2-2448-4208-8699-3d6391b858be",
     "result": null
   },
   {
     "name": "desolator-omni-ingest",
     "id": "8074a1df-7b94-46ee-bef1-e202e449371e",
-    "run_id": "16f31274-cfc4-4df2-b76e-2e9fec4bc4b3",
+    "run_id": "59475ab7-2b2b-499b-99de-1676d349593d",
+    "result": {
+      "completed_at": "2026-06-27T19:07:52.139799904+00:00",
+      "error": "Registry agent 'collector-hand' not found for workflow step 'dynamic-osint-ingestion' (referenced by name; ensure the agent is registered in the kernel)",
+      "id": "59475ab7-2b2b-499b-99de-1676d349593d",
+      "input": "{\"feed_url\":\"https://example.com/disinfo-rss\"}",
+      "output": null,
+      "started_at": "2026-06-27T19:07:52.139369304+00:00",
+      "state": "failed",
+      "step_results": [],
+      "workflow_id": "8074a1df-7b94-46ee-bef1-e202e449371e",
+      "workflow_name": "desolator-omni-ingest"
+    }
+  },
+  {
+    "name": "meme-deepfake-triage",
+    "id": "e08863d6-3e44-4e51-a35f-cc7e70ab2a39",
+    "run_id": "8ba41432-179e-4a51-891b-91d48e8378fe",
+    "result": {
+      "completed_at": "2026-06-27T19:07:52.723779005+00:00",
+      "error": "Step 'fetch-asset' failed: LLM driver error: Auth error: {\"status\":403,\"title\":\"Forbidden\",\"detail\":\"Authorization failed\"}",
+      "id": "8ba41432-179e-4a51-891b-91d48e8378fe",
+      "input": "https://example.com/fake_image.jpg",
+      "output": null,
+      "started_at": "2026-06-27T19:07:52.141067104+00:00",
+      "state": "failed",
+      "step_results": [],
+      "workflow_id": "e08863d6-3e44-4e51-a35f-cc7e70ab2a39",
+      "workflow_name": "meme-deepfake-triage"
+    }
+  },
+  {
+    "name": "agentic-security-redteam",
+    "id": "49670afa-91fb-479b-b57a-b8b4abb7d7f7",
+    "run_id": "4e351ae9-3d79-44f1-afb6-9c938eb17372",
+    "result": {
+      "completed_at": "2026-06-27T19:07:57.152219436+00:00",
+      "error": "Registry agent 'researcher-hand' not found for workflow step 'codebase-surface-mapping' (referenced by name; ensure the agent is registered in the kernel)",
+      "id": "4e351ae9-3d79-44f1-afb6-9c938eb17372",
+      "input": "{\"diff\":\"diff --git a/src/auth.rs b/src/auth.rs\\n- if password == stored {\\n+ if true {\"}",
+      "output": null,
+      "started_at": "2026-06-27T19:07:57.147357536+00:00",
+      "state": "failed",
+      "step_results": [],
+      "workflow_id": "49670afa-91fb-479b-b57a-b8b4abb7d7f7",
+      "workflow_name": "agentic-security-redteam"
+    }
+  },
+  {
+    "name": "health-check",
+    "id": "8b969c81-6e39-40e4-af59-9c3e50695a6e",
+    "run_id": "f5f03fd1-43f7-443a-9d1b-37dd70445d25",
     "result": null
+  },
+  {
+    "name": "self-healing-pipeline",
+    "id": "decb30d8-d311-42d0-ab8e-01a3fd8b1d48",
+    "run_id": "2d10686d-5975-4510-8cc2-395ebbadbde9",
+    "result": null
+  },
+  {
+    "name": "coordinated-debunk-engine",
+    "id": "0246c190-7987-4435-a6a3-7d717747e654",
+    "error": "Failed to start"
+  },
+  {
+    "name": "feedback-ingestion",
+    "id": "11ea59c1-6afe-402b-ac33-f2779c616957",
+    "error": "Failed to start"
+  },
+  {
+    "name": "investigative-report-generation-v1",
+    "id": "2a6e3272-0e5e-4f82-90ac-c345e784cd79",
+    "error": "Failed to start"
   },
   {
     "name": "coordinated-debunk-engine-v2",
     "id": "26945a22-8515-4dd9-ad9b-c71e795754a0",
-    "run_id": "277231bb-a9ab-4b58-a0cc-872205e0c12b",
-    "result": null
+    "error": "Failed to start"
   },
   {
-    "name": "disinfo-pipeline",
-    "id": "37deb3f6-2810-429a-8972-998f782726f2",
-    "run_id": "06ba2aeb-1476-4bf5-a885-8b0999dd8cc2",
-    "result": null
+    "name": "social-impact-accountability-v2",
+    "id": "85949c9f-20e4-40f0-96b6-5f8694f667ff",
+    "error": "Failed to start"
   },
   {
-    "name": "narrative-campaign-scan-v1",
-    "id": "877cfbe4-6513-45fb-b6b2-f4ff999fd079",
-    "run_id": "d75b3148-a593-437a-bc8c-e50ea8942f62",
-    "result": null
+    "name": "health-check-critical",
+    "id": "b16595e1-9370-4d9f-bc95-c0af54f0c8c5",
+    "error": "Failed to start"
   }
 ]

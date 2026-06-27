@@ -1,13 +1,6 @@
 # LibreFang agent manifest
 # arXiv:2508.10143 — Agent 2: Coherence Checker
 name = "coherence-checker"
-<<<<<<< HEAD
-version = "1.0.0"
-description = "LLM-based coherence and logical consistency checker for extracted claims"
-author = "librefang"
-module = "builtin:chat"
-tags = ["disinfo", "coherence", "logic", "llm", "pipeline"]
-=======
 version = "1.1.0"
 description = "LLM-based coherence and logical consistency checker. Triggered in parallel with ml-classifier and triplet-fact-checker."
 author      = "openfang"
@@ -21,25 +14,9 @@ skills = [
 mcp_servers = [
   "filesystem",
 ]
->>>>>>> remotes/openfang/feat/disinfo-mcp-pipeline
-
-skills = ["filesystem"]
-
-mcp_servers = ["filesystem"]
 
 
 [model]
-<<<<<<< HEAD
-provider    = "freellmpool"
-model       = "ovh/Meta-Llama-3_3-70B-Instruct"
-api_key_env = "FREELLMPOOL_API_KEY"
-max_tokens  = 4096
-context_window = 32768
-temperature = 0.0
-[capabilities]
-tools = ["memory_store", "memory_recall", "file_write", "file_read", "http_fetch"]
-memory_read = ["claim_extractor.*"]
-=======
 provider    = "qwen"
 model       = "qwen3.6-flash"
 api_key_env = "DASHSCOPE_API_KEY"
@@ -166,7 +143,6 @@ event_publish("coherence_checker.output.ready")
 [capabilities]
 tools = ["memory_store", "memory_recall", "file_write", "file_read", "event_publish"]
 memory_read  = ["project.*", "coherence.*", "claim_extractor.*"]
->>>>>>> remotes/openfang/feat/disinfo-mcp-pipeline
 memory_write = ["coherence_checker.*"]
 
 

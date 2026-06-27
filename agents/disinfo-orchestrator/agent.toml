@@ -112,9 +112,9 @@ action  = "aggregate_fedavg_weights"
 event  = "a2a.external.claim_submitted"
 action = "accept_external_claim"
 
-[schedule.cron]
+[schedule.periodic]
 cron  = "0 6 * * *"
-task  = "recheck_uncertain_verdicts"
+# task  = "recheck_uncertain_verdicts"
 
 # --- MEMORY PRE-SEED ---
 [[memory]]

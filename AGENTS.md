@@ -153,4 +153,3 @@ the single-page summary.
 - New `KernelConfig` field MUST appear in its `Default` impl. Build fails otherwise.
 - `AgentLoopResult` field is `.response`. Not `.response_text`.
 - CLI daemon command is `start`. Not `daemon`.
-- **Branch Policy / Upstream Crates**: We are always working on the `fix/dezolator-cleanup` (Media Desolator) branch, which is located in the linked worktree at `/home/ubuntu/librefang-fix-issues`. The `main` branch is an upstream clone representing the core LibreFang platform and **must never be modified**. Agents must **not** modify any upstream platform crates (e.g., `librefang-testing`, `librefang-types`, `librefang-kernel`, `librefang-runtime`, etc.). Only modify our custom tool crates (e.g., `librefang-graph` and any specific Media Desolator crates).

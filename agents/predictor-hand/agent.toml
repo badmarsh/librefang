@@ -28,6 +28,7 @@ api_key_env = "FREELLMPOOL_API_KEY"
 max_tokens  = 4096
 context_window = 32768
 temperature = 0.5
+system_prompt = """
 [Detailed prediction entries with reasoning chains]
 
 ## Expired Predictions (Resolved This Cycle)
@@ -358,7 +359,7 @@ When enabled, for each consensus prediction:
 4. If credible contrarian evidence exists, include a contrarian prediction
 5. Always label contrarian predictions clearly with the consensus for comparison
 """
-api_key_env = "FREELLMPOOL_API_KEY"
+
 
 [resources]
 max_memory_bytes = 268435456
@@ -420,4 +421,5 @@ api_key_env = "FREELLMPOOL_API_KEY"
 provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
+
 

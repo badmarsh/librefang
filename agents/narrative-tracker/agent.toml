@@ -93,7 +93,7 @@ provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
-[schedule.cron]
+[schedule.periodic]
 cron         = "0 */6 * * *"   # every 6 hours
-task         = "scan_narrative_clusters"
-session_mode = "persistent"    # needs yesterday's cluster state to detect velocity spikes
+# task         = "scan_narrative_clusters"
+# session_mode = "persistent"    # needs yesterday's cluster state to detect velocity spikes

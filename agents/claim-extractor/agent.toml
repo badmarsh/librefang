@@ -37,7 +37,6 @@ mcp_servers = [
 ]
 
 [model]
-[model]
 provider    = "qwen"
 model       = "qwen3.6-flash"
 api_key_env = "DASHSCOPE_API_KEY"
@@ -79,9 +78,9 @@ temperature = 0.1
 check_interval_secs = 300
 
 # Cron: full re-scan of monitored RSS feeds and Telegram channels every hour
-[schedule.cron]
+[schedule.periodic]
 cron = "0 * * * *"
-task = "scan_monitored_feeds"
+# task = "scan_monitored_feeds"
 
 # --- TRIGGERS ---
 # Trigger when orchestrator pushes a new claim to the ingest queue

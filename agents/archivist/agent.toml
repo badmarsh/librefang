@@ -358,7 +358,7 @@ action = "ingest_verdict_to_kg"
 event  = "source.credibility.update_requested"
 action = "update_source_credibility"
 
-[schedule.cron]
+[schedule.periodic]
 cron         = "0 8 * * 0"    # Sundays 08:00
-task         = "consolidate_kg_and_self_improve"
-session_mode = "persistent"   # needs historical weight and cluster state
+# task         = "consolidate_kg_and_self_improve"
+# session_mode = "persistent"   # needs historical weight and cluster state

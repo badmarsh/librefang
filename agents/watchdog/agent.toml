@@ -181,7 +181,7 @@ provider = "openrouter"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "OPENROUTER_API_KEY"
 
-[schedule.cron]
+[schedule.periodic]
 cron = "*/30 * * * *"
-session_mode = "new"
-task = "Triage incoming claims and feeds."
+# session_mode = "new"
+# task = "Triage incoming claims and feeds."

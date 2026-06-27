@@ -27,7 +27,8 @@ zip = { workspace = true }
 aho-corasick = "1.1"
 semver = "1"
 fs2 = "0.4"
-
+halo2_proofs = "0.3.0"
+halo2curves = "0.3.0"
 [dev-dependencies]
 tempfile = { workspace = true }
 serial_test = "3"

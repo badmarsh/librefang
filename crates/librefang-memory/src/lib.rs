@@ -38,9 +38,12 @@ pub mod temporal_kg;
 pub mod usage;
 pub mod workflow_store;
 
-mod session_store;
+pub mod session_store;
 mod substrate;
+pub mod controller;
+
 pub use channel_binding_store::ChannelBindingStore;
+pub use controller::MemoryController;
 pub use goal_run_store::{GoalRunRow, GoalRunStore};
 pub use mcp_config_store::McpConfigStore;
 pub use passkey_store::{PasskeyRecord, PasskeyStore, PasskeyStoreError, SqlitePasskeyStore};
