@@ -229,6 +229,17 @@ notes       = """
 """
 
 [[stage]]
+id          = "hallucination-audit"
+label       = "Taxonomic Hallucination Audit"
+agents      = ["hallucination-auditor"]
+sequential  = true
+description = "Audits reasoning and generation for various classes of hallucinations."
+notes       = """
+  Runs before aggregate. Checks for 7 taxonomy types (H-FACT, H-REF, H-LOGIC, etc.).
+  HARD_FLAG verdicts are escalated to the debate stage.
+"""
+
+[[stage]]
 id          = "aggregate"
 label       = "Weighted Ensemble Aggregation"
 agents      = ["disinfo-orchestrator"]
@@ -288,7 +299,7 @@ notes       = """
     Tier 1 (auto): confidence >= 0.90 AND epistemic < 0.25 AND needs_human_review = false
     Tier 2 (soft review): 0.70 <= confidence < 0.90 OR epistemic >= 0.25
     Tier 3 (hard block): needs_human_review = true OR (DISINFORMATION AND confidence < 0.85)
-                         OR cib_score >= 0.70
+                         OR cib_score >= 0.70 OR hallucination_detected = true
   Tier 3 verdicts NEVER auto-publish. Slovak defamation law sensitivity.
 """
 
@@ -334,6 +345,13 @@ notes       = """
   disinfo-orchestrator reads disarm_hunter.session_results and appends disarm_ttp_ids to verdicts.
   Detects adaptation signal (T0073): actor content diversity entropy shift > 0.25 over 30 days.
 """
+
+[[optional_stage]]
+id          = "f3-stress-test"
+label       = "F3 Adversarial Paraphrase"
+trigger     = "HARD_FLAG OR mentions political figure"
+agents      = ["adversarial-paraphraser"]
+description = "Stress-tests verification agents by paraphrasing the input claim into neutral, emotional, and formal registers to detect stylistic bias vulnerabilities."
 
 [[stage]]
 id          = "gart-red-debate"

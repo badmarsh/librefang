@@ -1,0 +1,67 @@
+[taxonomy]
+version = "1.0"
+namespace = "hallucination_audit"
+description = "Typed taxonomy of hallucination classes tailored for Slovak disinformation audits."
+
+[[type]]
+id = "H-FACT"
+name = "Factual Hallucination"
+description = "Direct contradiction of established physical or historical facts."
+examples = [
+    "Tvrdenie, že Slovensko má prístup k moru (Claiming Slovakia has access to the sea)."
+]
+prompt_fragment = "Skontroluj, či tvrdenia neodporujú overiteľným faktom (H-FACT)."
+
+[[type]]
+id = "H-REF"
+name = "Reference Hallucination"
+description = "Citing non-existent sources, fake URLs, or attributing quotes incorrectly."
+examples = [
+    "Odkaz na neexistujúci článok z denníka Sme."
+]
+prompt_fragment = "Over existenciu citovaných zdrojov a presnosť odkazov (H-REF)."
+
+[[type]]
+id = "H-LOGIC"
+name = "Logical Hallucination"
+description = "Internal contradictions or logical fallacies in the generated reasoning."
+examples = [
+    "Tvrdenie X vyvracia Y, no následne sa spolieha na Y."
+]
+prompt_fragment = "Zhodnoť logickú konzistenciu argumentácie (H-LOGIC)."
+
+[[type]]
+id = "H-PROC"
+name = "Procedural Hallucination"
+description = "Inventing false instructions or steps that cannot be executed."
+examples = [
+    "Vymyslené inštrukcie na registráciu na falošnom portáli štátnej správy."
+]
+prompt_fragment = "Over uskutočniteľnosť a reálnosť navrhovaných postupov (H-PROC)."
+
+[[type]]
+id = "H-SCOPE"
+name = "Scope Hallucination"
+description = "Making broad generalizations not supported by the provided text or data."
+examples = [
+    "Vyvodenie záveru o celej populácii z jediného incidentu."
+]
+prompt_fragment = "Skontroluj, či zovšeobecnenia nepresahujú rámec dôkazov (H-SCOPE)."
+
+[[type]]
+id = "H-IDEO"
+name = "Ideological Hallucination"
+description = "Injecting unsolicited political or ideological bias not present in the source."
+examples = [
+    "Pridanie proruského alebo antiamerického naratívu do neutrálnej správy o počasí."
+]
+prompt_fragment = "Identifikuj prítomnosť nepodložených ideologických postojov (H-IDEO)."
+
+[[type]]
+id = "H-SOURCE"
+name = "Source Misrepresentation"
+description = "Accurately quoting a source but fundamentally misrepresenting its original context."
+examples = [
+    "Citovanie vyjadrenia politika vytrhnutého z kontextu na zmenu jeho významu."
+]
+prompt_fragment = "Over, či citácie nie sú vytrhnuté z kontextu (H-SOURCE)."

@@ -1011,7 +1011,7 @@ impl LlmDriver for GeminiDriver {
                 if status == 401 || status == 403 {
                     return Err(LlmError::AuthenticationFailed(message));
                 }
-                if status == 404 {
+                if status == 404 || status == 503 {
                     return Err(LlmError::ModelNotFound(message));
                 }
                 return Err(LlmError::Api {
@@ -1166,7 +1166,7 @@ impl LlmDriver for GeminiDriver {
                 if status == 401 || status == 403 {
                     return Err(LlmError::AuthenticationFailed(message));
                 }
-                if status == 404 {
+                if status == 404 || status == 503 {
                     return Err(LlmError::ModelNotFound(message));
                 }
                 return Err(LlmError::Api {

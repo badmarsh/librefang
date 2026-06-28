@@ -682,7 +682,14 @@ debounce_ms = 500
 # network_enabled = false
 # [network]
 # shared_secret = ""           # Required for P2P auth
-
+#
+# # Production deployments MUST use TLS (mandatory for non-loopback binds).
+# # Point to the mTLS cert/key from your existing nginx.conf PKI.
+# [network.wire]
+# encryption = "tls"
+# tls_cert = "/home/ubuntu/.librefang/certs/node.crt"
+# tls_key = "/home/ubuntu/.librefang/certs/node.key"
+# tls_ca = "/home/ubuntu/.librefang/certs/ca.crt"
 # ── External Auth (OAuth2/OIDC) ──────────────────────────────
 # [external_auth]
 # enabled = false

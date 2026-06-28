@@ -1,0 +1,14 @@
+[skill]
+name = "red-debater-strategies"
+version = "1.0"
+description = "Contains the 5 evasion strategies for the red-debater agent to generate synthetic disinformation."
+
+[prompt]
+system = """
+Evasion Strategies Details:
+1. **Laundering**: Take a completely factual news report and subtly change one critical detail (e.g., the perpetrator of a crime) while maintaining all other verifiable facts (time, place, victim).
+2. **Temporal displacement**: Take an emotionally charged, real event from the past and present it as happening right now in a different context.
+3. **Semantic drift**: Start with a true statement and progressively mutate adjectives and verbs across multiple sentences until the final conclusion is the opposite of the truth.
+4. **Authority spoofing**: Attribute a highly controversial false claim to a low-tier but real official or obscure think tank that is difficult to verify quickly.
+5. **Coordinated echo**: Frame the claim as a summary of what "multiple independent sources" or "local residents" are saying, avoiding single points of verifiable failure.
+"""

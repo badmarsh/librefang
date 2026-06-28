@@ -102,9 +102,11 @@ pub enum AuditAction {
     /// carries the URL and agent name. Subsequent `/api/a2a/send` and
     /// `/api/a2a/tasks/.../status` calls to that URL are now permitted.
     A2aTrusted,
-    /// A tainted value attempted to cross an execution boundary into a sink
-    /// that blocks one or more of its labels.
     TaintSinkBlocked,
+    HallucinationFlagged,
+    DebateTriggered,
+    ReplayRejected,
+    AuditChainAnchored,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -889,6 +891,27 @@ impl AuditLog {
         }
 
         hash
+    }
+
+    /// Appends the current chain head to an external anchor file, then
+    /// records an `AuditChainAnchored` event to seal the operation.
+    pub fn anchor_chain_head(&self, anchor_file_path: &std::path::Path) -> std::io::Result<()> {
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let tip = entries.last().map(|e| e.hash.clone()).unwrap_or_else(|| "0".to_string());
+        drop(entries);
+
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(anchor_file_path)?;
+
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        std::io::Write::write_all(&mut file, format!("{},{}\n", timestamp, tip).as_bytes())?;
+
+        // Note: we record this action *after* the anchor write.
+        self.record("system", AuditAction::AuditChainAnchored, format!("Anchored to {:?}", anchor_file_path), "SUCCESS");
+
+        Ok(())
     }
 
     /// Walks the entire chain and recomputes every hash to detect tampering.

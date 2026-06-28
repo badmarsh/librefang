@@ -361,7 +361,22 @@ impl Default for PeerConfig {
             max_messages_per_peer_per_minute: 60,
             max_llm_tokens_per_peer_per_hour: None,
             wire_config: crate::WireConfig::default(),
-            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
+        }
+    }
+}
+
+impl PeerConfig {
+    pub fn validate_for_production(&self) -> Result<(), WireError> {
+        if self.wire_config.encryption != crate::EncryptionMode::Tls {
+            if self.listen_addr.ip().is_loopback() {
+                Ok(())
+            } else {
+                Err(WireError::HandshakeFailed(
+                    "EncryptionMode::Tls is mandatory for all non-loopback production listeners.".into()
+                ))
+            }
+        } else {
+            Ok(())
         }
     }
 }
@@ -464,6 +479,8 @@ impl PeerNode {
         keypair: Option<Ed25519KeyPair>,
         trust_store_dir: Option<std::path::PathBuf>,
     ) -> Result<(Arc<Self>, tokio::task::JoinHandle<()>), WireError> {
+        config.validate_for_production()?;
+
         // SECURITY: Require shared_secret for OFP
         if config.shared_secret.is_empty() {
             return Err(WireError::HandshakeFailed(

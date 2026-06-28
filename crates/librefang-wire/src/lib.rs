@@ -59,9 +59,10 @@ pub mod zk_attest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EncryptionMode {
-    #[default]
+    /// Kept for loopback testing only. Rejected in production.
     None,
     ChaCha20Poly1305,
+    #[default]
     Tls,
 }
 

@@ -1,0 +1,12 @@
+[skill]
+name = "hallucination-audit"
+version = "1.0"
+description = "Audits reasoning and generation for various classes of hallucinations."
+entrypoint = "SKILL.md"
+
+[options]
+mode = "FAST" # Supported modes: FAST, DEEP, DEBATE
+
+[dependencies]
+# Depends on ontology definition
+ontology = "hallucination_types.toml"
