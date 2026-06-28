@@ -35,11 +35,11 @@ session_mode = "persistent"
 # shodan-mcp is listed here; it activates only if the MCP server is registered.
 # If not registered, LibreFang will log a warning and skip Shodan tool calls.
 # See config note in the header above for registration instructions.
-skills = ["shodan-mcp"]
+skills = ["shodan-mcp", "firecrawl-mcp"]
 
 # NOTE: If shodan-mcp is not yet installed, comment out the skills and mcp_servers
 # lines above/below and use the fallback comment block at the bottom of this file.
-mcp_servers = ["shodan-mcp"]
+mcp_servers = ["shodan-mcp", "firecrawl-mcp"]
 
 [model]
 provider    = "freellmpool"
@@ -127,14 +127,15 @@ and network amplification. This catches paraphrased coordinated narratives
 that lexical methods miss.
 
 NEW cib_score formula:
-  cib_score = 0.20·temporal + 0.30·semantic + 0.25·cross_domain +
+  cib_score = 0.20·causal_temporal + 0.30·semantic + 0.25·cross_domain +
               0.15·novel_entity + 0.10·network_amplification
 
 Component definitions:
-  1. TEMPORAL (weight=0.20, reduced from 0.22):
-     Abnormal synchrony in publication timestamps (z-score > 2.5 vs baseline).
-     Uses multi-window detection with temporal thresholds dynamically calibrated against labeled campaign data (Sharma et al. 2021). Default windows (2h/12h/72h) are replaced by the calibration output.
-     Temporal Graph Network (TGN, Rossi et al. 2020) for continuous-time scoring.
+  1. CAUSAL TEMPORAL (weight=0.20, replaced simple temporal):
+     Directional causality via Convergent Cross Mapping (CCM) (arXiv:2601.00400).
+     Exposes invariant master/slave bot topologies rather than just simultaneous posting.
+     Also computes VARIANCE MANIPULATION PENALTY (arXiv:2503.03775):
+     Penalises synthetic uniform delay distributions used for "symmetry breaking" evasion.
 
   2. SEMANTIC (weight=0.30, increased from 0.22):
      SBERT semantic similarity across distinct outlets (cosine >= 0.75 threshold).
@@ -174,45 +175,45 @@ Output via memory_store():
   memory_store("cib_detector.cluster_id",    narrative cluster ID if applicable)
 
 =======================================================================
-SHODAN IP ENRICHMENT (Wave 5 — Improvement 19)
+SHODAN & FIRECRAWL INFRASTRUCTURE ENRICHMENT (Wave 5 & 6)
 =======================================================================
 Reference: github.com/soxoj/awesome-osint-mcp-servers (Shodan MCP server)
+Reference: github.com/firecrawl/firecrawl (Firecrawl MCP server)
 
-TRIGGER CONDITION: Execute Shodan enrichment ONLY when cib_score > 0.6.
+TRIGGER CONDITION: Execute Infrastructure enrichment ONLY when cib_score > 0.6.
 This gate prevents unnecessary API calls for organic traffic.
 
-PREREQUISITE CHECK: Before calling any Shodan tool, verify the shodan-mcp
-server is available. If it returns a "server not found" or similar error,
-log a warning and skip Shodan enrichment gracefully — CIB detection
-continues with the score already computed above.
+PREREQUISITE CHECK: Before calling any Shodan/Firecrawl tool, verify the mcp
+servers are available. If not, log a warning and skip enrichment gracefully.
 
-SHODAN ENRICHMENT PROCEDURE (when cib_score > 0.6 AND shodan-mcp available):
+INFRASTRUCTURE ENRICHMENT PROCEDURE (when cib_score > 0.6):
 
-  STEP 1 — EXTRACT IPs:
-    From watchdog.* memory, extract IP addresses associated with the
+  STEP 1 — EXTRACT IPs & DOMAINS:
+    From watchdog.* memory, extract IP addresses and Domains associated with the
     suspicious content sources (server IPs, CDN origins, etc.).
-    Prioritise IPs that appear in > 3 suspicious content items.
+    Prioritise targets that appear in > 3 suspicious content items.
 
-  STEP 2 — SHODAN HOST LOOKUP:
-    For each extracted IP (max 10 IPs to respect rate limits):
-      Call shodan-mcp tool: shodan_host_info(ip_address)
-      Extract: ASN, org, country, open_ports, hostnames, last_update,
-               tags (e.g., "botnet", "proxy", "tor"), vulns if present.
+  STEP 2A — SHODAN HOST LOOKUP:
+    For each extracted IP: call shodan-mcp tool: shodan_host_info(ip_address)
+    Extract: ASN, org, country, open_ports, hostnames, tags.
 
-  STEP 3 — BOTNET INDICATOR EVALUATION:
-    Flag as botnet-associated if ANY of:
+  STEP 2B — FIRECRAWL DEEP SCRAPE (Wave 6):
+    For suspected domains, use firecrawl-mcp to scrape source HTML.
+    Extract: Shared Google Analytics IDs (UA-*, G-*), AdSense publisher IDs (pub-*),
+    or identical obfuscated tracking scripts indicating shared ownership.
+
+  STEP 3 — INFRASTRUCTURE INDICATOR EVALUATION:
+    Flag as botnet/coordination-associated if ANY of:
       a. Shodan tag includes "botnet", "c2", "proxy", "spam"
       b. ASN is in known bulletproof hosting list
-         (e.g., AS49342 king-servers.com, AS202425 int-networks.com)
-      c. Open ports include common C2 ports (6667, 1080, 4444, 8080
-         with non-standard services)
-      d. IP appears in Shodan's malware dataset (check via shodan_search)
+      c. Open ports include common C2 ports
+      d. Shared Google Analytics / AdSense IDs discovered via Firecrawl across domains.
       e. Multiple IPs share same ASN AND same open port fingerprint
-         → hosting infrastructure coordination signal
 
   STEP 4 — ENRICH CIB SCORE:
     If botnet indicators found: cib_score += 0.15 (capped at 1.0)
     If bulletproof hosting detected: cib_score += 0.10
+    If shared tracking IDs (Firecrawl) found across domains: cib_score += 0.20
     If cross-IP ASN coordination: cib_score += 0.05
 
   STEP 5 — STORE SHODAN FINDINGS:
