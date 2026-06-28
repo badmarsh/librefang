@@ -1,34 +1,61 @@
-import torch
-import torch.nn as nn
+#!/usr/bin/env python3
+"""
+TGN Inference Script (Mock)
+Wave 4 - Temporal Graph Networks anomaly detection.
 
-class TGNInferenceDummy:
-    """
-    Mock implementation of a Temporal Graph Network (TGN) for CIB detection.
-    In a real environment, this uses PyTorch Geometric (PyG).
-    """
-    def __init__(self, node_features: int, memory_dim: int):
-        self.node_features = node_features
-        self.memory_dim = memory_dim
-        self.memory = {}
-        
-    def process_event(self, source_id: str, dest_id: str, timestamp: float, features: torch.Tensor) -> float:
-        """
-        Process a temporal edge event and return an anomaly score.
-        A higher score means higher probability of Coordinated Inauthentic Behavior.
-        """
-        if source_id not in self.memory:
-            self.memory[source_id] = torch.zeros(self.memory_dim)
-        if dest_id not in self.memory:
-            self.memory[dest_id] = torch.zeros(self.memory_dim)
+Reads a JSON graph input and applies a synthetic anomaly probability score
+to its edges based on a heuristic, then outputs JSON.
+"""
+
+import sys
+import json
+import random
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser(description="Mock TGN Inference")
+    parser.add_argument("--input", "-i", type=str, required=True, help="Input JSON graph file")
+    parser.add_argument("--output", "-o", type=str, required=True, help="Output JSON result file")
+    args = parser.parse_args()
+
+    try:
+        with open(args.input, "r") as f:
+            graph = json.load(f)
+    except Exception as e:
+        print(f"Error reading input: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    edges = graph.get("edges", [])
+    
+    # Heuristic: apply a random anomaly probability, slightly biased by whether the edge has a 'suspicious' flag
+    results = []
+    for edge in edges:
+        base_score = 0.2
+        if edge.get("suspicious", False):
+            base_score = 0.6
             
-        score = torch.sigmoid(features.sum()).item()
+        anomaly_prob = min(1.0, max(0.0, base_score + random.uniform(-0.2, 0.4)))
         
-        self.memory[source_id] += 0.1
-        self.memory[dest_id] += 0.1
-        
-        return score
+        results.append({
+            "source": edge.get("source"),
+            "target": edge.get("target"),
+            "timestamp": edge.get("timestamp"),
+            "anomaly_probability": round(anomaly_prob, 4)
+        })
+
+    output_data = {
+        "status": "success",
+        "processed_edges": len(results),
+        "results": results
+    }
+
+    try:
+        with open(args.output, "w") as f:
+            json.dump(output_data, f, indent=2)
+        print(f"Successfully processed {len(edges)} edges. Results saved to {args.output}")
+    except Exception as e:
+        print(f"Error writing output: {e}", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
-    tgn = TGNInferenceDummy(node_features=10, memory_dim=10)
-    score = tgn.process_event("user1", "post1", 100.0, torch.randn(10))
-    print(f"Anomaly score: {score}")
+    main()

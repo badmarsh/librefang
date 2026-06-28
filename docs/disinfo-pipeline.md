@@ -11,7 +11,9 @@
 graph TD
     Input[Input text/URL] --> Watchdog[watchdog]
     Watchdog --> Shield[injection-shield]
+    Watchdog --> AITM[aitm-defender]
     Shield --> Extractor[claim-extractor]
+    AITM --> Extractor
     
     Extractor --> Decomposer[claim-decomposer]
     Decomposer --> Aligner[cross-lingual-aligner]
@@ -35,10 +37,19 @@ graph TD
     
     Orchestrator --> Arbiter[arbiter<br/>conditional]
     Arbiter --> Orchestrator
+
+    Orchestrator --> RedDebater[red-debater]
+    Orchestrator --> Inquisitor[inquisitor]
+    RedDebater --> Inquisitor
+    
+    Orchestrator --> Longitudinal[longitudinal-tracker]
+    Orchestrator --> ZKAttestor[zk-attestor]
     
     Orchestrator --> Writer[writer]
     Extractor --> CIB[cib-detector]
+    Extractor --> TGNCIB[tgn-cib-detector]
     Extractor --> Visual[visual-analyst]
+    Extractor --> VisualCV[visual-claim-verifier]
 ```
 
 All agents share a **live MCP context** (`memory_store`/`memory_recall`) so each downstream agent benefits from prior agents' findings without explicit message passing.

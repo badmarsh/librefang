@@ -12,10 +12,18 @@
 name        = "longitudinal-tracker"
 version     = "1.0.0"
 description = "Continuous temporal synchronization sweep. Tracks narrative drift, claim lifecycle, and coordinated re-emergence across 15-minute, 24h, and 7d windows."
+author      = "librefang"
+module      = "builtin:chat"
+tags        = ["longitudinal", "temporal", "narrative-drift", "disinfo-pipeline"]
+session_mode = "persistent"
+
+[model]
 provider    = "freellmpool"
 model       = "qwen/qwq-32b:free"
-
-session_mode = "persistent"
+api_key_env = "FREELLMPOOL_API_KEY"
+max_tokens  = 4096
+context_window = 32768
+temperature = 0.1
 
 system_prompt = """
 You are the Longitudinal Synchronization Agent for the Media Desolator pipeline.
@@ -54,13 +62,14 @@ Output format:
 [triggers]
 cron        = "*/15 * * * *"
 
-[memory]
-read_keys   = [
+[capabilities]
+tools        = ["memory_recall", "memory_store"]
+memory_read  = [
   "orchestrator.verdicts",
   "orchestrator.daily_verdicts_complete",
   "temporal_sync.history"
 ]
-write_keys  = [
+memory_write = [
   "temporal_sync.drift_events",
   "temporal_sync.reemergence_alerts",
   "temporal_sync.history"

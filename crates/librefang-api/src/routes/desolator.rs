@@ -4,7 +4,6 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
-use tokio_stream::StreamExt;
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new().route("/desolator/monitor", axum::routing::get(ws_handler))
@@ -20,7 +19,7 @@ pub async fn ws_handler(
 
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     // Subscribe to all kernel events
-    let mut rx = state.kernel.event_bus().subscribe_all();
+    let mut rx = state.kernel.event_bus_ref().subscribe_all();
     let mut shutdown_rx = state.kernel.supervisor_ref().subscribe();
 
     loop {
@@ -31,7 +30,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                         // Serialize event via serde
                         let json_evt = serde_json::to_string(&*evt).unwrap_or_else(|_| "{}".to_string());
                         
-                        if socket.send(Message::Text(json_evt)).await.is_err() {
+                        if socket.send(Message::Text(json_evt.into())).await.is_err() {
                             break; // Client disconnected
                         }
                     }
