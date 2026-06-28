@@ -356,7 +356,6 @@ The `gart-synthesizer` agent has been promoted from `agents/speculative/` to `ag
 |---|---|---|
 | Temporal Graph Networks (TGN) | Continuous-time CIB detection replacing discrete windows | GPU + arXiv:2006.10637 training data |
 | QSVM Classifier | Quantum SVM for narrative classification | Google Willow 105-qubit QPU (unavailable) |
-| ZK Attestation | Zero-knowledge proof attestation for verdicts | 📋 PLANNED (halo2 crate) |
 | Liquid Neural Networks | Continuous-time windowless CIB detection | LNN training framework |
 | A2A External Claim Federation | External claims from CEDMO/Demagog.sk via Google A2A | Partner agreements |
 
