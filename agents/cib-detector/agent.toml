@@ -10,7 +10,7 @@
 #
 # Wave 4 — Improvement 33: Temporal Graph Network (TGN)
 #   Replaced discrete multi-window clustering with continuous-time graph anomaly detection
-#   via `scripts/tgn_cib.py` based on Rossi et al. (2020).
+#   via `scripts/tgn_inference.py` based on Rossi et al. (2020).
 #
 # Wave 5 — Improvement 19: Shodan MCP for IP-based bot network detection
 #   Reference: github.com/soxoj/awesome-osint-mcp-servers (Shodan MCP)

@@ -1,0 +1,16 @@
+# TGN CIB Detector (Wave 4 & 5)
+name = "tgn-cib-detector"
+version = "1.0.0"
+description = "Implementation of Temporal Graph Networks for continuous-time CIB detection. Based on Rossi et al. (arXiv:2006.10637). Integrates with scripts/tgn_inference.py."
+module = "builtin:chat"
+tags = ["cib", "tgn", "graph-neural-networks"]
+
+[model]
+provider = "freellmpool"
+model = "ovh/Meta-Llama-3_3-70B-Instruct"
+api_key_env = "FREELLMPOOL_API_KEY"
+
+system_prompt = """
+You are the Temporal Graph Network CIB Detector.
+You evaluate dynamic graph representations of coordination using Temporal Graph Networks.
+"""
