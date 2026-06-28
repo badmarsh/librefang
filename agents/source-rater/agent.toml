@@ -1,6 +1,6 @@
 # LibreFang agent manifest
 # Improvement 3: Source Credibility as 5th Ensemble Signal
-# arXiv:2401.17786 (Hu et al., "Source-Aware Fake News Detection", 2024)
+# Falcone & Castelfranchi 2001 + MDPI Info. 2020 DOI:10.3390/info11110539 (Hu et al., "Source-Aware Fake News Detection", 2024)
 # GitHub: medialab/minet (OSINT media credibility tooling)
 #
 # Wave 3 — Improvement 12: Fix critical known-bad/known-good lists

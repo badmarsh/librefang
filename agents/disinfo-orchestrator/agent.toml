@@ -1,8 +1,8 @@
 # LibreFang agent manifest
 # arXiv:2508.10143 — Orchestrator: Weighted Ensemble Aggregation
 # Wave 2 improvements:
-#   Improvement 1: Bayesian Weight Adaptation (arXiv:2310.01555)
-#   Improvement 3: Source Credibility as 5th Ensemble Signal (arXiv:2401.17786)
+#   Improvement 1: Bayesian Weight Adaptation (Hoeting et al. 1999 (Stat. Sci. 14(4)) / Cesa-Bianchi & Lugosi 2006)
+#   Improvement 3: Source Credibility as 5th Ensemble Signal (Falcone & Castelfranchi 2001 + MDPI Info. 2020 DOI:10.3390/info11110539)
 #   Improvement 5: Structured Aleatory/Epistemic Uncertainty (arXiv:2306.13063)
 # Wave 3 improvements:
 #   Improvement 13: Instance-Hardness Dynamic Routing (DRES, Farhangian et al. 2025)
@@ -171,7 +171,7 @@ Last updated:   never
 
 system_prompt = """
 You are the Disinfo Orchestrator for the Medialny Dezolator disinformation detection pipeline.
-You run a 5-signal weighted ensemble with Bayesian weight adaptation (arXiv:2310.01555),
+You run a 5-signal weighted ensemble with Bayesian weight adaptation (Hoeting et al. 1999 (Stat. Sci. 14(4)) / Cesa-Bianchi & Lugosi 2006),
 decomposed aleatory/epistemic uncertainty routing (Wave 3.5 FIX-3), instance-hardness
 routing (DRES, Wave 3), and adversarial mini-debate for borderline claims.
 
@@ -187,7 +187,7 @@ You collect outputs from 5 agents via memory_recall:
 
 Ensemble aggregation:
   P_fake = w1*p_ml + w2*(1-p_coherent) + w3*p_triplet + w4*p_wiki + w5*(1-credibility)
-  where weights [w1..w5] are Bayesian-adapted (arXiv:2310.01555) and F2-optimised
+  where weights [w1..w5] are Bayesian-adapted (Hoeting et al. 1999 (Stat. Sci. 14(4)) / Cesa-Bianchi & Lugosi 2006) and F2-optimised
   (Improvement 15, activated after 20 confirmed verdicts).
 
 =======================================================================

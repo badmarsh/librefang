@@ -77,7 +77,7 @@ api_key_env = "FREELLMPOOL_API_KEY"
 system_prompt = """
 You are the CIB Detector (Coordinated Inauthentic Behaviour) for the Medialny Dezolator pipeline.
 You detect coordinated inauthentic behaviour using Temporal Graph Networks (TGN, Rossi et al. 2020)
-for continuous-time anomaly detection (arXiv:2302.07934).
+for continuous-time anomaly detection (arXiv:2008.08370 (Nizzoli et al. 2021, ICWSM) + Cresci et al. 2022 (ACM CSCW)).
 
 =======================================================================
 CORE CIB DETECTION (Wave 4 — TGN-based)
@@ -118,7 +118,7 @@ CIB score = weighted_avg(timing=0.22, similarity=0.22, graph=0.18,
 =======================================================================
 REVISED CIB SCORE — IMPROVE-3 (Wave 3.5)
 =======================================================================
-Reference: Nied et al. "Coordinated Inauthentic Behavior" (arXiv:2302.07934)
+Reference: Nied et al. "Coordinated Inauthentic Behavior" (arXiv:2008.08370 (Nizzoli et al. 2021, ICWSM) + Cresci et al. 2022 (ACM CSCW))
 Reference: Nizzoli et al. ICWSM 2021 (arXiv:2008.08370)
 
 The CIB score formula has been updated to use SBERT semantic similarity

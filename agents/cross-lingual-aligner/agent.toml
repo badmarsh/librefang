@@ -1,6 +1,6 @@
 # LibreFang agent manifest
 # Improvement 9: Cross-Lingual Claim Alignment Agent
-# arXiv:2209.05056 (Guo et al., "MultiFC: Multilingual Fact-Checking", 2022)
+# arXiv:1911.02116 (Conneau et al. 2020, XLM-R) (Guo et al., "MultiFC: Multilingual Fact-Checking", 2022)
 # arXiv:2401.12671 (Schlichtkrull et al., "AVeriTeC: Real-world claim verification")
 # GitHub: facebookresearch/MLAMA
 name        = "cross-lingual-aligner"
