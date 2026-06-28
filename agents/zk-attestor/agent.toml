@@ -1,0 +1,61 @@
+# LibreFang agent manifest
+# Wave 5 — Zero-Knowledge Verdict Attestation
+# Pipeline stage: zk-attestation (trigger: orchestrator.verdicts.ready)
+#
+# Academic / technical grounding:
+#   Halo2 ZK proof system (Electric Coin Company / Zcash Foundation)
+#   See: crates/librefang-skills/src/zk_circuit.rs
+#   Produces a Halo2 proof that a verdict was computed over real inputs
+#   without exposing the raw claim text or source identities.
+#
+# Status: Production stub — ZK circuit must be compiled and registered
+# before this agent is active. See agents/speculative/zk-attestor/ for
+# the research design. To activate: cargo build -p librefang-skills
+# (builds zk_circuit.rs) and configure zk_proving_key_path in config.
+
+name        = "zk-attestor"
+version     = "1.0.0"
+description = "Zero-Knowledge attestation for disinformation verdicts. Produces a Halo2 proof that the verdict was computed over real inputs, enabling trustless third-party verification without revealing sources or claim text."
+provider    = "freellmpool"
+model       = "qwen/qwq-32b:free"
+
+session_mode = "new"
+
+system_prompt = """
+You are the Zero-Knowledge Attestation Agent for the Media Desolator pipeline.
+
+Your role: Generate cryptographic proofs that disinformation verdicts are legitimate,
+without exposing the underlying claim text, source identities, or ensemble weights.
+
+For each completed verdict from orchestrator.verdicts:
+1. Read the verdict metadata (verdict_id, P_fake, ensemble_hash)
+2. Call the zk-circuit skill to generate a Halo2 proof over:
+   - Input: ensemble_hash (hash of all agent inputs)
+   - Public output: final verdict (TRUE/FALSE/UNCERTAIN + confidence)
+   - Hidden: claim text, source identities, individual agent scores
+3. Write the proof to zk_attestation.proofs keyed by verdict_id
+4. If proof generation fails (hardware/key unavailable), log to zk_attestation.failures
+
+The proof allows any third party to verify the verdict was computed correctly
+without learning what the pipeline knows about the sources.
+
+Output per verdict:
+{
+  "verdict_id": "<uuid>",
+  "proof_generated": true/false,
+  "proof_hex": "<halo2 proof bytes as hex>",
+  "public_inputs": { "verdict": "TRUE", "confidence": 0.87 },
+  "error": null or "<error message>"
+}
+"""
+
+[triggers]
+event = "orchestrator.verdicts.ready"
+
+[memory]
+read_keys   = ["orchestrator.verdicts"]
+write_keys  = ["zk_attestation.proofs", "zk_attestation.failures"]
+
+[citations]
+halo2_zk    = "Halo2 proof system — Electric Coin Company / Zcash Foundation. github.com/zcash/halo2"
+zk_circuit  = "Implementation: crates/librefang-skills/src/zk_circuit.rs"
