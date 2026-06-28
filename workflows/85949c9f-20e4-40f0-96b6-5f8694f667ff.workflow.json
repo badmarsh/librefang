@@ -1,0 +1,80 @@
+{
+  "id": "85949c9f-20e4-40f0-96b6-5f8694f667ff",
+  "name": "social-impact-accountability-v2",
+  "description": "Notifies advertisers, regulators, and civil society on confirmed high-confidence verdicts. Supports DOCX letters, email/webhook delivery, and outbound phone calls.",
+  "steps": [
+    {
+      "name": "determine-tier",
+      "agent": {
+        "name": "impact-comms"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "action_tier",
+      "depends_on": []
+    },
+    {
+      "name": "draft-advertiser-notice",
+      "agent": {
+        "name": "impact-comms"
+      },
+      "prompt_template": "{{input}}",
+      "mode": {
+        "conditional": {
+          "condition": "action_tier.tier >= 2"
+        }
+      },
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "output_var": "advertiser_notice_doc",
+      "depends_on": []
+    },
+    {
+      "name": "draft-regulator-complaint",
+      "agent": {
+        "name": "impact-comms"
+      },
+      "prompt_template": "{{input}}",
+      "mode": {
+        "conditional": {
+          "condition": "action_tier.tier >= 3"
+        }
+      },
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "output_var": "regulator_complaint_doc",
+      "depends_on": []
+    },
+    {
+      "name": "phone-outreach",
+      "agent": {
+        "name": "impact-comms"
+      },
+      "prompt_template": "{{input}}",
+      "mode": {
+        "conditional": {
+          "condition": "action_tier.tier >= 3"
+        }
+      },
+      "timeout_secs": 240,
+      "error_mode": "skip",
+      "output_var": "call_results",
+      "depends_on": []
+    },
+    {
+      "name": "deliver-notifications",
+      "agent": {
+        "name": "impact-comms"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 180,
+      "error_mode": "skip",
+      "output_var": "delivery_confirmations",
+      "depends_on": []
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.351816446Z"
+}

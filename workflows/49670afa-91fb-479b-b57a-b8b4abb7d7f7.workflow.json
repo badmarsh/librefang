@@ -1,0 +1,68 @@
+{
+  "id": "49670afa-91fb-479b-b57a-b8b4abb7d7f7",
+  "name": "agentic-security-redteam",
+  "description": "Advanced agentic security red-teaming: automated exploit generation, dynamic sandboxed execution checks, and rigorous zero-day vulnerability reasoning.",
+  "steps": [
+    {
+      "name": "codebase-surface-mapping",
+      "agent": {
+        "name": "researcher-hand"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "attack_surface_map",
+      "depends_on": []
+    },
+    {
+      "name": "automated-exploit-generation",
+      "agent": {
+        "name": "gart-synthesizer"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 300,
+      "error_mode": "skip",
+      "output_var": "exploit_scripts",
+      "depends_on": []
+    },
+    {
+      "name": "collect-exploits",
+      "agent": {
+        "name": "system"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "collect",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": []
+    },
+    {
+      "name": "dynamic-sandbox-execution",
+      "agent": {
+        "name": "orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "error_mode": "skip",
+      "output_var": "sandbox_execution_results",
+      "depends_on": []
+    },
+    {
+      "name": "zero-day-vulnerability-reasoning",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "fail",
+      "output_var": "vulnerability_report",
+      "depends_on": []
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.355417046Z"
+}

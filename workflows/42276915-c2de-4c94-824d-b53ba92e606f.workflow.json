@@ -1,0 +1,60 @@
+{
+  "id": "42276915-c2de-4c94-824d-b53ba92e606f",
+  "name": "gart-evaluation-cart",
+  "description": "Continuous Automated Red Teaming (CART) for pipeline bypass evaluation with root cause analysis.",
+  "steps": [
+    {
+      "name": "synthesize-adversarial-articles",
+      "agent": {
+        "name": "gart-synthesizer"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "synthetic_adversarial_batch",
+      "depends_on": []
+    },
+    {
+      "name": "evaluate-bypass-rate",
+      "agent": {
+        "name": "disinfo-orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "fail",
+      "output_var": "gart_evaluation_results",
+      "depends_on": []
+    },
+    {
+      "name": "diagnostic-root-cause",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": {
+        "conditional": {
+          "condition": "BYPASS_DETECTED"
+        }
+      },
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "output_var": "diagnostic_report",
+      "depends_on": []
+    },
+    {
+      "name": "log-gart-results",
+      "agent": {
+        "name": "archivist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "gart_evaluation_logged",
+      "depends_on": []
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.357334946Z"
+}

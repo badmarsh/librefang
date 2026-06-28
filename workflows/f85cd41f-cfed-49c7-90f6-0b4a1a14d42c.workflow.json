@@ -1,0 +1,48 @@
+{
+  "id": "f85cd41f-cfed-49c7-90f6-0b4a1a14d42c",
+  "name": "dashboard-kpi-tracker",
+  "description": "Calculates research velocity, fact-check accuracy, and agent uptime from session-logs and agent states.",
+  "steps": [
+    {
+      "name": "fetch_logs",
+      "agent": {
+        "name": "devops:ops"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "raw_metrics_data",
+      "depends_on": []
+    },
+    {
+      "name": "calculate_kpis",
+      "agent": {
+        "name": "data-scientist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "kpi_json",
+      "depends_on": [
+        "fetch_logs"
+      ]
+    },
+    {
+      "name": "push_to_dashboard",
+      "agent": {
+        "name": "devops:ops"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": [
+        "calculate_kpis"
+      ]
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.337786146Z"
+}

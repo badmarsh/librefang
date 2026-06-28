@@ -1,0 +1,91 @@
+{
+  "id": "8b969c81-6e39-40e4-af59-9c3e50695a6e",
+  "name": "health-check",
+  "description": "Daily end-to-end pipeline validator. Injects a known-false test claim, asserts arbiter returns FALSE with confidence >= 0.75. Alerts operator on failure.",
+  "steps": [
+    {
+      "name": "inject",
+      "agent": {
+        "name": "default-agent"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "dispatch_queue",
+      "depends_on": []
+    },
+    {
+      "name": "hc-verify-fast",
+      "agent": {
+        "name": "ml-classifier"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 15,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": [
+        "inject"
+      ]
+    },
+    {
+      "name": "hc-verify-deep",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 150,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": [
+        "inject"
+      ]
+    },
+    {
+      "name": "hc-consensus",
+      "agent": {
+        "name": "disinfo-orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "error_mode": "fail",
+      "output_var": "hc_arbiter_decision",
+      "depends_on": [
+        "hc-verify-fast",
+        "hc-verify-deep"
+      ]
+    },
+    {
+      "name": "assert",
+      "agent": {
+        "name": "default-agent"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": [
+        "hc-consensus"
+      ]
+    },
+    {
+      "name": "alert",
+      "agent": {
+        "name": "orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": [
+        "assert"
+      ]
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.342908846Z"
+}

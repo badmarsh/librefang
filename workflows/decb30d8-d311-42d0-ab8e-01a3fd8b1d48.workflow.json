@@ -1,0 +1,62 @@
+{
+  "id": "decb30d8-d311-42d0-ab8e-01a3fd8b1d48",
+  "name": "self-healing-pipeline",
+  "description": "Monitors pipeline runs and applies the self-improving-agent skill to automatically propose and implement fixes for failures.",
+  "steps": [
+    {
+      "name": "fetch_errors",
+      "agent": {
+        "name": "default-agent"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "recent_errors",
+      "depends_on": []
+    },
+    {
+      "name": "analyze_failures",
+      "agent": {
+        "name": "code-reviewer"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "proposed_fix",
+      "depends_on": [
+        "fetch_errors"
+      ]
+    },
+    {
+      "name": "apply_fix",
+      "agent": {
+        "name": "maintainer"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": [
+        "analyze_failures"
+      ]
+    },
+    {
+      "name": "alert_operator",
+      "agent": {
+        "name": "orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": [
+        "apply_fix"
+      ]
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.361608146Z"
+}

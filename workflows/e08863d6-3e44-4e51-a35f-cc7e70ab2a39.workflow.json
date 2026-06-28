@@ -1,0 +1,84 @@
+{
+  "id": "e08863d6-3e44-4e51-a35f-cc7e70ab2a39",
+  "name": "meme-deepfake-triage",
+  "description": "Dedicated visual disinformation pipeline: Multimodal VLM reasoning, deepfake indicators, adaptive debunk generation.",
+  "steps": [
+    {
+      "name": "fetch-asset",
+      "agent": {
+        "name": "visual-analyst"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "cached_asset",
+      "depends_on": []
+    },
+    {
+      "name": "metadata-parsing",
+      "agent": {
+        "name": "archivist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "skip",
+      "output_var": "metadata_result",
+      "depends_on": []
+    },
+    {
+      "name": "vlm-forensics",
+      "agent": {
+        "name": "visual-analyst"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "fail",
+      "output_var": "visual_analysis",
+      "depends_on": []
+    },
+    {
+      "name": "generate-overlay",
+      "agent": {
+        "name": "visual-analyst"
+      },
+      "prompt_template": "{{input}}",
+      "mode": {
+        "conditional": {
+          "condition": "MANIPULATED"
+        }
+      },
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "output_var": "overlay_result",
+      "depends_on": []
+    },
+    {
+      "name": "escalate-to-inquisitor",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "error_mode": "fail",
+      "output_var": "inquisitor_verdict",
+      "depends_on": []
+    },
+    {
+      "name": "deliver-visual-debunk",
+      "agent": {
+        "name": "impact-comms"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "output_var": "delivery_result",
+      "depends_on": []
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.346339046Z"
+}

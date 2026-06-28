@@ -1,0 +1,104 @@
+{
+  "id": "813fb6f2-3282-44ef-8a4d-79a51c8b45d0",
+  "name": "consensus-vote-protocol-v1",
+  "description": "Multi-model consensus gate: MoE routing, rubric-driven arbitration, multi-turn reflection.",
+  "steps": [
+    {
+      "name": "provenance-init",
+      "agent": {
+        "name": "archivist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "provenance_node",
+      "depends_on": []
+    },
+    {
+      "name": "complexity-router",
+      "agent": {
+        "name": "orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "complexity_route",
+      "depends_on": []
+    },
+    {
+      "name": "vote-deep-reasoning",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 600,
+      "error_mode": "skip",
+      "output_var": "vote_deep",
+      "depends_on": []
+    },
+    {
+      "name": "vote-large-model",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 300,
+      "error_mode": "skip",
+      "output_var": "vote_large",
+      "depends_on": []
+    },
+    {
+      "name": "collect-votes",
+      "agent": {
+        "name": "system"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "collect",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": []
+    },
+    {
+      "name": "debate-reflection",
+      "agent": {
+        "name": "arbiter"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "error_mode": "skip",
+      "output_var": "debate_summary",
+      "depends_on": []
+    },
+    {
+      "name": "arbiter-rubric-decision",
+      "agent": {
+        "name": "arbiter"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": "arbiter_decision",
+      "depends_on": []
+    },
+    {
+      "name": "route-decision",
+      "agent": {
+        "name": "orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "routing_result",
+      "depends_on": []
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.363191746Z"
+}

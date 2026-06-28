@@ -1,0 +1,62 @@
+{
+  "id": "11ea59c1-6afe-402b-ac33-f2779c616957",
+  "name": "feedback-ingestion",
+  "description": "Ingests human-confirmed verdicts from writer review queue into ensemble.agent_stats. Enables Bayesian weight adaptation (Improvement 1) to converge. Wires the open feedback loop identified in audit.",
+  "steps": [
+    {
+      "name": "read-review-queue",
+      "agent": {
+        "name": "writer"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "error_mode": "fail",
+      "output_var": "confirmed_verdicts_batch",
+      "depends_on": []
+    },
+    {
+      "name": "ingest-to-ensemble-stats",
+      "agent": {
+        "name": "archivist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "ensemble_stats_updated",
+      "depends_on": [
+        "read-review-queue"
+      ]
+    },
+    {
+      "name": "trigger-weight-recompute",
+      "agent": {
+        "name": "disinfo-orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "error_mode": "fail",
+      "output_var": "weight_recompute_result",
+      "depends_on": [
+        "ingest-to-ensemble-stats"
+      ]
+    },
+    {
+      "name": "archive-feedback-record",
+      "agent": {
+        "name": "archivist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 30,
+      "error_mode": "fail",
+      "output_var": "feedback_archive_record",
+      "depends_on": [
+        "trigger-weight-recompute"
+      ]
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.359138546Z"
+}

@@ -1,0 +1,80 @@
+{
+  "id": "2a6e3272-0e5e-4f82-90ac-c345e784cd79",
+  "name": "investigative-report-generation-v1",
+  "description": "Full investigative journalism pipeline: actor mapping, timeline reconstruction, evidence chain assembly, impact assessment, report generation, editorial handoff or auto-publish.",
+  "steps": [
+    {
+      "name": "actor-mapping",
+      "agent": {
+        "name": "investigator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 600,
+      "error_mode": "fail",
+      "output_var": "actor_network",
+      "depends_on": []
+    },
+    {
+      "name": "timeline-reconstruction",
+      "agent": {
+        "name": "investigator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "error_mode": "fail",
+      "output_var": "timeline",
+      "depends_on": []
+    },
+    {
+      "name": "evidence-chain-assembly",
+      "agent": {
+        "name": "archivist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "fail",
+      "output_var": "evidence_appendix",
+      "depends_on": []
+    },
+    {
+      "name": "impact-assessment",
+      "agent": {
+        "name": "analyst"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "skip",
+      "output_var": "impact_assessment",
+      "depends_on": []
+    },
+    {
+      "name": "report-synthesis",
+      "agent": {
+        "name": "investigator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 600,
+      "error_mode": "fail",
+      "output_var": "investigation_report",
+      "depends_on": []
+    },
+    {
+      "name": "editorial-routing",
+      "agent": {
+        "name": "impact-comms"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "skip",
+      "output_var": "editorial_result",
+      "depends_on": []
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.364740446Z"
+}

@@ -1,0 +1,47 @@
+{
+  "id": "b16595e1-9370-4d9f-bc95-c0af54f0c8c5",
+  "name": "health-check-critical",
+  "description": "Probes the researcher-hand and collector-hand with a benign request to ensure they are online and responding within thresholds. Auto-restarts on failure.",
+  "steps": [
+    {
+      "name": "probe_collector",
+      "agent": {
+        "name": "collector-hand"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": []
+    },
+    {
+      "name": "probe_researcher",
+      "agent": {
+        "name": "researcher-hand"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 15,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": []
+    },
+    {
+      "name": "assert_health",
+      "agent": {
+        "name": "default-agent"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": [
+        "probe_collector",
+        "probe_researcher"
+      ]
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.339414446Z"
+}

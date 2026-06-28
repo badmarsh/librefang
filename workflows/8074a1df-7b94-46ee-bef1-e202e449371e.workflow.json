@@ -1,0 +1,80 @@
+{
+  "id": "8074a1df-7b94-46ee-bef1-e202e449371e",
+  "name": "desolator-omni-ingest",
+  "description": "State-of-the-art OSINT monitor: dynamic cross-lingual ingestion, LLM-based disinformation triage, graph enrichment, and orchestrator handover.",
+  "steps": [
+    {
+      "name": "dynamic-osint-ingestion",
+      "agent": {
+        "name": "collector-hand"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 180,
+      "error_mode": "skip",
+      "output_var": "raw_claims",
+      "depends_on": []
+    },
+    {
+      "name": "collect-raw-claims",
+      "agent": {
+        "name": "system"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "collect",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": null,
+      "depends_on": []
+    },
+    {
+      "name": "cross-lingual-translation",
+      "agent": {
+        "name": "translator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "output_var": "translated_claims",
+      "depends_on": []
+    },
+    {
+      "name": "disinfo-triage-vlm",
+      "agent": {
+        "name": "analyst"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "error_mode": "fail",
+      "output_var": "triaged_claims",
+      "depends_on": []
+    },
+    {
+      "name": "wikidata-graph-enrichment",
+      "agent": {
+        "name": "researcher-hand"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 240,
+      "error_mode": "skip",
+      "output_var": "enriched_context",
+      "depends_on": []
+    },
+    {
+      "name": "orchestrator-handover",
+      "agent": {
+        "name": "orchestrator"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "output_var": "handover_status",
+      "depends_on": []
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.353700646Z"
+}

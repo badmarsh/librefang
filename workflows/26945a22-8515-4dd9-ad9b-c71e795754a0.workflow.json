@@ -1,0 +1,100 @@
+{
+  "id": "26945a22-8515-4dd9-ad9b-c71e795754a0",
+  "name": "coordinated-debunk-engine-v2",
+  "description": "Deep investigation pipeline: ontology lookup -> parallel deep research + archive audit -> optional adversarial check -> verdict synthesis -> graph update -> accountability action.",
+  "steps": [
+    {
+      "name": "ontology-lookup",
+      "agent": {
+        "name": "archivist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 60,
+      "error_mode": "skip",
+      "output_var": "ontology_context",
+      "depends_on": []
+    },
+    {
+      "name": "deep-research",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "fan_out",
+      "timeout_secs": 600,
+      "error_mode": "fail",
+      "output_var": "deep_research_result",
+      "depends_on": []
+    },
+    {
+      "name": "archive-audit",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": {
+        "conditional": {
+          "condition": "ontology_context.actor_found == true"
+        }
+      },
+      "timeout_secs": 600,
+      "error_mode": "skip",
+      "output_var": "archive_audit_result",
+      "depends_on": []
+    },
+    {
+      "name": "adversarial-check",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": {
+        "conditional": {
+          "condition": "deep_research_result.confidence >= 0.45 and deep_research_result.confidence <= 0.75"
+        }
+      },
+      "timeout_secs": 300,
+      "error_mode": "skip",
+      "output_var": "adversarial_result",
+      "depends_on": []
+    },
+    {
+      "name": "synthesize-verdict",
+      "agent": {
+        "name": "inquisitor"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 300,
+      "error_mode": "fail",
+      "output_var": "final_verdict",
+      "depends_on": []
+    },
+    {
+      "name": "update-ontology",
+      "agent": {
+        "name": "archivist"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "output_var": "graph_mutations",
+      "depends_on": []
+    },
+    {
+      "name": "accountability-action",
+      "agent": {
+        "name": "impact-comms"
+      },
+      "prompt_template": "{{input}}",
+      "mode": "sequential",
+      "timeout_secs": 180,
+      "error_mode": "skip",
+      "output_var": "accountability_result",
+      "depends_on": []
+    }
+  ],
+  "created_at": "2026-06-27T16:50:25.350109046Z"
+}
