@@ -7,6 +7,7 @@
 //! When a database connection is provided (`with_db`), entries are persisted to
 //! the `audit_entries` table (schema V8) so the trail survives daemon restarts.
 
+pub mod hallucination;
 use chrono::Utc;
 use librefang_types::agent::UserId;
 use librefang_types::config::AuditRetentionConfig;
@@ -102,6 +103,8 @@ pub enum AuditAction {
     /// carries the URL and agent name. Subsequent `/api/a2a/send` and
     /// `/api/a2a/tasks/.../status` calls to that URL are now permitted.
     A2aTrusted,
+    /// Multi-agent hallucination verification log to mitigate "single-LLM-as-judge" failure modes.
+    HallucinationVerification,
     TaintSinkBlocked,
     HallucinationFlagged,
     DebateTriggered,
@@ -660,6 +663,27 @@ impl AuditLog {
         self.record_with_context(agent_id, action, detail, outcome, None, None)
     }
 
+    /// Records a multi-agent hallucination verification event.
+    /// Serializes the VerificationLog as the detail.
+    pub fn record_hallucination_verification(
+        &self,
+        agent_id: impl Into<String>,
+        log: &crate::hallucination::VerificationLog,
+    ) -> String {
+        let detail = serde_json::to_string(log).unwrap_or_default();
+        let outcome = if log.consensus_reached {
+            "ConsensusReached"
+        } else {
+            "ConsensusFailed"
+        };
+        self.record(
+            agent_id,
+            AuditAction::HallucinationVerification,
+            detail,
+            outcome,
+        )
+    }
+
     /// Records a new auditable event with optional user / channel attribution.
     ///
     /// The entry is atomically appended to the chain with the current tip as
@@ -897,7 +921,10 @@ impl AuditLog {
     /// records an `AuditChainAnchored` event to seal the operation.
     pub fn anchor_chain_head(&self, anchor_file_path: &std::path::Path) -> std::io::Result<()> {
         let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        let tip = entries.last().map(|e| e.hash.clone()).unwrap_or_else(|| "0".to_string());
+        let tip = entries
+            .last()
+            .map(|e| e.hash.clone())
+            .unwrap_or_else(|| "0".to_string());
         drop(entries);
 
         let mut file = std::fs::OpenOptions::new()
@@ -909,7 +936,12 @@ impl AuditLog {
         std::io::Write::write_all(&mut file, format!("{},{}\n", timestamp, tip).as_bytes())?;
 
         // Note: we record this action *after* the anchor write.
-        self.record("system", AuditAction::AuditChainAnchored, format!("Anchored to {:?}", anchor_file_path), "SUCCESS");
+        self.record(
+            "system",
+            AuditAction::AuditChainAnchored,
+            format!("Anchored to {:?}", anchor_file_path),
+            "SUCCESS",
+        );
 
         Ok(())
     }

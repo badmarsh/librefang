@@ -143,7 +143,7 @@ xtask                       Build automation
 ```
 
 > **Security Architecture**:
-> - **OFP Wire Protocol**: Uses `rustls` + `tokio-rustls` for mTLS encryption and Ed25519 TOFU pinning. Production deployments must configure `EncryptionMode::Tls`. 
+> - **OFP Wire Protocol**: Uses `rustls` + `tokio-rustls` for mTLS encryption and Ed25519 TOFU pinning. Production deployments strictly enforce `EncryptionMode::Tls` by default. 
 > - **Subprocess Sandboxing**: Linux deployments enforce Landlock V3 policies (workspace isolation) and Seccomp BPF mock filters.
 > - **Cryptographic Audit Trail**: Agent state mutations are logged with BLAKE3-based `anchor_chain_head` linking, verified via `verify_audit_chain`.
 
@@ -367,12 +367,16 @@ Implemented SNARK wrappers in `librefang-wire` to mathematically prove fact-chec
 > References: Verifiable Model Inference (2025); zk-img (arXiv:2211.04775)
 
 #### GART-DEBATE: RedDebate adversarial argumentation
-Added the `red-debater` agent to continuously synthesize adversarial disinformation and debate the inquisitor to map logic gaps.
-> Reference: RedDebate: Multi-Agent Collaborative Argumentation for LLM Safety (2025)
+Added the `red-debater` agent to continuously synthesize adversarial disinformation and simulate coordinated propaganda campaigns, debating the inquisitor to map logic gaps.
+> Reference: RedDebate: Multi-Agent Collaborative Argumentation for LLM Safety (2025); Computational Propaganda (2018)
 
 #### AITM-DEFEND: Agent-in-the-Middle communication defense
 Added the `aitm-defender` agent to monitor inter-agent message buses for context shifts and injected payload manipulation.
 > Reference: Agent-in-the-Middle: Intercepting and Manipulating Multi-Agent Systems (2025)
+
+#### Collaborative Disinformation Modeling (CDM)
+Upgraded the SBERT CIB (Coordinated Inauthentic Behavior) detector to track multi-actor collaboration graphs, accurately modeling how disinformation spreads as a collaborative effort across domains.
+> Reference: Disinformation as Collaborative Work (2019); Fake news, disinformation and misinformation in social media (2023)
 
 ### Wave 4 — Citation Repair & Academic Uplift
 
