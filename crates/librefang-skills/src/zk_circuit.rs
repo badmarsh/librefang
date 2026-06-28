@@ -1,9 +1,8 @@
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
-    plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Fixed, Instance},
-    poly::Rotation,
+    plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Instance},
 };
-use halo2curves::bn256::{Bn256, Fr};
+use halo2curves::bn256::Fr;
 
 #[derive(Clone)]
 pub struct CIBAttestationConfig {

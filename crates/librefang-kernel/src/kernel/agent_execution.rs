@@ -916,11 +916,13 @@ impl LibreFangKernel {
         // Look up model's actual context window from the catalog. Filter out
         // 0 so image/audio entries (no context window) fall through to the
         // caller's default rather than poisoning compaction math.
-        let ctx_window = Some(self.llm.model_catalog.load()).and_then(|cat| {
-            cat.find_model(&manifest.model.model)
-                .map(|m| m.context_window as usize)
-                .filter(|w| *w > 0)
-        });
+        let ctx_window = Some(self.llm.model_catalog.load())
+            .and_then(|cat| {
+                cat.find_model(&manifest.model.model)
+                    .map(|m| m.context_window as usize)
+            })
+            .or_else(|| manifest.model.context_window.map(|w| w as usize))
+            .filter(|w| *w > 0);
 
         // Inject model_supports_tools for auto web search augmentation.
         // Refs #4745: honour user capability overrides via effective_capabilities.

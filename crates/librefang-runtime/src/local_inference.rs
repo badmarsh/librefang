@@ -16,10 +16,6 @@ impl LocalInferenceEngine {
     pub fn run_inference(&self, input: &str) -> Result<String, candle_core::Error> {
         // Stub implementation for local inference
         let tensor = Tensor::zeros((1, 128), candle_core::DType::F32, &self.device)?;
-        Ok(format!(
-            "Inference result for: {} with tensor {:?}",
-            input,
-            tensor.shape()
-        ))
+        Ok(format!("Inference result for: {} with tensor {:?}", input, tensor.shape()))
     }
 }

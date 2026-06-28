@@ -128,37 +128,59 @@ pub fn recover_from_overflow(
         }
     }
 
-    // Stage 3: Truncate all historical tool results to 2K chars
-    let tool_truncation_limit = 2000;
+    // Stage 3: Truncate all historical tool results and large text blocks to 2K chars
+    let text_truncation_limit = 2000;
     let mut truncated = 0;
+
+    let truncate_string = |content: &mut String| -> bool {
+        let char_count = content.chars().count();
+        if char_count > text_truncation_limit {
+            let bytes_per_char = if char_count > 0 {
+                content.len() as f64 / char_count as f64
+            } else {
+                1.0
+            };
+            let keep_chars = text_truncation_limit.saturating_sub(80);
+            let mut safe_keep = (keep_chars as f64 * bytes_per_char) as usize;
+            safe_keep = safe_keep.min(content.len());
+            while safe_keep > 0 && !content.is_char_boundary(safe_keep) {
+                safe_keep -= 1;
+            }
+            let kept_chars = content[..safe_keep].chars().count();
+            *content = format!(
+                "{}\n\n[OVERFLOW RECOVERY: truncated from {} to {} chars]",
+                &content[..safe_keep],
+                char_count,
+                kept_chars
+            );
+            true
+        } else {
+            false
+        }
+    };
+
     for msg in messages.iter_mut() {
-        if let MessageContent::Blocks(blocks) = &mut msg.content {
-            for block in blocks.iter_mut() {
-                if let ContentBlock::ToolResult { content, .. } = block {
-                    let char_count = content.chars().count();
-                    if char_count > tool_truncation_limit {
-                        // Compute bytes-per-char ratio to convert char budget to byte position
-                        let bytes_per_char = if char_count > 0 {
-                            content.len() as f64 / char_count as f64
-                        } else {
-                            1.0
-                        };
-                        let keep_chars = tool_truncation_limit.saturating_sub(80);
-                        let mut safe_keep = (keep_chars as f64 * bytes_per_char) as usize;
-                        safe_keep = safe_keep.min(content.len());
-                        // Walk back to a valid char boundary
-                        while safe_keep > 0 && !content.is_char_boundary(safe_keep) {
-                            safe_keep -= 1;
+        match &mut msg.content {
+            MessageContent::Blocks(blocks) => {
+                for block in blocks.iter_mut() {
+                    match block {
+                        ContentBlock::ToolResult { content, .. } => {
+                            if truncate_string(content) {
+                                truncated += 1;
+                            }
                         }
-                        let kept_chars = content[..safe_keep].chars().count();
-                        *content = format!(
-                            "{}\n\n[OVERFLOW RECOVERY: truncated from {} to {} chars]",
-                            &content[..safe_keep],
-                            char_count,
-                            kept_chars
-                        );
-                        truncated += 1;
+                        ContentBlock::Text { text, .. } => {
+                            if truncate_string(text) {
+                                truncated += 1;
+                            }
+                        }
+                        _ => {}
                     }
+                }
+            }
+            MessageContent::Text(content) => {
+                if truncate_string(content) {
+                    truncated += 1;
                 }
             }
         }

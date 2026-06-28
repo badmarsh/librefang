@@ -112,9 +112,9 @@ action  = "aggregate_fedavg_weights"
 event  = "a2a.external.claim_submitted"
 action = "accept_external_claim"
 
-[schedule.periodic]
+[schedule.cron]
 cron  = "0 6 * * *"
-# task  = "recheck_uncertain_verdicts"
+task  = "recheck_uncertain_verdicts"
 
 # --- MEMORY PRE-SEED ---
 [[memory]]
@@ -461,6 +461,10 @@ OUTPUT FORMAT (strict JSON)
     "suspicious": 1,
     "uncertain": 0,
     "credible": 1
+  },
+  "telemetry": {
+    "uq_variance_avg": 0.32,
+    "epistemic_uncertainty_avg": 0.41
   },
   "pipeline_timestamp": "<ISO8601>"
 }

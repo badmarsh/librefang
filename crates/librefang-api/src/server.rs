@@ -49,6 +49,7 @@ pub const API_VERSIONS: &[(&str, &str)] = &[("v1", "stable")];
 fn api_v1_routes() -> Router<Arc<AppState>> {
     Router::new()
         .merge(routes::config::router())
+        .merge(routes::desolator::router())
         .merge(routes::agents::router())
         .merge(routes::audit::router())
         .merge(routes::authz::router())

@@ -30,6 +30,7 @@ description = "Detects coordinated inauthentic behaviour using Liquid Neural Net
 author      = "librefang"
 module      = "builtin:chat"
 tags        = ["cib", "osint", "coordination", "disinfo", "pipeline", "multi-window", "shodan", "botnet"]
+session_mode = "persistent"
 
 # shodan-mcp is listed here; it activates only if the MCP server is registered.
 # If not registered, LibreFang will log a warning and skip Shodan tool calls.
@@ -48,7 +49,7 @@ max_tokens  = 4096
 context_window = 32768
 temperature = 0.1
 [capabilities]
-tools        = ["memory_recall", "memory_store", "kg_query"]
+tools        = ["memory_recall", "memory_store", "kg_query", "a2a_broadcast"]
 memory_read  = ["claim_extractor.*", "watchdog.*", "temporal_sync.*"]
 memory_write = ["cib_detector.*"]
 

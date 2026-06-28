@@ -244,6 +244,14 @@ impl MeshSubsystemApi for LibreFangKernel {
     fn peer_node_ref(&self) -> Option<&Arc<PeerNode>> {
         self.mesh.peer_node_ref()
     }
+    #[inline]
+    fn topology_manager_ref(&self) -> Option<&librefang_wire::topology::TopologyManager> {
+        self.mesh.topology_manager_ref()
+    }
+    #[inline]
+    fn zk_attestor_ref(&self) -> Option<&librefang_wire::zk_attest::ZkAttestor> {
+        self.mesh.zk_attestor_ref()
+    }
 }
 
 impl MeteringSubsystemApi for LibreFangKernel {

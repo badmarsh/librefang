@@ -53,8 +53,3 @@ When migrating existing implicit pipelines (like Dezolator) into native LibreFan
 *   **Rule 2: Isolate HITL in Operator Nodes.** Do not ask LLM agents to "wait" or "pause for user input". Instead, output a structured status, and configure the next Workflow step as an `Operator` node to handle the human approval cycle.
 *   **Rule 3: Prefer Explicit Data Passing.** When building Workflows, prefer `output_var` and `StepMode::Transform` Tera templates to pipe data. This grants full lineage observability on the LibreFang dashboard, making debugging significantly easier than tracking implicit state in a shared database.
 *   **Rule 4: Leverage Branches over Conditionals for Complex Logic.** If a decision has more than 2 outcomes, use `StepMode::Branch` matching against JSON outputs rather than a series of brittle string-matching `Conditional` steps.
-
-
-## 5. Workflow Inventory
-
-A full breakdown of the 22+ active workflows and their specific architectures can be found in [docs/workflow_inventory.md](workflow_inventory.md).

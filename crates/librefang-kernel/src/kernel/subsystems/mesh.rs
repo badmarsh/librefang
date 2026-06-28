@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use librefang_channels::types::ChannelAdapter;
 use librefang_runtime::a2a::{A2aTaskStore, AgentCard};
 use librefang_types::config::{AgentBinding, BroadcastConfig};
-use librefang_wire::{PeerNode, PeerRegistry};
+use librefang_wire::{topology::TopologyManager, zk_attest::ZkAttestor, PeerNode, PeerRegistry};
 
 use crate::kernel::DeliveryTracker;
 
@@ -34,6 +34,10 @@ pub trait MeshSubsystemApi: Send + Sync {
     fn peer_registry_ref(&self) -> Option<&PeerRegistry>;
     /// OFP peer node (set once at startup).
     fn peer_node_ref(&self) -> Option<&Arc<PeerNode>>;
+    /// Topology Manager for OFP (set once at startup).
+    fn topology_manager_ref(&self) -> Option<&TopologyManager>;
+    /// Zero-Knowledge Attestor for OFP (set once at startup).
+    fn zk_attestor_ref(&self) -> Option<&ZkAttestor>;
 }
 
 /// A2A + peers + channels + bindings cluster — see module docs.
@@ -58,6 +62,10 @@ pub struct MeshSubsystem {
     /// Channel adapters registered at bridge startup (for proactive
     /// `channel_send` tool).
     pub(crate) channel_adapters: DashMap<String, Arc<dyn ChannelAdapter>>,
+    /// Topology Manager.
+    pub(crate) topology_manager: OnceLock<TopologyManager>,
+    /// Zk Attestor.
+    pub(crate) zk_attestor: OnceLock<ZkAttestor>,
 }
 
 impl MeshSubsystem {
@@ -75,6 +83,8 @@ impl MeshSubsystem {
             peer_registry: OnceLock::new(),
             peer_node: OnceLock::new(),
             channel_adapters: DashMap::new(),
+            topology_manager: OnceLock::new(),
+            zk_attestor: OnceLock::new(),
         }
     }
 }
@@ -118,5 +128,15 @@ impl MeshSubsystemApi for MeshSubsystem {
     #[inline]
     fn peer_node_ref(&self) -> Option<&Arc<PeerNode>> {
         self.peer_node.get()
+    }
+
+    #[inline]
+    fn topology_manager_ref(&self) -> Option<&TopologyManager> {
+        self.topology_manager.get()
+    }
+
+    #[inline]
+    fn zk_attestor_ref(&self) -> Option<&ZkAttestor> {
+        self.zk_attestor.get()
     }
 }

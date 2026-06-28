@@ -579,7 +579,7 @@ impl LibreFangKernel {
             cat.find_model(&manifest.model.model)
                 .map(|m| m.context_window as usize)
                 .filter(|w| *w > 0)
-        });
+        }).or_else(|| manifest.model.context_window.map(|w| w as usize));
 
         // Inject model_supports_tools for auto web search augmentation.
         // Refs #4745: honour user-configured per-model capability overrides
@@ -2273,7 +2273,7 @@ impl LibreFangKernel {
             cat.find_model(&entry.manifest.model.model)
                 .map(|m| m.context_window as usize)
                 .filter(|w| *w > 0)
-        });
+        }).or_else(|| entry.manifest.model.context_window.map(|w| w as usize));
 
         let (tx, rx) = crate::session_stream_hub::install_stream_fanout(
             &self.events.session_stream_hub,

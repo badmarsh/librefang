@@ -21,14 +21,14 @@
       "agent": "collector-hand",
       "prompt_template": "{{input}}",
       "mode": "sequential",
-      "timeout_secs": 15,
+      "timeout_secs": 120,
       "name": "probe_collector"
     },
     {
       "agent": "researcher-hand",
       "prompt_template": "{{input}}",
       "mode": "sequential",
-      "timeout_secs": 15,
+      "timeout_secs": 120,
       "name": "probe_researcher"
     },
     {

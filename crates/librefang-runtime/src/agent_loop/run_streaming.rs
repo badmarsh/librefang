@@ -837,23 +837,38 @@ async fn run_agent_loop_streaming_inner(
             }
         }
 
-        // Stamp last_active before LLM call to prevent heartbeat false-positives
-        // during long-running completions.
-        if let Some(ref k) = kernel {
+        // Stamp last_active before LLM call and start a keep-alive task to prevent
+        // heartbeat false-positives during long-running completions or retries.
+        let keep_alive_task = if let Some(ref k) = kernel {
             k.touch_heartbeat(&agent_id_str);
-        }
+            let k_clone = k.clone();
+            let agent_id_clone = agent_id_str.clone();
+            Some(tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    k_clone.touch_heartbeat(&agent_id_clone);
+                }
+            }))
+        } else {
+            None
+        };
 
         // Stream LLM call with retry, error classification, and circuit breaker
         let provider_name = manifest.model.provider.as_str();
-        let stream_result = match stream_with_retry(
+        let stream_result = stream_with_retry(
             &*driver,
             request,
             stream_tx.clone(),
             Some(provider_name),
             None,
         )
-        .await
-        {
+        .await;
+
+        if let Some(task) = keep_alive_task {
+            task.abort();
+        }
+
+        let stream_result = match stream_result {
             Ok(r) => r,
             Err(e) => {
                 let err_str = e.to_string();

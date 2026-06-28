@@ -7,62 +7,62 @@
   },
   "steps": [
     {
-      "agent": "visual-analyst",
-      "prompt_template": "Fetch and cache visual asset at URL: {{input.asset_url}}. Return asset_hash (SHA256) and local_path.",
-      "mode": "sequential",
-      "timeout_secs": 60,
       "name": "fetch-asset",
-      "output_var": "cached_asset",
-      "error_mode": "fail"
-    },
-    {
-      "agent": "archivist",
-      "prompt_template": "Extract C2PA cryptographic provenance and invisible watermarks (SynthID) for asset at {{cached_asset.local_path}}.",
-      "mode": "sequential",
       "timeout_secs": 60,
-      "name": "metadata-parsing",
-      "output_var": "metadata_result",
-      "error_mode": "skip"
-    },
-    {
-      "agent": "visual-analyst",
-      "prompt_template": "Perform multimodal forensic analysis on image at {{cached_asset.local_path}} with metadata: {{metadata_result}}. Evaluate visual reasoning, OCR, frequency domain artifacts, and deepfake indicators. Output structured JSON with visual_verdict (e.g. MANIPULATED), reasoning, and confidence.",
+      "error_mode": "fail",
       "mode": "sequential",
-      "timeout_secs": 180,
-      "name": "vlm-forensics",
-      "output_var": "visual_analysis",
-      "error_mode": "fail"
+      "prompt_template": "Fetch and cache visual asset at URL: {{input.asset_url}}. Return asset_hash (SHA256) and local_path.",
+      "output_var": "cached_asset",
+      "agent": "visual-analyst"
     },
     {
-      "agent": "visual-analyst",
-      "prompt_template": "Using nano-banana-pro skill, generate an adaptive factcheck overlay for {{cached_asset.local_path}} based on verdict: {{visual_analysis}}. Save to output/visual/overlays/{{cached_asset.asset_hash}}.png. Return overlay_path.",
+      "name": "metadata-parsing",
+      "timeout_secs": 60,
+      "error_mode": "skip",
+      "mode": "sequential",
+      "prompt_template": "Extract C2PA cryptographic provenance and invisible watermarks (SynthID) for asset at {{cached_asset.local_path}}.",
+      "output_var": "metadata_result",
+      "agent": "archivist"
+    },
+    {
+      "name": "vlm-forensics",
+      "timeout_secs": 180,
+      "error_mode": "fail",
+      "mode": "sequential",
+      "prompt_template": "Perform multimodal forensic analysis on image at {{cached_asset.local_path}} with metadata: {{metadata_result}}. Evaluate visual reasoning, OCR, frequency domain artifacts, and deepfake indicators. Output structured JSON with visual_verdict (e.g. MANIPULATED), reasoning, and confidence.",
+      "output_var": "visual_analysis",
+      "agent": "visual-analyst"
+    },
+    {
+      "name": "generate-overlay",
+      "timeout_secs": 120,
+      "error_mode": "skip",
       "mode": {
         "conditional": {
           "condition": "MANIPULATED"
         }
       },
-      "timeout_secs": 120,
-      "name": "generate-overlay",
+      "prompt_template": "Using nano-banana-pro skill, generate an adaptive factcheck overlay for {{cached_asset.local_path}} based on verdict: {{visual_analysis}}. Save to output/visual/overlays/{{cached_asset.asset_hash}}.png. Return overlay_path.",
       "output_var": "overlay_result",
-      "error_mode": "skip"
+      "agent": "visual-analyst"
     },
     {
-      "agent": "inquisitor",
-      "prompt_template": "Investigate claim embedded in visual asset. Visual analysis: {{visual_analysis}}. Source URL: {{input.source_url}}. Provide full verdict.",
-      "mode": "sequential",
-      "timeout_secs": 300,
       "name": "escalate-to-inquisitor",
+      "timeout_secs": 300,
+      "error_mode": "fail",
+      "mode": "sequential",
+      "prompt_template": "Investigate claim embedded in visual asset. Visual analysis: {{visual_analysis}}. Source URL: {{input.source_url}}. Provide full verdict.",
       "output_var": "inquisitor_verdict",
-      "error_mode": "fail"
+      "agent": "inquisitor"
     },
     {
-      "agent": "impact-comms",
-      "prompt_template": "Publish visual debunk. Verdict: {{inquisitor_verdict}}. Overlay image: {{overlay_result.overlay_path}}. Draft post using humanizer skill.",
-      "mode": "sequential",
-      "timeout_secs": 120,
       "name": "deliver-visual-debunk",
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "mode": "sequential",
+      "prompt_template": "Publish visual debunk. Verdict: {{inquisitor_verdict}}. Overlay image: {{overlay_result.overlay_path}}. Draft post using humanizer skill.",
       "output_var": "delivery_result",
-      "error_mode": "skip"
+      "agent": "impact-comms"
     }
   ],
   "created_at": "2026-05-04T12:50:00Z"

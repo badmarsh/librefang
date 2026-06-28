@@ -1,19 +1,10 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use tokio::time::{interval, Duration};
 
 /// Implementation of Federated Averaging (FedAvg) over OFP.
 /// Reference: McMahan, H. B., et al. (2017). arXiv:1602.05629.
-#[derive(Clone)]
 pub struct FedAvgAggregator {
     pub round: u32,
     pub global_weights: HashMap<String, f64>,
-}
-
-pub struct FederationServer {
-    pub aggregator: Arc<Mutex<FedAvgAggregator>>,
-    pub incoming_gradients: Arc<Mutex<Vec<HashMap<String, f64>>>>,
 }
 
 impl FedAvgAggregator {
@@ -49,43 +40,6 @@ impl FedAvgAggregator {
     }
 }
 
-impl FederationServer {
-    pub fn new(initial_weights: HashMap<String, f64>) -> Self {
-        Self {
-            aggregator: Arc::new(Mutex::new(FedAvgAggregator::new(initial_weights))),
-            incoming_gradients: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
-
-    /// RPC Endpoint to receive gradients from peers
-    pub async fn sync_gradients(&self, peer_id: &str, signature: &str, gradients: HashMap<String, f64>) -> Result<(), String> {
-        // Cryptographic verification placeholder
-        if signature.is_empty() || peer_id.is_empty() {
-            return Err("Invalid signature".to_string());
-        }
-        let mut queue = self.incoming_gradients.lock().await;
-        queue.push(gradients);
-        Ok(())
-    }
-
-    /// Spawns a background task that aggregates gradients every 6 hours
-    pub fn spawn_background_task(self: Arc<Self>) {
-        tokio::spawn(async move {
-            let mut ticker = interval(Duration::from_secs(6 * 3600)); // 6 hours
-            loop {
-                ticker.tick().await;
-                let mut queue = self.incoming_gradients.lock().await;
-                let batch = std::mem::take(&mut *queue);
-                if !batch.is_empty() {
-                    let mut agg = self.aggregator.lock().await;
-                    agg.aggregate(batch);
-                    // Write the new updated weights to config.toml or DB here in production
-                }
-            }
-        });
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,7 +63,7 @@ mod tests {
         aggregator.aggregate(vec![node1, node2]);
 
         assert_eq!(aggregator.round, 1);
-
+        
         let w1 = aggregator.global_weights.get("layer1.weight").unwrap();
         // 0.5 + ((0.1 + 0.3) / 2) = 0.5 + 0.2 = 0.7
         assert!((*w1 - 0.7).abs() < f64::EPSILON);
@@ -118,7 +72,7 @@ mod tests {
         // 1.0 + ((-0.2 + 0.0) / 2) = 1.0 - 0.1 = 0.9
         assert!((*w2 - 0.9).abs() < f64::EPSILON);
     }
-
+    
     #[test]
     fn test_fedavg_empty_nodes() {
         let mut initial = HashMap::new();

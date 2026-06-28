@@ -11,7 +11,7 @@
     {
       "name": "dynamic-osint-ingestion",
       "timeout_secs": 180,
-      "error_mode": "skip",
+      "error_mode": "retry_with_dlq",
       "mode": "fan_out",
       "prompt_template": "Ingest target feed {{input.feed_url}}. Extract high-traction claims (velocity > threshold). Return raw claim JSON.",
       "output_var": "raw_claims",
@@ -28,7 +28,7 @@
     {
       "name": "cross-lingual-translation",
       "timeout_secs": 120,
-      "error_mode": "skip",
+      "error_mode": "retry_with_dlq",
       "mode": "sequential",
       "prompt_template": "Translate all non-English claims from {{raw_claims}} to English. Output mapping of original to translated.",
       "output_var": "translated_claims",
@@ -46,7 +46,7 @@
     {
       "name": "wikidata-graph-enrichment",
       "timeout_secs": 240,
-      "error_mode": "skip",
+      "error_mode": "retry_with_dlq",
       "mode": "sequential",
       "prompt_template": "For each entity in {{triaged_claims}}, perform Wikidata and Knowledge Graph lookup. Return enriched context.",
       "output_var": "enriched_context",

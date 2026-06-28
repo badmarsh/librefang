@@ -1234,15 +1234,31 @@ async fn run_agent_loop_inner(
             cb(LoopPhase::Thinking);
         }
 
-        // Stamp last_active before LLM call to prevent heartbeat false-positives
-        // during long-running completions.
-        if let Some(ref k) = kernel {
+        // Stamp last_active before LLM call and start a keep-alive task to prevent
+        // heartbeat false-positives during long-running completions or retries.
+        let keep_alive_task = if let Some(ref k) = kernel {
             k.touch_heartbeat(&agent_id_str);
-        }
+            let k_clone = k.clone();
+            let agent_id_clone = agent_id_str.clone();
+            Some(tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    k_clone.touch_heartbeat(&agent_id_clone);
+                }
+            }))
+        } else {
+            None
+        };
 
         // Call LLM with retry, error classification, and circuit breaker
         let provider_name = manifest.model.provider.as_str();
-        let mut response = call_with_retry(&*driver, request, Some(provider_name), None).await?;
+        let response_result = call_with_retry(&*driver, request, Some(provider_name), None).await;
+
+        if let Some(task) = keep_alive_task {
+            task.abort();
+        }
+
+        let mut response = response_result?;
 
         accumulate_token_usage(&mut total_usage, &response.usage);
         // Track the actual-serving slot for billing attribution (#4807

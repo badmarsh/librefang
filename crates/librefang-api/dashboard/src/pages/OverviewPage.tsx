@@ -18,6 +18,7 @@ import { SectionLabel } from "../components/ui/SectionLabel";
 import { Sparkline } from "../components/ui/Sparkline";
 import { Button } from "../components/ui/Button";
 import { ErrorState } from "../components/ui/ErrorState";
+import { MediaDesolatorStatusPanel } from "../components/MediaDesolatorStatusPanel";
 import { formatRelativeTime } from "../lib/datetime";
 import { useDashboardSnapshot, useVersionInfo } from "../lib/queries/overview";
 import { useQuickInit } from "../lib/mutations/overview";
@@ -693,6 +694,9 @@ export function OverviewPage() {
           </div>
         </Card>
       ) : null}
+
+      {/* Media Desolator Status */}
+      <MediaDesolatorStatusPanel />
 
       {/* KPI grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 lg:gap-3">

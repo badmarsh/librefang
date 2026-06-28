@@ -3,10 +3,7 @@
 use rustls::{ClientConfig, ServerConfig};
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio_rustls::{
-    client::TlsStream as ClientTlsStream, server::TlsStream as ServerTlsStream, TlsAcceptor,
-    TlsConnector,
-};
+use tokio_rustls::{TlsAcceptor, TlsConnector, client::TlsStream as ClientTlsStream, server::TlsStream as ServerTlsStream};
 
 /// Wrapper around a secure TLS stream for OFP.
 pub enum SecureStream {
@@ -23,7 +20,7 @@ pub async fn upgrade_to_mtls_client(
     let connector = TlsConnector::from(config);
     let server_name = rustls::pki_types::ServerName::try_from(domain)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
-
+    
     let tls_stream = connector.connect(server_name.to_owned(), stream).await?;
     Ok(SecureStream::Client(tls_stream))
 }

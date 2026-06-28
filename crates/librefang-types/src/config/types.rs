@@ -445,6 +445,61 @@ impl std::str::FromStr for UpdateChannel {
     }
 }
 
+/// Zero-Knowledge cryptography configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct ZkConfig {
+    #[serde(default = "default_zk_backend")]
+    pub backend: String,
+}
+
+fn default_zk_backend() -> String {
+    "groth16".to_string()
+}
+
+impl Default for ZkConfig {
+    fn default() -> Self {
+        Self {
+            backend: default_zk_backend(),
+        }
+    }
+}
+
+/// Cryptography configuration block.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, schemars::JsonSchema)]
+pub struct CryptographyConfig {
+    #[serde(default)]
+    pub zk: ZkConfig,
+}
+
+/// Red-teaming configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct RedTeamingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_red_teaming_rate")]
+    pub rate: String,
+    #[serde(default = "default_red_teaming_aggressiveness")]
+    pub aggressiveness: String,
+}
+
+fn default_red_teaming_rate() -> String {
+    "moderate".to_string()
+}
+
+fn default_red_teaming_aggressiveness() -> String {
+    "moderate".to_string()
+}
+
+impl Default for RedTeamingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            rate: default_red_teaming_rate(),
+            aggressiveness: default_red_teaming_aggressiveness(),
+        }
+    }
+}
+
 /// User configuration for RBAC multi-user support.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UserConfig {
@@ -3889,6 +3944,10 @@ pub struct KernelConfig {
     /// provider is rate-limited or quota-exhausted.
     #[serde(default)]
     pub background: BackgroundConfig,
+    #[serde(default)]
+    pub cryptography: CryptographyConfig,
+    #[serde(default)]
+    pub red_teaming: RedTeamingConfig,
 }
 
 /// Input sanitization mode for channel messages.
@@ -6437,6 +6496,8 @@ impl Default for KernelConfig {
             workflow_stale_timeout_minutes: default_workflow_stale_timeout_minutes(),
             workflow_default_total_timeout_secs: None,
             background: BackgroundConfig::default(),
+            cryptography: CryptographyConfig::default(),
+            red_teaming: RedTeamingConfig::default(),
         }
     }
 }

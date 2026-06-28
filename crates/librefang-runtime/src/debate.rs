@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 use librefang_llm_driver::{LlmDriver, CompletionRequest};
-use librefang_types::message::{Message, MessageRole, ContentBlock};
+use librefang_types::message::Message;
 
 /// Represents a role in the multi-agent debate.
 pub enum DebatePersona {
@@ -38,10 +38,7 @@ impl DebateOrchestrator {
     }
 
     async fn prompt_persona(&self, system: &str, history: &str) -> Result<String, String> {
-        let msg = Message {
-            role: MessageRole::User,
-            content: vec![ContentBlock::Text { text: history.to_string() }],
-        };
+        let msg = Message::user(history.to_string());
         let request = CompletionRequest {
             model: "free-endpoint".to_string(), // Fallback or mocked for free
             messages: Arc::new(vec![msg]),
