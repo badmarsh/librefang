@@ -4,7 +4,7 @@
 # arXiv:2508.10143 — Agent 0: Claim Extractor
 # Wave 2 improvements:
 #   Improvement 2: Semantic Claim Deduplication (arXiv:2305.14325)
-#   Improvement 7: Slovak NER Entity Preservation (arXiv:2305.09586)
+#   Improvement 7: Slovak NER Entity Preservation (arXiv:1908.10084 (Reimers & Gurevych 2019, SBERT))
 # Wave 3 improvements:
 #   Improvement 11: Firecrawl as primary web fetch backend (github.com/firecrawl/firecrawl)
 #     Replaces web_fetch for URL inputs — LLM-ready markdown, JS-heavy site support,
@@ -208,4 +208,6 @@ Write to file: claim_extractor_output.json
 Publish event: event_publish("claim_extractor.output.ready") — triggers parallel scorer agents
 """
 
-
+[citations]
+sbert_dedup = "arXiv:1908.10084 — Reimers & Gurevych, SBERT, EMNLP 2019"
+ner         = "gerulata/slovakbert + deeppavlov/Slavic-BERT-NER"

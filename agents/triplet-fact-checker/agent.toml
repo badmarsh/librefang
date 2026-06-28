@@ -284,3 +284,6 @@ memory_store("triplet_fact_checker.output", <json>)
 file_write("triplet_fact_checker_output.json")
 event_publish("triplet_fact_checker.output.ready")
 """
+
+[citations]
+foundation = "arXiv:2508.10143 — triplet-based web fact verification"

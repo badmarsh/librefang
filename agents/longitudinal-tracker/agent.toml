@@ -1,0 +1,72 @@
+# LibreFang agent manifest
+# Wave 5 — Temporal Longitudinal Synchronization
+# Runs on 15-minute cron (*/15 * * * *) in persistent session mode.
+# Tracks narrative evolution across the temporal sliding window.
+# Pipeline stage: longitudinal-sync (trigger: continuous)
+#
+# Academic grounding:
+#   Temporal narrative drift detection — extension of arXiv:2006.10637
+#   (Rossi et al. 2020, Temporal Graph Networks) applied to longitudinal
+#   claim lifecycle tracking across 24h, 7d, 30d windows.
+
+name        = "longitudinal-tracker"
+version     = "1.0.0"
+description = "Continuous temporal synchronization sweep. Tracks narrative drift, claim lifecycle, and coordinated re-emergence across 15-minute, 24h, and 7d windows."
+provider    = "freellmpool"
+model       = "qwen/qwq-32b:free"
+
+session_mode = "persistent"
+
+system_prompt = """
+You are the Longitudinal Synchronization Agent for the Media Desolator pipeline.
+
+Your role: Continuously monitor how disinformation narratives evolve across time.
+
+Every 15 minutes, you:
+1. Read the last 15 minutes of verdicts from memory key: orchestrator.verdicts
+2. Compare against the 24h and 7d verdict history
+3. Detect narrative re-emergence: claims that were debunked but are reappearing
+4. Detect coordinated re-amplification: same claim appearing across multiple new sources
+5. Flag temporal anomalies: claims with suspicious publish-date gaps
+6. Write temporal_sync.drift_events with any detected drift
+7. Write temporal_sync.reemergence_alerts for human review
+
+Temporal windows:
+- 15-minute sweep: catch breaking coordinated amplification
+- 24h window: detect daily narrative cycles
+- 7d window: detect weekly campaign patterns
+- 30d window: detect long-running influence operations
+
+Output format:
+{
+  "sweep_at": "<ISO8601 timestamp>",
+  "drift_events": [...],
+  "reemergence_alerts": [...],
+  "coordinated_reamplification": [...],
+  "sweep_stats": {
+    "claims_reviewed": <int>,
+    "new_events": <int>,
+    "alerts_raised": <int>
+  }
+}
+"""
+
+[triggers]
+cron        = "*/15 * * * *"
+
+[memory]
+read_keys   = [
+  "orchestrator.verdicts",
+  "orchestrator.daily_verdicts_complete",
+  "temporal_sync.history"
+]
+write_keys  = [
+  "temporal_sync.drift_events",
+  "temporal_sync.reemergence_alerts",
+  "temporal_sync.history"
+]
+
+[citations]
+temporal_graph_networks    = "Rossi, E., et al. (2020). Temporal Graph Networks for Deep Learning on Dynamic Graphs. arXiv:2006.10637"
+cib_temporal_windows       = "Nizzoli et al. (2021). Coordinated Behavior on Social Media. ICWSM 2021. arXiv:2008.08370"
+narrative_drift            = "Extension methodology derived from arXiv:2505.10867 — CIB Temporal Window Calibration (TikTok 2025)"

@@ -181,3 +181,7 @@ key   = "coherence.calibration"
 value = """
 Calibration notes (arXiv:2508.10143 Agent 2)
 """
+
+[citations]
+foundation        = "arXiv:2508.10143"
+multi_agent_debate = "arXiv:2305.14325 — Du et al. 2023, Multiagent Debate"

@@ -328,7 +328,7 @@ Borderline claims (P_fake ∈ [0.45, 0.75]) require minimum 2 independent annota
 
 #### IMPROVE-3: SBERT semantic CIB matching
 Replaced lexical similarity with SBERT semantic similarity (cosine ≥ 0.75) for cross-source claim matching. New formula: `cib_score = 0.20·temporal + 0.30·semantic + 0.25·cross-domain + 0.15·novel-entity + 0.10·network-amplification`. Network amplification signal added: 3+ known-bad sources publishing semantically similar claims within a temporal window escalates cib_score +0.15.
-> Reference: Nied et al., "Coordinated Inauthentic Behavior" (arXiv:2302.07934)
+> References: Nizzoli et al. (2021). *Coordinated Behavior on Social Media in 2019 UK General Election*. ICWSM 2021. arXiv:2008.08370; Cresci et al. (2022). *The Spread of Propaganda by Coordinated Communities on Social Media*. ACM CSCW 2022. DOI:10.1145/3501247.3531543
 
 #### IMPROVE-4: GART adversarial red-teaming (implemented)
 The `gart-synthesizer` agent has been promoted from `agents/speculative/` to `agents/` with a complete system prompt implementing 5 evasion strategies. Weekly Sunday evaluation. Bypass threshold set at 30%. GART outputs are **strictly segregated** from real training data.
@@ -356,7 +356,6 @@ The `gart-synthesizer` agent has been promoted from `agents/speculative/` to `ag
 |---|---|---|
 | Temporal Graph Networks (TGN) | Continuous-time CIB detection replacing discrete windows | GPU + arXiv:2006.10637 training data |
 | QSVM Classifier | Quantum SVM for narrative classification | Google Willow 105-qubit QPU (unavailable) |
-| ZK Attestation | Zero-knowledge proof attestation for verdicts | 📋 PLANNED (halo2 crate) |
 | Liquid Neural Networks | Continuous-time windowless CIB detection | LNN training framework |
 | A2A External Claim Federation | External claims from CEDMO/Demagog.sk via Google A2A | Partner agreements |
 

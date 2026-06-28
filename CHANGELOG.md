@@ -5,6 +5,32 @@ All notable changes to LibreFang will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Calendar Versioning](https://calver.org/) (YYYY.M.DD).
 
+## [2026.6.28] - 2026-06-28
+
+_Wave 5/6 completion — Media Desolator disinformation pipeline._
+
+### Added
+
+- feat(wave6): CCM causal temporal scoring in `cib-detector` — replaces discrete temporal signal with Convergent Cross Mapping (arXiv:2601.00400); Variance Manipulation Penalty added (arXiv:2503.03775); Firecrawl-MCP deep scrape step for shared Google Analytics/AdSense tracking ID detection; `claim-extractor` `[auto_distillation]` block. (#recovery-wave6) (@badmarsh)
+- feat(wave5): `red-debater` agent — RedDebate adversarial argumentation, 5 evasion strategies, weekly 03:00 cron, bypass_rate alerting at ≥ 30%; rewritten to correct LibreFang agent schema. (#wave5) (@badmarsh)
+- feat(wave5): `aitm-defender` agent — Agent-in-the-Middle communication defense, persistent session, semantic consistency scoring on inter-agent messages; rewritten to correct LibreFang agent schema. (#wave5) (@badmarsh)
+- feat(pipeline): `gart-red-debate` stage added to `pipelines/disinfo-pipeline.toml` (weekly, triggers `red-debater`); `aitm-defender` added to `security` stage alongside `injection-shield`. (@badmarsh)
+- feat(pipeline): `longitudinal-tracker` production agent stub — satisfies `longitudinal-sync` stage (15-min cron, narrative drift, re-emergence tracking). (@badmarsh)
+- feat(pipeline): `zk-attestor` production agent stub — satisfies `zk-attestation` stage (Halo2 ZK proofs over verdict ensemble hashes, graceful degradation). (@badmarsh)
+
+### Fixed
+
+- fix(citations): Replaced 5 stale/fake arXiv IDs across agent manifests, pipeline TOML, and docs — `2302.07934` (cosmology paper) → arXiv:2008.08370; `2310.01555` → Hoeting 1999; `2401.17786` → Falcone 2001; `2209.05056` → arXiv:1911.02116; `2305.09586` → arXiv:1908.10084. (@badmarsh)
+- fix(docs): AGENTS.md crate table updated from 15 → 30 crates — added all 15 undocumented crates. (@badmarsh)
+- fix(docs): CONTRIBUTING.md `just setup` replaced with `cargo xtask setup` (no Justfile exists). (@badmarsh)
+- fix(docs): `docs/disinfo-pipeline.md` version v4.0.0 → v5.0.0 (matches README). (@badmarsh)
+- fix(docs): Removed ZK Attestation from README Research Roadmap "not yet implemented" table — `zk_circuit.rs` + `[cryptography.zk]` config + `zk-attestor` agent are implemented. (@badmarsh)
+
+### Maintenance
+
+- chore: Mark `scripts/hooks/` as executable (100755) in git index; `git config core.hooksPath scripts/hooks` wired locally — activates `commit-msg`, `pre-commit`, `pre-push` hooks. (@badmarsh)
+
+
 ## [2026.6.26] - 2026-06-26
 
 _10 PRs from 2 contributors since v2026.6.24-beta.23._

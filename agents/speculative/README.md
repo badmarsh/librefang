@@ -11,10 +11,12 @@ This directory contains agent manifests that document **future research directio
 |---|---|
 | `gart-synthesizer/` | Promoted to `agents/gart-synthesizer/` (Wave 3.5). This copy is a historical stub only. |
 | `qsvm-classifier/` | Requires Google Willow 105-qubit QPU — hardware unavailable. Classical simulation does not provide the claimed speedup. |
-| `zk-attestor/` | Zero-knowledge proof attestation for verdicts — cryptographic infrastructure not implemented. |
-| `liquid-nnn-detector/` | Liquid Neural Network continuous-time detector — research prototype, not production-ready. |
+| `zk-attestor/` | Historical stub. Promoted to `agents/zk-attestor/` (Wave 5). Production agent satisfies the `zk-attestation` pipeline stage. Requires compiled Halo2 proving key — degrades gracefully when unavailable. |
+| `tgn-cib-detector/` | Historical stub. Promoted to `agents/tgn-cib-detector/` (Wave 5). Production agent runs TGN inference via `scripts/tgn_inference.py` and writes to `cib_score` in shared memory. Requires GPU. |
+| `visual-claim-verifier/` | Historical stub. Promoted to `agents/visual-claim-verifier/` (Wave 5). Production agent handles multimodal image authenticity verification. Requires `llava:latest` via Ollama. |
+| `liquid-nnn-detector/` | Liquid Neural Network continuous-time detector — research prototype, not production-ready. No training framework available. |
 | `mod-router/` | Moderation router — functionality merged into `disinfo-orchestrator`. |
-| `vla-visual/` | Vision-Language Agent for deepfake detection — superseded by `visual-analyst`. |
+| `vla-visual/` | Vision-Language Agent for deepfake detection — superseded by `visual-analyst` and `visual-claim-verifier`. |
 
 ## For Implemented Agents
 

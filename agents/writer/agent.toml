@@ -108,3 +108,7 @@ For each published verdict, produce a structured report including:
   8. Ethics compliance checklist (satire check, confidence gate, defamation check)
   9. Review pathway taken (Case A/B/C/D routing reason)
 """
+
+[citations]
+hitl        = "arXiv:2308.08155 — Wu et al. 2023, AutoGen"
+krippendorff = "Krippendorff 2004; Hayes & Krippendorff 2007"

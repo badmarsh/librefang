@@ -2,15 +2,15 @@
 # arXiv:2508.10143  (Avram, Groza, Lecu 2025)
 #
 # Wave 2: 10 improvements from deep research report (2026-05-04)
-#   Improvement 1: Bayesian weight adaptation (arXiv:2310.01555)
+#   Improvement 1: Bayesian weight adaptation (Hoeting et al. 1999 / Cesa-Bianchi & Lugosi 2006)
 #   Improvement 2: Semantic claim deduplication (arXiv:2305.14325)
-#   Improvement 3: Source credibility 5th signal (arXiv:2401.17786)
-#   Improvement 4: CIB detector agent (arXiv:2302.07934)
+#   Improvement 3: Source credibility 5th signal (Falcone & Castelfranchi 2001 + MDPI Info. 2020)
+#   Improvement 4: CIB detector agent (arXiv:2008.08370 (Nizzoli et al. 2021, ICWSM))
 #   Improvement 5: Aleatory/epistemic uncertainty (arXiv:2306.13063)
 #   Improvement 6: Watchdog episodic memory (arXiv:2304.03442)
-#   Improvement 7: Slovak NER entity preservation (arXiv:2305.09586)
+#   Improvement 7: Slovak NER entity preservation (arXiv:1908.10084 (SBERT, Reimers & Gurevych 2019))
 #   Improvement 8: Prompt injection shield (arXiv:2302.12173)
-#   Improvement 9: Cross-lingual claim aligner (arXiv:2209.05056)
+#   Improvement 9: Cross-lingual claim aligner (arXiv:1911.02116 (XLM-R, Conneau et al. 2020))
 #   Improvement 10: Writer HITL confidence-gated tiers (arXiv:2308.08155)
 #
 # Wave 3: 8 improvements from GitHub research + Firecrawl integration (2026-06-21)
@@ -96,7 +96,7 @@ notes       = """
 [[stage]]
 id          = "security"
 label       = "Injection Shield"
-agents      = ["injection-shield"]
+agents      = ["injection-shield", "aitm-defender"]
 description = "Security pre-filter: detects prompt injection attacks embedded in adversary-controlled text."
 notes       = """
   Improvement 8: Items with injection_confidence >= 0.80 are quarantined and never
@@ -333,6 +333,21 @@ notes       = """
   Creates DisarmTTP, FIMICampaign, EvidenceAtom entities in ontology graph.
   disinfo-orchestrator reads disarm_hunter.session_results and appends disarm_ttp_ids to verdicts.
   Detects adaptation signal (T0073): actor content diversity entropy shift > 0.25 over 30 days.
+"""
+
+[[stage]]
+id          = "gart-red-debate"
+label       = "GART RedDebate Adversarial Stress-Test (Weekly)"
+trigger     = "scheduled (Sunday 03:00 weekly) OR manual"
+agents      = ["red-debater"]
+sequential  = true
+description = """
+  Weekly adversarial red-teaming sweep using the RedDebate (2025) framework.
+  red-debater generates synthetic disinformation variants via 5 evasion strategies
+  (laundering, temporal displacement, semantic drift, authority spoofing, coordinated echo)
+  and debates the inquisitor to find logic gaps. Raises alert if bypass_rate >= 30%.
+  All outputs are GART_SYNTHETIC flagged and strictly segregated from training data.
+  Academic: Perez et al. arXiv:2202.03286 (Red Teaming LLMs).
 """
 
 [[optional_stage]]

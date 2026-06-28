@@ -15,16 +15,24 @@ See `CLAUDE.md` for the full agent contract (worktree rules, hooks, integration 
 
 ## Layout
 
-15 crates under `crates/` plus `xtask/`.
+30 crates under `crates/` plus `xtask/`.
 
 | Crate | Purpose |
 |---|---|
 | `librefang-types` | Core types, traits, shared data models |
 | `librefang-kernel` | Agent registry, scheduling, orchestration, event bus, metering |
+| `librefang-kernel-handle` | `KernelHandle` trait — breaks circular dep between runtime and kernel |
+| `librefang-kernel-metering` | Cost metering and quota enforcement |
+| `librefang-kernel-router` | Hand/template routing engine |
 | `librefang-runtime` | Agent loop, LLM drivers, tools, MCP client, context engine, A2A |
+| `librefang-runtime-mcp` | MCP (Model Context Protocol) client for the runtime |
+| `librefang-runtime-audit` | Audit logging and taint tracking for the runtime |
+| `librefang-runtime-media` | Media processing and conversion (Slovak disinformation pipeline) |
+| `librefang-runtime-sandbox-docker` | Docker-based sandboxing for the runtime |
 | `librefang-api` | HTTP/WebSocket server, routes, middleware, dashboard |
 | `librefang-channels` | Channel-bridge infra: sidecar trampoline + shared bridge types (per-channel adapters live as Python sidecars under `sdk/python/librefang/sidecar/adapters/`) |
 | `librefang-memory` | History, vector search, knowledge storage |
+| `librefang-memory-wiki` | Compaction strategies and wiki knowledge vault |
 | `librefang-wire` | OFP — agent-to-agent P2P |
 | `librefang-skills` | Skill registry, loader, marketplace, WASM sandbox |
 | `librefang-hands` | Curated autonomous capability packages |
@@ -34,6 +42,13 @@ See `CLAUDE.md` for the full agent contract (worktree rules, hooks, integration 
 | `librefang-import` | Import from other agent frameworks |
 | `librefang-telemetry` | OpenTelemetry + Prometheus |
 | `librefang-testing` | Mock kernel, mock LLM, route test utilities |
+| `librefang-llm-driver` | LLM driver trait and shared types |
+| `librefang-llm-drivers` | Concrete LLM provider drivers (Anthropic, OpenAI, Gemini, …) |
+| `librefang-http` | Shared HTTP client builder, proxy, TLS fallback |
+| `librefang-subprocess` | Subprocess execution utilities and IPC |
+| `librefang-acp` | Agent Client Protocol server adapter |
+| `librefang-graph` | Graph data structures and algorithms |
+| `librefang-rl-export` | RLHF/DPO preference pair export and endpoints |
 | `xtask` | Dev task runner |
 
 ## Build

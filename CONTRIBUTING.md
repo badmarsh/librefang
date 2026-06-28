@@ -162,11 +162,13 @@ Click the green **"Code"** button on GitHub → **"Codespaces"** → **"Create c
 ```bash
 git clone https://github.com/librefang/librefang.git
 cd librefang
-just setup        # one-time per clone — activates git hooks + fetches deps
+cargo xtask setup   # one-time per clone — activates git hooks + fetches deps
 cargo build
 ```
 
-`just setup` (which calls `cargo xtask setup`) does three things on a fresh clone:
+> If you have [`just`](https://github.com/casey/just) installed, `just setup` is an alias for `cargo xtask setup`.
+
+`cargo xtask setup` does three things on a fresh clone:
 - Sets `git config core.hooksPath scripts/hooks` so the in-repo `pre-commit`, `pre-push`, and `commit-msg` hooks become active.
 - Runs `cargo fetch` to warm up the dependency cache.
 - Runs `pnpm install` in the dashboard / web / docs sub-projects.

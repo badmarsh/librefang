@@ -62,3 +62,7 @@ papers = [
 [wiki.rag]
 internet_augmented_generation = true
 # Reference: Lazaridou et al. (2022) arXiv:2203.05115
+
+[citations]
+wikidata_sparql = "Vrandečić & Krötzsch 2014 — Wikidata, CACM 57(10)"
+foundation      = "arXiv:2508.10143"

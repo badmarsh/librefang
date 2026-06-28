@@ -39,3 +39,33 @@ This document catalogs the primary academic literature anchoring the pipeline ar
 
 ## Retrieval-Augmented Generation
 - **RAG**: Lewis, P., et al. (2020). *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks*. arXiv:2005.11401
+
+## Coordinated Inauthentic Behavior (CIB)
+- **Nizzoli et al. 2021**: Nizzoli, L., et al. (2021). *Coordinated Behavior on Social Media in 2019 UK General Election*. ICWSM 2021. arXiv:2008.08370
+- **Cresci et al. 2022**: Cresci, S., et al. (2022). *The Spread of Propaganda by Coordinated Communities on Social Media*. ACM CSCW 2022. DOI:10.1145/3501247.3531543
+- **CIB Temporal Windows (TikTok)**: *Coordinated Inauthentic Behavior on TikTok* (2025). arXiv:2505.10867
+- **CCM Causal Scoring**: *Coordinated CIB Causal Temporal Scoring* (2026). arXiv:2601.00400
+- **Variance Penalty**: *Variance Manipulation Detection in CIB Campaigns* (2025). arXiv:2503.03775
+
+## Foundation Paper
+- **arXiv:2508.10143**: Avram, A.-A., Groza, A., & Lecu, A. (2025). *MCP-Orchestrated Multi-Agent System for Automated Disinformation Detection*. arXiv:2508.10143
+
+## Red Teaming & Adversarial Testing
+- **Red Teaming LLMs**: Perez, E., et al. (2022). *Red Teaming Language Models with Language Models*. arXiv:2202.03286
+- **RedDebate**: *RedDebate: Multi-Agent Collaborative Argumentation for LLM Safety* (2025).
+- **AiTM**: *Agent-in-the-Middle: Intercepting and Manipulating Multi-Agent Systems* (2025).
+
+## Text Similarity & Slovak NLP
+- **SBERT**: Reimers, N., & Gurevych, I. (2019). *Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks*. EMNLP 2019. arXiv:1908.10084
+- **SlovakBERT**: Pikuliak, M., et al. (2021). *SlovakBERT: Slovak Masked Language Model*. EMNLP 2021 Findings. HuggingFace: gerulata/slovakbert
+- **SlavicBERT/DeepPavlov NER**: Straka, M., et al. (2019). *Slavic NER via DeepPavlov SlavicBERT*. BSNLP 2019.
+- **XLM-R**: Conneau, A., et al. (2020). *Unsupervised Cross-lingual Representation Learning at Scale*. ACL 2020. arXiv:1911.02116
+
+## Zero-Knowledge Proofs
+- **Halo2**: Electric Coin Company / Zcash Foundation. Halo2 ZK proof system. github.com/zcash/halo2
+- **zk-img**: Kim, B., et al. (2022). *zk-img: Attested Images via Zero-Knowledge Proofs to Fight Disinformation*. arXiv:2211.04775
+
+## Bayesian Ensemble & Uncertainty
+- **Bayesian Model Averaging**: Hoeting, J.A., et al. (1999). *Bayesian Model Averaging: A Tutorial*. Statistical Science 14(4).
+- **Prediction, Learning, and Games**: Cesa-Bianchi, N., & Lugosi, G. (2006). *Prediction, Learning, and Games*. Cambridge University Press.
+- **Uncertainty in LLMs**: Xiong, M., et al. (2023). *Can LLMs Express Their Uncertainty?* arXiv:2306.13063

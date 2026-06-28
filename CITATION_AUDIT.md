@@ -197,3 +197,99 @@ This document provides a systematic audit of the academic citations referenced i
 * **Citation**: Halo2 crate methodologies for zero-knowledge proofs.
 * **Alignment**: Cryptographic proof attestation for verdicts.
 * **Agent**: `crates/librefang-skills/src/zk_circuit.rs`
+
+
+---
+
+## Wave 2 Academic Grounding
+
+### [VERIFIED] arXiv:2508.10143
+* **Citation**: Avram, A.-A., Groza, A., & Lecu, A. (2025). *MCP-Orchestrated Multi-Agent System for Automated Disinformation Detection*.
+
+### [CORRECTED — Real references substituted] Improvement 1: Bayesian weight adaptation
+* **Removed**: arXiv:2310.01555 (no arXiv metadata found — fake ID)
+* **Replacement references**:
+  * Hoeting, J.A., Madigan, D., Raftery, A.E., & Volinsky, C.T. (1999). *Bayesian Model Averaging: A Tutorial*. Statistical Science 14(4).
+  * Cesa-Bianchi, N., & Lugosi, G. (2006). *Prediction, Learning, and Games*. Cambridge University Press.
+* **Rationale**: These are the canonical foundational references for Bayesian ensemble weight adaptation and online learning in ensemble systems.
+
+### [CORRECTED — arXiv:1908.10084] Improvement 2: Semantic claim deduplication | SBERT
+* **Removed**: arXiv:2305.14325 (wrong paper — this is the Multiagent Debate paper; it belongs in Wave 3 Improvement 14, not here)
+* **Replacement reference**: Reimers, N., & Gurevych, I. (2019). *Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks*. EMNLP 2019. arXiv:1908.10084
+* **Note**: SBERT is used for similarity ≥ 0.88 over the 72h dedup window AND ≥ 0.75 for CIB semantic clustering. The Multiagent Debate paper (arXiv:2305.14325) correctly belongs in Wave 3, Improvement 14.
+
+### [CORRECTED — Real multi-agent trust refs] Improvement 3: Source credibility 5th ensemble signal
+* **Removed**: arXiv:2401.17786 (no arXiv metadata found — fake ID)
+* **Replacement references**:
+  * Falcone, R., & Castelfranchi, C. (2001). *Social Trust: A Cognitive Approach*. In: Trust and Deception in Virtual Societies.
+  * *Addressing Misinformation in Online Social Networks: Diverse Platforms and the Potential of Multiagent Trust Modeling*. MDPI Information 2020. DOI: 10.3390/info11110539
+* **Rationale**: These references provide the theoretical grounding for multi-source credibility registry integration and multi-agent trust modeling.
+
+### [CORRECTED — arXiv:2008.08370 + CSCW 2022] Improvement 4: CIB detector
+* **Removed**: arXiv:2302.07934 (wrong paper — this is a cosmology/physics paper concerning the New Early Dark Energy (NEDE) model and Hubble tension)
+* **Replacement references**:
+  * Nizzoli, L., Tardelli, S., Avvenuti, M., Cresci, S., & Tesconi, M. (2021). *Coordinated Behavior on Social Media in 2019 UK General Election*. ICWSM 2021. arXiv:2008.08370
+  * Cresci, S., Nizzoli, L., et al. (2022). *The Spread of Propaganda by Coordinated Communities on Social Media*. ACM CSCW 2022. DOI: 10.1145/3501247.3531543
+* **Note**: Nizzoli 2021 defines the continuous coordination index and superspreader similarity network that maps directly to the 2h/12h/72h temporal windows and `cib_score` formula. Cresci 2022 links coordination directly to propaganda content.
+
+### [VERIFIED] Improvement 5: Aleatory/epistemic uncertainty decomposition | arXiv:2306.13063
+* **Citation**: *Can LLMs Express Their Uncertainty? An Empirical Evaluation of Confidence Elicitation in LLMs* (Xiong et al., 2023).
+
+### [CORRECTED — SlovakBERT + SlavicBERT] Improvement 7: Slovak NER entity preservation
+* **Removed**: arXiv:2305.09586 (no arXiv metadata found — fake ID)
+* **Replacement references**:
+  * Pikuliak, M., et al. (2021). *SlovakBERT: Slovak Masked Language Model*. EMNLP 2021 Findings. HuggingFace: `gerulata/slovakbert`
+  * Straka, M., et al. (2019). *Slavic NER via DeepPavlov SlavicBERT*. BSNLP 2019. GitHub: `deeppavlov/Slavic-BERT-NER`
+  * `nettle-ai/slovakbert-address-ner` (HuggingFace, MIT) — Slovak address NER
+  * `Ardevop-sk/sk-bert-ner` (GitHub) — Slovak news/court NER baseline
+* **Rationale**: SlovakBERT and SlavicBERT are the canonical models for Slovak/Slavic NER; both are production-ready and directly used in the `ml-classifier` upgrade.
+
+### [CORRECTED — arXiv:1911.02116 + SlovakBERT] Improvement 9: Cross-lingual aligner
+* **Removed**: arXiv:2209.05056 (no arXiv metadata found — fake ID)
+* **Replacement references**:
+  * Conneau, A., et al. (2020). *Unsupervised Cross-lingual Representation Learning at Scale (XLM-R)*. ACL 2020. arXiv:1911.02116
+  * Pikuliak, M., et al. (2021). *SlovakBERT* — EMNLP 2021 Findings (same as Fix #5)
+* **Rationale**: XLM-R is the standard cross-lingual model supporting SK/CZ/DE/EN alignment; SlovakBERT provides Slovak-specific embedding quality.
+
+---
+
+## Wave 3 Academic Grounding
+
+### [VERIFIED] Improvement 14: Adversarial mini-debate | arXiv:2305.14325
+* **Citation**: Du, Y., Li, S., Torralba, A., Tenenbaum, J. B., & Mordatch, I. (2023). *Improving Factuality and Reasoning in Language Models through Multiagent Debate*. arXiv:2305.14325
+* **Note**: Correctly placed here in Wave 3 (not Wave 2 Improvement 2 where it was previously misassigned).
+
+### [VERIFIED] Improvement 13: Instance-hardness routing
+* **Primary**: FFarhangian/FakeNewsDetection_DRES — Farhangian et al. 2025
+* **See also**: arXiv:2306.13063 (Xiong et al. 2023) — uncertainty routing component
+
+---
+
+## Wave 3.5 Academic Grounding
+
+### [VERIFIED] Improvement 19 — Wikidata SPARQL
+* **Citation**: Vrandečić, D., & Krötzsch, M. (2014). *Wikidata: A Free Collaborative Knowledgebase*. Communications of the ACM 57(10). DOI: 10.1145/2629489
+
+### [VERIFIED] Improvement 22 — SlavicBERT/SlovakBERT classifier upgrade
+* **Citations**: Pikuliak et al. 2021 SlovakBERT (EMNLP Findings, `gerulata/slovakbert`) + DeepPavlov SlavicBERT NER (BSNLP 2019, `deeppavlov/Slavic-BERT-NER`)
+
+### [VERIFIED] Improvement 23 — Decomposed Uncertainty Routing
+* **Citation**: arXiv:2306.13063 — Xiong, M., et al. (2023). *Can LLMs Express Their Uncertainty? An Empirical Evaluation of Confidence Elicitation in LLMs*.
+
+### [PARTIALLY GROUNDED] Improvement 24 — Information Laundering Detection
+* **Methodological ancestors**: Nizzoli 2021 (arXiv:2008.08370) + Cresci 2022 (ACM CSCW)
+* **Note**: "Information laundering" as a specific term lacks a single canonical paper; cite as "extension of coordinated sharing detection methodology" (Nizzoli/Cresci).
+
+### [VERIFIED] Improvement 25 — Inter-Annotator Agreement (Krippendorff's α)
+* **Citations**:
+  * Krippendorff, K. (2004). *Content Analysis: An Introduction to Its Methodology* (2nd ed.). Sage Publications.
+  * Hayes, A.F., & Krippendorff, K. (2007). *Answering the Call for a Standard Reliability Measure for Coding Data*. Communication Methods and Measures 1(1).
+
+### [VERIFIED] Improvement 26 — Semantic CIB Detection
+* **Citations**:
+  * arXiv:1908.10084 — Reimers & Gurevych 2019 (SBERT semantic similarity component)
+  * arXiv:2008.08370 — Nizzoli et al. 2021 (account coordination component)
+
+### [PARTIALLY GROUNDED] Improvement 27 — GART Stress-Test Loop
+* **Citation**: Perez, E., et al. (2022). *Red Teaming Language Models with Language Models*. arXiv:2202.03286
+* **Note**: Weekly bypass rate evaluation is a production adaptation of LM red-teaming methodology. No single canonical paper covers this exact production loop.

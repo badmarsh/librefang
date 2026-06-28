@@ -1,4 +1,4 @@
-# MCP Disinformation Detection Pipeline (v4.0.0)
+# MCP Disinformation Detection Pipeline (v5.0.0)
 
 > Implementation of arXiv:2508.10143 — "MCP-Orchestrated Multi-Agent System for Automated Disinformation Detection"
 > Avram, Groza, Lecu (2025)
@@ -53,7 +53,7 @@ Weights are adaptive (Bayesian update + F2 score optimization) but start with ba
 | `coherence-checker` | 0.13 | arXiv:2305.16507, arXiv:2210.12029 |
 | `wiki-checker` | 0.18 | Baseline |
 | `triplet-fact-checker` | 0.20 | Baseline |
-| `source-rater` | 0.10 | arXiv:2401.17786 |
+| `source-rater` | 0.10 | Falcone & Castelfranchi 2001 + MDPI Info. 2020 |
 | `kg-consistency-checker` | 0.10 | arXiv:2209.01060 |
 | `temporal-checker` | 0.08 | arXiv:2211.07830, arXiv:2309.01771 |
 
