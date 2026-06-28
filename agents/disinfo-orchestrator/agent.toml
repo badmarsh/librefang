@@ -486,3 +486,9 @@ rule_search_trigger = "accuracy_drop_pct > 5"  # vs. calibration corpus
 grounding_paper = "arXiv:2305.14325"   # Du et al. — multiagent debate
 debate_rounds = 2
 arbiter_confidence_threshold = 0.75
+
+[citations]
+bayesian_ensemble   = "Hoeting et al. 1999 — Bayesian Model Averaging, Stat. Sci."
+uncertainty_routing = "arXiv:2306.13063 — Xiong et al. 2023"
+instance_hardness   = "arXiv:2306.13063 (uncertainty) + FFarhangian/FakeNewsDetection_DRES"
+mini_debate         = "arXiv:2305.14325 — Du et al. 2023"

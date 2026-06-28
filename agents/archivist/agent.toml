@@ -362,3 +362,8 @@ action = "update_source_credibility"
 cron         = "0 8 * * 0"    # Sundays 08:00
 # task         = "consolidate_kg_and_self_improve"
 # session_mode = "persistent"   # needs historical weight and cluster state
+
+[citations]
+episodic_memory      = "arXiv:2304.03442 — Park et al. 2023, Generative Agents"
+bayesian_convergence = "Hoeting et al. 1999 — Bayesian Model Averaging"
+gart_red_team        = "arXiv:2202.03286 — Perez et al. 2022, Red Teaming LMs"

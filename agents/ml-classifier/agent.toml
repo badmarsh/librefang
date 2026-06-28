@@ -174,3 +174,9 @@ memory_store("ml_classifier.output", <json>)
 file_write("ml_classifier_output.json")
 event_publish("ml_classifier.output.ready")
 """
+
+[citations]
+foundation  = "arXiv:2508.10143 — Avram et al. 2025"
+bert_upgrade = "gerulata/slovakbert — Pikuliak et al. EMNLP 2021 Findings"
+slavic_ner  = "deeppavlov/Slavic-BERT-NER — BSNLP 2019"
+fallback    = "TF-IDF + Logistic Regression — scikit-learn baseline"

@@ -261,3 +261,8 @@ propaganda_score_weight = 0.30   # fused into cib_score
 coordination_score_weight = 0.70
 # cib_score_final = propaganda_score_weight * propaganda_score
 #                 + coordination_score_weight * cib_score
+
+[citations]
+coordination_theory  = "arXiv:2008.08370 — Nizzoli et al., ICWSM 2021"
+propaganda_spread    = "ACM CSCW 2022 doi:10.1145/3501247.3531543 — Cresci et al."
+semantic_clustering  = "arXiv:1908.10084 — SBERT for semantic CIB similarity >= 0.75"

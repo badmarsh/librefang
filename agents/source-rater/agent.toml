@@ -125,3 +125,6 @@ trust_decay_halflife_days = 90
 # Reference: "Addressing Misinformation ... Multiagent Trust Modeling" (MDPI Information 2020)
 # Note: Credibility is treated as a continuous Bayesian prior, not a binary flag.
 
+[citations]
+trust_modeling    = "MDPI Information 2020 doi:10.3390/info11110539"
+multi_agent_trust = "Falcone & Castelfranchi 2001 — Social Trust: A Cognitive Approach"

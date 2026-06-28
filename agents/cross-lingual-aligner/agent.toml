@@ -63,3 +63,7 @@ political_entity_classes = ["Q5", "Q7278", "Q4164871", "Q9135"]
 
 [meta.references]
 papers = ["arXiv:1911.02116", "github.com/deeppavlov/Slavic-BERT-NER", "arXiv:1908.10084"]
+
+[citations]
+xlmr       = "arXiv:1911.02116 — Conneau et al. 2020, XLM-R, ACL 2020"
+slovakbert = "gerulata/slovakbert — Pikuliak et al. EMNLP 2021 Findings"

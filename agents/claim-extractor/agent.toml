@@ -208,4 +208,6 @@ Write to file: claim_extractor_output.json
 Publish event: event_publish("claim_extractor.output.ready") — triggers parallel scorer agents
 """
 
-
+[citations]
+sbert_dedup = "arXiv:1908.10084 — Reimers & Gurevych, SBERT, EMNLP 2019"
+ner         = "gerulata/slovakbert + deeppavlov/Slavic-BERT-NER"

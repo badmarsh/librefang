@@ -102,3 +102,8 @@ modalities_active = ["image", "ocr_text", "audio", "video"]
 modalities_planned = []
 # Ref: Tao et al. (2024) arXiv:2406.06965 (multi-modal deepfake survey)
 # Ref: Passive Deepfake Detection Survey arXiv:2411.17911
+
+[citations]
+deepfake_benchmark = "arXiv:2503.02857 — Deepfake-Eval-2024"
+multimodal_survey  = "arXiv:2406.06965 — Multi-modal Deepfake Detection 2024"
+passive_detection  = "arXiv:2411.17911 — Passive Deepfake Detection 2024"
