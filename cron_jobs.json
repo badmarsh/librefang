@@ -85,6 +85,34 @@
     },
     "one_shot": false,
     "last_status": "pending",
+  },
+  {
+    "job": {
+      "id": "a1f8a846-51b2-4d8e-9c7b-7b5c8f8b8c5b",
+      "agent_id": "audit-chain-verifier",
+      "name": "Audit Chain Verifier",
+      "enabled": true,
+      "session_mode": "new",
+      "schedule": {
+        "kind": "cron",
+        "expr": "0 */6 * * *",
+        "tz": null
+      },
+      "action": {
+        "kind": "agent_turn",
+        "message": "Run verify_audit_chain and verify the Merkle chain.",
+        "timeout_secs": null
+      },
+      "delivery": {
+        "kind": "none"
+      },
+      "delivery_targets": [],
+      "created_at": "2026-06-28T06:00:00Z",
+      "last_run": null,
+      "next_run": "2026-06-28T12:00:00Z"
+    },
+    "one_shot": false,
+    "last_status": "pending",
     "consecutive_errors": 0
   }
 ]

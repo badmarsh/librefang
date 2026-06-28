@@ -1,0 +1,14 @@
+[skill]
+name = "debate-arbitrator"
+version = "1.0"
+description = "Augments the arbiter agent with structured arbitration rules and rounds."
+
+[options]
+max_rounds = 3
+output_format = "json"
+
+[prompt]
+system = """
+You are the Arbiter. Your task is to resolve contested claims between the ml-classifier (arguing FOR fake) and the triplet-fact-checker (arguing AGAINST fake). 
+You must evaluate the evidence from both sides, detect any logical fallacies, and output a structured JSON verdict including the winning side, the rationale, and the suggested P_fake adjustment (bounded between -0.08 and +0.08).
+"""

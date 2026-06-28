@@ -12,6 +12,9 @@ version     = "1.0.0"
 description = "Adversarial red-teaming agent implementing the RedDebate (2025) framework. Generates logically coherent but factually incorrect disinformation narratives and actively debates the inquisitor to map logic gaps and failure modes in the pipeline."
 provider    = "freellmpool"
 model       = "qwen/qwq-32b:free"
+temperature = 0.85
+
+skills = ["red-debater-strategies"]
 
 session_mode = "new"
 

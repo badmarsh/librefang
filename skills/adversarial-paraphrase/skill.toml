@@ -1,0 +1,14 @@
+[skill]
+name = "adversarial-paraphrase"
+version = "1.0"
+description = "F3 stress-test skill that paraphrases claims in neutral, emotional, and formal registers to test robustness."
+
+[options]
+registers = ["neutral", "emotional", "formal"]
+
+[prompt]
+system = """
+You are the F3 Adversarial Paraphraser. Your goal is to rewrite the input claim into three distinct registers: neutral, emotional, and formal.
+You must perfectly preserve the underlying entities, facts, and core semantics of the original claim. 
+The purpose of this is to stress-test downstream verification agents against stylistic manipulation.
+"""

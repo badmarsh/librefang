@@ -25,6 +25,8 @@
 //! - The write is timeout-bounded, not just the reply wait — a child that stops
 //!   reading its stdin (full pipe) can't wedge the caller past the deadline.
 
+pub mod sandbox;
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::process::Stdio;
@@ -70,6 +72,10 @@ pub struct TransportConfig {
     /// Short label for logs and the `subprocess_transport_exited` metric, e.g.
     /// `"context_engine"`.
     pub label: String,
+    /// Agent ID for Landlock sandboxing.
+    pub agent_id: Option<String>,
+    /// Data directory for Landlock sandboxing.
+    pub data_dir: Option<std::path::PathBuf>,
 }
 
 impl TransportConfig {
@@ -86,6 +92,8 @@ impl TransportConfig {
             request_timeout,
             max_reply_line_bytes: DEFAULT_MAX_REPLY_LINE_BYTES,
             label: label.into(),
+            agent_id: None,
+            data_dir: None,
         }
     }
 }
@@ -110,15 +118,36 @@ pub struct SubprocessTransport {
 }
 
 impl SubprocessTransport {
-    /// Spawn the child and start the background reader + stderr drain.
     pub fn spawn(cfg: TransportConfig) -> std::io::Result<Self> {
-        let mut child = Command::new(&cfg.command)
-            .args(&cfg.args)
+        let mut child = Command::new(&cfg.command);
+        child.args(&cfg.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+            .kill_on_drop(true);
+
+        #[cfg(target_os = "linux")]
+        {
+            let agent_id = cfg.agent_id.clone();
+            let data_dir = cfg.data_dir.clone();
+            unsafe {
+                child.pre_exec(move || {
+                    if let Err(e) = crate::sandbox::apply_seccomp_filter() {
+                        eprintln!("Seccomp failed: {}", e);
+                        return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                    }
+                    if let (Some(aid), Some(dd)) = (&agent_id, &data_dir) {
+                        if let Err(e) = crate::sandbox::apply_landlock_policy(dd, aid) {
+                            eprintln!("Landlock failed: {}", e);
+                            return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                        }
+                    }
+                    Ok(())
+                });
+            }
+        }
+
+        let mut child = child.spawn()?;
 
         let stdin = child
             .stdin
