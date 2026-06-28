@@ -38,6 +38,11 @@ provider = "freellmpool"
 model = "ovh/Meta-Llama-3_3-70B-Instruct"
 api_key_env = "FREELLMPOOL_API_KEY"
 
+[schedule.cron]
+cron  = "10 * * * *"
+task  = "generate_alignment_cache"
+description = "Staggered cron offset by 10m to avoid source-rater collision"
+
 [aligner.ner]
 slavic_ner_model = "DeepPavlov/bert-base-slavic-ner"
   # Covers: BG, CS, PL, RU — BSNLP-2019

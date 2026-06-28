@@ -90,17 +90,20 @@ api_key_env = "NVIDIA_API_KEY"
 [[triggers]]
 event   = "ml_classifier.output.ready"
 action  = "check_all_scorers_ready"
-description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context. Uses parallel_dispatch."
+parallel_dispatch = true
 
 [[triggers]]
 event   = "coherence_checker.output.ready"
 action  = "check_all_scorers_ready"
-description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context. Uses parallel_dispatch."
+parallel_dispatch = true
 
 [[triggers]]
 event   = "triplet_fact_checker.output.ready"
 action  = "check_all_scorers_ready"
-description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context"
+description = "Part of join-trigger: check if all 3 scorer outputs are available in MCP context. Uses parallel_dispatch."
+parallel_dispatch = true
 
 [[triggers]]
 event   = "pipeline.rerun.disinfo-orchestrator"
