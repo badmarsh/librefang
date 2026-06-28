@@ -2535,7 +2535,7 @@ impl WorkflowEngine {
         match &step.error_mode {
             ErrorMode::Fail => {
                 let result =
-                    tokio::time::timeout(timeout_dur, send_message(agent_id, prompt, session_mode))
+                    tokio::time::timeout(timeout_dur, Box::pin(send_message(agent_id, prompt, session_mode)))
                         .await
                         .map_err(|_| {
                             format!(
@@ -2549,7 +2549,7 @@ impl WorkflowEngine {
             ErrorMode::Skip => {
                 match tokio::time::timeout(
                     timeout_dur,
-                    send_message(agent_id, prompt, session_mode),
+                    Box::pin(send_message(agent_id, prompt, session_mode)),
                 )
                 .await
                 {
@@ -2576,7 +2576,7 @@ impl WorkflowEngine {
                 for attempt in 0..=*max_retries {
                     match tokio::time::timeout(
                         timeout_dur,
-                        send_message(agent_id, prompt.clone(), session_mode),
+                        Box::pin(send_message(agent_id, prompt.clone(), session_mode)),
                     )
                     .await
                     {
@@ -3039,7 +3039,7 @@ impl WorkflowEngine {
         } else {
             // `input` here is unused on the resume path because the loop
             // pulls `paused_current_input` off the run when present.
-            self.execute_run_sequential(run_id, &workflow, "", &agent_resolver, &send_message)
+            Box::pin(self.execute_run_sequential(run_id, &workflow, "", &agent_resolver, &send_message))
                 .await
                 .map_err(|e| ResumeRunError::ExecutionFailed { run_id, detail: e })
         };
@@ -3639,7 +3639,7 @@ impl WorkflowEngine {
         let result = if has_dag_deps {
             Err(ResumeRunError::DagUnsupported { run_id })
         } else {
-            self.execute_run_sequential(run_id, &workflow, "", agent_resolver, send_message)
+            Box::pin(self.execute_run_sequential(run_id, &workflow, "", agent_resolver, send_message))
                 .await
                 .map_err(|e| ResumeRunError::ExecutionFailed { run_id, detail: e })
         };
@@ -3712,16 +3712,16 @@ impl WorkflowEngine {
 
         let inner_fut = async {
             if has_dag_deps {
-                self.execute_run_dag(run_id, &workflow, &input, &agent_resolver, &send_message)
+                Box::pin(self.execute_run_dag(run_id, &workflow, &input, &agent_resolver, &send_message))
                     .await
             } else {
-                self.execute_run_sequential(
+                Box::pin(self.execute_run_sequential(
                     run_id,
                     &workflow,
                     &input,
                     &agent_resolver,
                     &send_message,
-                )
+                ))
                 .await
             }
         };
@@ -3948,14 +3948,14 @@ impl WorkflowEngine {
 
                     let prompt_sent = prompt.clone();
                     let start = std::time::Instant::now();
-                    let result = Self::execute_step_with_error_mode(
+                    let result = Box::pin(Self::execute_step_with_error_mode(
                         step,
                         agent_id,
                         prompt,
                         &send_message,
                         run_id,
                         &self.cancel_notify,
-                    )
+                    ))
                     .await;
                     let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -4213,14 +4213,14 @@ impl WorkflowEngine {
 
                     let prompt_sent = prompt.clone();
                     let start = std::time::Instant::now();
-                    let result = Self::execute_step_with_error_mode(
+                    let result = Box::pin(Self::execute_step_with_error_mode(
                         step,
                         agent_id,
                         prompt,
                         &send_message,
                         run_id,
                         &self.cancel_notify,
-                    )
+                    ))
                     .await;
                     let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -4292,14 +4292,14 @@ impl WorkflowEngine {
 
                         let prompt_sent = prompt.clone();
                         let start = std::time::Instant::now();
-                        let result = Self::execute_step_with_error_mode(
+                        let result = Box::pin(Self::execute_step_with_error_mode(
                             step,
                             agent_id,
                             prompt,
                             &send_message,
                             run_id,
                             &self.cancel_notify,
-                        )
+                        ))
                         .await;
                         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -5242,14 +5242,14 @@ impl WorkflowEngine {
                 let prompt = Self::expand_variables(&step.prompt_template, input, &variables);
                 let prompt_sent = prompt.clone();
                 let start = std::time::Instant::now();
-                let result = Self::execute_step_with_error_mode(
+                let result = Box::pin(Self::execute_step_with_error_mode(
                     step,
                     agent_id,
                     prompt,
                     send_message,
                     run_id,
                     &self.cancel_notify,
-                )
+                ))
                 .await;
                 let duration_ms = start.elapsed().as_millis() as u64;
 

@@ -230,3 +230,22 @@
     rdfs:range :FIMICampaign ;
     rdfs:label "PART_OF_CAMPAIGN" ;
     rdfs:comment "Narrative cluster is part of a broader FIMI campaign." .
+
+### Temporal Anchors (Post-2025 Novel Vectors)
+
+:TemporalAnchor rdf:type owl:Class, skos:Concept ;
+    skos:inScheme :DisinformationTaxonomy ;
+    skos:prefLabel "Temporal Anchor"@en ;
+    skos:definition "A time-bound entity or event targeted by emerging disinformation."@en .
+
+:Event2026Elections rdf:type :TemporalAnchor ;
+    skos:prefLabel "2026 Slovak Parliamentary Elections"@en ;
+    skos:altLabel "voľby 2026"@sk .
+
+:Event2026EURegulations rdf:type :TemporalAnchor ;
+    skos:prefLabel "2026 EU Digital Regulations"@en ;
+    skos:altLabel "zakážu hotovosť"@sk, "zahraničných algoritmov"@sk .
+
+:EventNATOTatras rdf:type :TemporalAnchor ;
+    skos:prefLabel "NATO Operations in the Tatras"@en ;
+    skos:altLabel "základňu"@sk, "jadrové zbrane"@sk .

@@ -56,6 +56,17 @@
 #     from 4×identical → nvidia+gemini+freellmpool for genuine variance measurement.
 #     UQ_confidence:low taint propagated through downstream agents for HIGH_UNCERTAINTY verdicts.
 #
+# Wave 6: Advanced Causal Heuristics & Infra OSINT (2026-06-25)
+#   Improvement 28: Deep Infrastructure OSINT Scrape
+#     Integrates firecrawl-mcp into cib-detector. Scrapes target sites for shared Google
+#     Analytics/AdSense IDs, establishing hard infrastructure links.
+#   Improvement 29: Causal Cross-Mapping (CCM) (arXiv:2601.00400)
+#     Upgrades temporal synchrony to directional causality via Adaptive Causal Coordination
+#     Detection (ACCD), exposing invariant master/slave bot topologies.
+#   Improvement 30: Variance Manipulation Penalty (arXiv:2503.03775)
+#     Detects "symmetry breaking" evasion tactics by computing delay variance. Penalises
+#     synthetic uniform distributions vs. organic bursty power-law distributions.
+#
 # Declares the full agent DAG so tooling, docs and new contributors have a
 # single authoritative source of truth for run-order and data-flow.
 
@@ -174,7 +185,7 @@ notes       = """
 id          = "cib"
 label       = "CIB Coordination Analysis"
 agents      = ["cib-detector"]
-description = "Analyses full claim batch for coordinated inauthentic behaviour signals."
+description = "Analyses full claim batch for coordinated inauthentic behaviour signals, enriched with CCM causality and infrastructure scraping."
 notes       = """
   Improvement 4: Runs after claim batch is complete to detect cross-claim temporal clustering,
   lexical overlap (BLEU-4 > 0.65), cross-domain SK/RU amplification, novel entity injection.
@@ -185,6 +196,11 @@ notes       = """
   Catches slow-burn campaigns (Slavyangrad.ru → SK amplifiers over 48h) invisible to 2h window.
   temporal_signal = 0.10*temporal_signal + 0.30*lexical + 0.25*cross_domain + 0.20*novel_entity + 0.15*cib_graph.
   Improvement 23 (Wave 4): Graph-based narrative propagation added to CIB score calculation.
+
+  Wave 6 Improvements (28-30):
+  - Firecrawl Infra Scrape: Deep-scrapes target domains for Google Analytics/AdSense shared footprint.
+  - Causal Cross-Mapping (CCM): Detects directional causal dependence between coordinated actors (arXiv:2601.00400).
+  - Variance Penalty: Penalises "symmetry-breaking" randomized delay uniform distributions (arXiv:2503.03775).
 """
 
 [[stage]]

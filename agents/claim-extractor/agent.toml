@@ -56,6 +56,16 @@ sbert_similarity_threshold = 0.82
 lookback_hours = 72
 kg_query_field = "archivist.kg_known_bad_claims"
 
+[claim_extractor.auto_distillation]
+# DUAL-PATH ROUTING (Pushing NLP to 10/10)
+# Uses the fine-tuned local 'Student' model for fast, baseline claim extraction.
+# If the local model's confidence is low, or if the text is highly complex,
+# we fallback to the 'Teacher' LLM (Llama-3 70B).
+enabled = true
+local_model_path = "models/slovakbert_claim_extractor"
+local_confidence_threshold = 0.85
+fallback_to_llm = true
+
 [ontology]
 path = "ontology/disinformation_ontology.ttl"
 format = "turtle"

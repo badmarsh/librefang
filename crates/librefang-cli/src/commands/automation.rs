@@ -122,7 +122,7 @@ pub(crate) fn cmd_workflow_run(workflow_id: &str, input: &str) {
     let client = daemon_client();
     let body = daemon_json(
         client
-            .post(format!("{base}/api/workflows/{workflow_id}/run"))
+            .post(format!("{base}/api/workflows/{workflow_id}/run?wait=true"))
             .json(&serde_json::json!({"input": input}))
             .send(),
     );

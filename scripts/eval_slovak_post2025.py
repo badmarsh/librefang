@@ -33,7 +33,13 @@ def main():
         try:
             resp = requests.post(ML_CLASSIFIER_URL, json={"text": claim["text"]}, timeout=5)
             if resp.status_code == 200:
-                prediction = resp.json().get("label", "UNCERTAIN")
+                pred_label = resp.json().get("label", "UNCERTAIN")
+                if pred_label == "DISINFORMATION":
+                    prediction = "FALSE"
+                elif pred_label == "CREDIBLE":
+                    prediction = "TRUE"
+                else:
+                    prediction = pred_label
             else:
                 prediction = "UNCERTAIN"
         except requests.exceptions.RequestException:
