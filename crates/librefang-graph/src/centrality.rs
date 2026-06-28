@@ -10,8 +10,8 @@ pub fn pagerank(graph: &ActorGraph, alpha: f64, max_iter: usize) -> HashMap<Stri
     let start = Instant::now();
     let n = graph.graph.node_count();
     let e = graph.graph.edge_count();
-    metrics::gauge!("desolator.graph_node_count", n as f64);
-    metrics::gauge!("desolator.graph_edge_count", e as f64);
+    metrics::gauge!("desolator.graph_node_count").set(n as f64);
+    metrics::gauge!("desolator.graph_edge_count").set(e as f64);
     let mut ranks = HashMap::new();
     if n == 0 {
         return ranks;
@@ -57,7 +57,7 @@ pub fn pagerank(graph: &ActorGraph, alpha: f64, max_iter: usize) -> HashMap<Stri
         ranks = new_ranks;
     }
 
-    metrics::histogram!("desolator.pagerank_latency_ms", start.elapsed().as_millis() as f64);
+    metrics::histogram!("desolator.pagerank_latency_ms").record(start.elapsed().as_millis() as f64);
     ranks
 }
 
@@ -70,8 +70,8 @@ pub struct HitsResult {
 /// Reference: Kleinberg, J. (1999). "Authoritative sources in a hyperlinked environment."
 pub fn hits(graph: &ActorGraph, tolerance: f64) -> HitsResult {
     let start = Instant::now();
-    metrics::gauge!("desolator.graph_node_count", graph.graph.node_count() as f64);
-    metrics::gauge!("desolator.graph_edge_count", graph.graph.edge_count() as f64);
+    metrics::gauge!("desolator.graph_node_count").set(graph.graph.node_count() as f64);
+    metrics::gauge!("desolator.graph_edge_count").set(graph.graph.edge_count() as f64);
     let mut auth = HashMap::new();
     let mut hub = HashMap::new();
 
@@ -139,7 +139,7 @@ pub fn hits(graph: &ActorGraph, tolerance: f64) -> HitsResult {
         }
     }
 
-    metrics::histogram!("desolator.hits_latency_ms", start.elapsed().as_millis() as f64);
+    metrics::histogram!("desolator.hits_latency_ms").record(start.elapsed().as_millis() as f64);
     HitsResult { authority: auth, hub }
 }
 
@@ -147,8 +147,8 @@ pub fn hits(graph: &ActorGraph, tolerance: f64) -> HitsResult {
 /// Reference: Brandes, U. (2001). "A faster algorithm for betweenness centrality."
 pub fn betweenness_top_k(graph: &ActorGraph, top_k: usize) -> HashMap<String, f64> {
     let start = Instant::now();
-    metrics::gauge!("desolator.graph_node_count", graph.graph.node_count() as f64);
-    metrics::gauge!("desolator.graph_edge_count", graph.graph.edge_count() as f64);
+    metrics::gauge!("desolator.graph_node_count").set(graph.graph.node_count() as f64);
+    metrics::gauge!("desolator.graph_edge_count").set(graph.graph.edge_count() as f64);
     // simplified exact Brandes algorithm
     let mut cb = HashMap::new();
     
@@ -217,7 +217,7 @@ pub fn betweenness_top_k(graph: &ActorGraph, top_k: usize) -> HashMap<String, f6
     results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(top_k);
     
-    metrics::histogram!("desolator.betweenness_latency_ms", start.elapsed().as_millis() as f64);
+    metrics::histogram!("desolator.betweenness_latency_ms").record(start.elapsed().as_millis() as f64);
     results.into_iter().collect()
 }
 

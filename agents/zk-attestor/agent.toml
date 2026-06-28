@@ -16,10 +16,19 @@
 name        = "zk-attestor"
 version     = "1.0.0"
 description = "Zero-Knowledge attestation for disinformation verdicts. Produces a Halo2 proof that the verdict was computed over real inputs, enabling trustless third-party verification without revealing sources or claim text."
+author      = "librefang"
+module      = "builtin:chat"
+tags        = ["zk", "halo2", "attestation", "disinfo-pipeline"]
+session_mode = "new"
+skills      = ["zk-circuit"]
+
+[model]
 provider    = "freellmpool"
 model       = "qwen/qwq-32b:free"
-
-session_mode = "new"
+api_key_env = "FREELLMPOOL_API_KEY"
+max_tokens  = 4096
+context_window = 32768
+temperature = 0.1
 
 system_prompt = """
 You are the Zero-Knowledge Attestation Agent for the Media Desolator pipeline.
@@ -52,9 +61,10 @@ Output per verdict:
 [triggers]
 event = "orchestrator.verdicts.ready"
 
-[memory]
-read_keys   = ["orchestrator.verdicts"]
-write_keys  = ["zk_attestation.proofs", "zk_attestation.failures"]
+[capabilities]
+tools        = ["memory_recall", "memory_store"]
+memory_read  = ["orchestrator.verdicts"]
+memory_write = ["zk_attestation.proofs", "zk_attestation.failures"]
 
 [citations]
 halo2_zk    = "Halo2 proof system — Electric Coin Company / Zcash Foundation. github.com/zcash/halo2"

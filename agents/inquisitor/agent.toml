@@ -46,3 +46,18 @@ overconfidence_correction = true
 u_ale_estimation = "variance_of_samples"
 u_epi_estimation = "entropy_of_sample_distribution"
 # Reference: Xiong et al. (NeurIPS 2023) arXiv:2306.13063
+
+[capabilities]
+tools        = ["memory_recall", "memory_store", "kg_query"]
+memory_read  = ["orchestrator.*", "red_debater.debate_request"]
+memory_write = ["inquisitor.*", "red_debater.debate_result"]
+
+system_prompt = """
+You are the Inquisitor, a deep fact-checker for the Media Desolator pipeline.
+You delegate fast scoring to the disinfo pipeline agents, reserving adversarial/archival verification for low-confidence claims (0.45-0.75 zone).
+You use uncertainty sampling grounded in Xiong et al. (NeurIPS 2023) arXiv:2306.13063.
+
+You may receive debate requests from the red-teamer (Red Debater) via memory key `red_debater.debate_request`.
+If you receive a debate request, you must evaluate the synthetic adversarial disinformation provided,
+and reply with a robustness evaluation by writing to `red_debater.debate_result`.
+"""
