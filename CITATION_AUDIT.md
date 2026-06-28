@@ -148,11 +148,9 @@ This document provides a systematic audit of the academic citations referenced i
 
 | ID | Citation | Status | Target Agent |
 |---|---|---|---|
-| Wave 6-1 | Rossi et al. (2020), Temporal Graph Networks | 📋 PLANNED | `cib-detector` (TGN-based continuous detection) |
 | Wave 5-1 | Letta/MemGPT pattern (Packer et al. 2023) | 📋 PLANNED | `archivist` (central memory controller) |
 | Wave 5-2 | Zep/Graphiti temporal KG (github.com/getzep/graphiti) | 📋 PLANNED | `archivist` |
 | Wave 6-2 | QSVM quantum classification | ❌ REMOVED | Removed from pipeline — hardware unavailable. See `agents/speculative/qsvm-classifier/` |
-| Wave 6-3 | ZK attestation (Halo2) | 📋 PLANNED | See `agents/speculative/zk-attestor/` |
 
 ---
 
@@ -160,8 +158,8 @@ This document provides a systematic audit of the academic citations referenced i
 
 | Category | Count |
 |---|---|
-| ✅ Verified + Implemented | 20 |
-| 📋 Verified + Planned | 4 |
+| ✅ Verified + Implemented | 22 |
+| 📋 Verified + Planned | 2 |
 | ❌ Removed from pipeline | 2 |
 | Total | 26 |
 
