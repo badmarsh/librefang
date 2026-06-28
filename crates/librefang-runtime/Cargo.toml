@@ -62,7 +62,7 @@ toml = { workspace = true }
 url = { workspace = true }
 dirs = { workspace = true }
 tempfile = { workspace = true }
-pdf-extract = "0.10"
+pdf-extract = "0.12"
 # Local transformer inference for SlovakBERT/XLM-R
 candle-core = { version = "0.4" }
 candle-transformers = { version = "0.4" }
