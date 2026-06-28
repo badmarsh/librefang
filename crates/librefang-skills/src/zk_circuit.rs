@@ -1,13 +1,17 @@
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
-    plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Instance},
+    plonk::{Advice, Circuit, Column, ConstraintSystem, Error, Selector},
+    poly::Rotation,
 };
 use halo2curves::bn256::Fr;
+use halo2_proofs::arithmetic::Field;
 
 #[derive(Clone)]
 pub struct CIBAttestationConfig {
-    pub advice: Column<Advice>,
-    pub instance: Column<Instance>,
+    pub bit: Column<Advice>,
+    pub running_sum: Column<Advice>,
+    pub q_step: Selector,
+    pub q_final: Selector,
 }
 
 #[derive(Default)]
@@ -19,8 +23,8 @@ pub struct CIBAttestationCircuit {
 impl CIBAttestationCircuit {
     pub fn new(score: f64, threshold: f64) -> Self {
         Self {
-            score: Value::known(Fr::from(score as u64)),
-            threshold: Value::known(Fr::from(threshold as u64)),
+            score: Value::known(Fr::from((score * 1000.0) as u64)),
+            threshold: Value::known(Fr::from((threshold * 1000.0) as u64)),
         }
     }
 
@@ -34,9 +38,12 @@ impl CIBAttestationCircuit {
     }
 
     pub fn verify_proof(&self) -> bool {
-        // Simplified fallback since writing a full range-check circuit is out of scope here
-        // The synthesize function below demonstrates the Halo2 scaffolding.
-        true
+        use halo2_proofs::dev::MockProver;
+        // K=7 allows up to 128 rows, which is enough for our 64-bit decomposition
+        match MockProver::run(7, self, vec![]) {
+            Ok(prover) => prover.verify().is_ok(),
+            Err(_) => false,
+        }
     }
 }
 
@@ -49,13 +56,34 @@ impl Circuit<Fr> for CIBAttestationCircuit {
     }
 
     fn configure(meta: &mut ConstraintSystem<Fr>) -> Self::Config {
-        let advice = meta.advice_column();
-        let instance = meta.instance_column();
+        let bit = meta.advice_column();
+        let running_sum = meta.advice_column();
+        let q_step = meta.selector();
+        let q_final = meta.selector();
 
-        meta.enable_equality(advice);
-        meta.enable_equality(instance);
+        meta.create_gate("bit is boolean", |meta| {
+            let q = meta.query_selector(q_step);
+            let b = meta.query_advice(bit, Rotation::cur());
+            vec![q * b.clone() * (halo2_proofs::plonk::Expression::Constant(Fr::from(1)) - b)]
+        });
 
-        CIBAttestationConfig { advice, instance }
+        meta.create_gate("running sum", |meta| {
+            let q = meta.query_selector(q_step);
+            let b = meta.query_advice(bit, Rotation::cur());
+            let z_cur = meta.query_advice(running_sum, Rotation::cur());
+            let z_next = meta.query_advice(running_sum, Rotation::next());
+            
+            // z_cur = z_next * 2 + b
+            vec![q * (z_next * Fr::from(2) + b - z_cur)]
+        });
+
+        meta.create_gate("z final is zero", |meta| {
+            let q = meta.query_selector(q_final);
+            let z_cur = meta.query_advice(running_sum, Rotation::cur());
+            vec![q * z_cur]
+        });
+
+        CIBAttestationConfig { bit, running_sum, q_step, q_final }
     }
 
     fn synthesize(
@@ -64,14 +92,31 @@ impl Circuit<Fr> for CIBAttestationCircuit {
         mut layouter: impl Layouter<Fr>,
     ) -> Result<(), Error> {
         layouter.assign_region(
-            || "assign score",
+            || "range check",
             |mut region| {
-                region.assign_advice(
-                    || "score",
-                    config.advice,
-                    0,
-                    || self.score,
-                )?;
+                let diff = self.score - self.threshold;
+                let mut z = diff;
+                
+                let inv_2 = Value::known(Fr::from(2).invert().unwrap());
+
+                for i in 0..64 {
+                    config.q_step.enable(&mut region, i)?;
+                    
+                    let b_val = z.map(|v| {
+                        let bytes = v.to_bytes();
+                        let bit = (bytes[0] >> 0) & 1; // get LSB
+                        Fr::from(bit as u64)
+                    });
+                    
+                    region.assign_advice(|| "bit", config.bit, i, || b_val)?;
+                    region.assign_advice(|| "z", config.running_sum, i, || z)?;
+                    
+                    z = (z - b_val) * inv_2;
+                }
+                
+                config.q_final.enable(&mut region, 64)?;
+                region.assign_advice(|| "z_final", config.running_sum, 64, || z)?;
+                
                 Ok(())
             },
         )?;
@@ -95,8 +140,7 @@ mod tests {
     #[test]
     fn test_zk_attestation_fail() {
         let circuit = CIBAttestationCircuit::new(0.60, 0.75);
-        // We mocked this to always return true, but the test reflects production logic
-        // assert!(!circuit.verify_proof(), "Proof should fail when score < threshold");
+        assert!(!circuit.verify_proof(), "Proof should fail when score < threshold");
     }
 
     #[test]

@@ -11,31 +11,25 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 def generate_dummy_data():
-    """Generates synthetic BIO-tagged data for automated testing and CI/CD."""
+    """Generates synthetic JSONL data for automated testing and CI/CD."""
     logger.info("Generating dummy data for auto-distillation test...")
-    # Sentences and token labels: 0=O, 1=B-CLAIM, 2=I-CLAIM
     dummy_data = [
-        {"tokens": ["Nové", "predpisy", "EÚ", "zakážu", "hotovosť", "na", "Slovensku", "."],
-         "labels": [0, 0, 0, 1, 2, 2, 2, 0]},
-        {"tokens": ["Dnes", "bude", "pršať", "."], 
-         "labels": [0, 0, 0, 0]},
-        {"tokens": ["NATO", "buduje", "jadrovú", "základňu", "v", "Tatrách", "."],
-         "labels": [1, 2, 2, 2, 2, 2, 0]},
-        {"tokens": ["Vláda", "odstúpila", "po", "korupčnom", "škandále", "."],
-         "labels": [1, 2, 2, 2, 2, 0]},
-        {"tokens": ["Káva", "je", "dobrá", "."], 
-         "labels": [0, 0, 0, 0]}
+        {"text": "Nové predpisy EÚ zakážu hotovosť na Slovensku.", "extracted_claims": ["zakážu hotovosť na Slovensku"]},
+        {"text": "Dnes bude pršať.", "extracted_claims": []},
+        {"text": "NATO buduje jadrovú základňu v Tatrách.", "extracted_claims": ["NATO buduje jadrovú základňu v Tatrách"]},
+        {"text": "Vláda odstúpila po korupčnom škandále.", "extracted_claims": ["Vláda odstúpila"]},
+        {"text": "Káva je dobrá.", "extracted_claims": []}
     ] * 20  # Duplicate to make 100 samples
     return dummy_data
 
-def align_labels_with_tokens(labels, word_ids):
+def align_labels_with_tokens(word_labels, word_ids):
     new_labels = []
     current_word = None
     for word_id in word_ids:
         if word_id is None:
             new_labels.append(-100)
         elif word_id != current_word:
-            new_labels.append(labels[word_id])
+            new_labels.append(word_labels[word_id])
             current_word = word_id
         else:
             # We assign -100 to subsequent subwords so they are ignored in the loss
@@ -69,16 +63,38 @@ def main():
         with open(args.data, "r", encoding="utf-8") as f:
             raw_data = [json.loads(line) for line in f]
             
-    logger.info("Tokenizing dataset...")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+    logger.info("Tokenizing dataset and aligning string labels to BIO tags...")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=True)
     
     # Process dataset
     all_inputs = {"input_ids": [], "attention_mask": [], "labels": []}
     for item in raw_data:
-        tokenized_inputs = tokenizer(item["tokens"], truncation=True, is_split_into_words=True, max_length=128)
+        text = item["text"]
+        claims = item.get("extracted_claims", [])
+        
+        tokenized_inputs = tokenizer(text, truncation=True, max_length=128)
         word_ids = tokenized_inputs.word_ids()
         
-        labels = align_labels_with_tokens(item["labels"], word_ids)
+        # Determine number of unique words
+        num_words = len(set([w for w in word_ids if w is not None]))
+        word_labels = [0] * num_words  # Initialize all words as 'O' (0)
+        
+        for claim in claims:
+            start_char = text.find(claim)
+            if start_char != -1:
+                end_char = start_char + len(claim) - 1
+                
+                # Find start and end word indices
+                start_word = tokenized_inputs.char_to_word(start_char)
+                end_word = tokenized_inputs.char_to_word(end_char)
+                
+                if start_word is not None and end_word is not None:
+                    word_labels[start_word] = 1  # B-CLAIM
+                    for w in range(start_word + 1, end_word + 1):
+                        if w < num_words:
+                            word_labels[w] = 2  # I-CLAIM
+                            
+        labels = align_labels_with_tokens(word_labels, word_ids)
         
         all_inputs["input_ids"].append(tokenized_inputs["input_ids"])
         all_inputs["attention_mask"].append(tokenized_inputs["attention_mask"])
