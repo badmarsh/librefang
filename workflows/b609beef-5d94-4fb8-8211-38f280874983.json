@@ -1,55 +1,22 @@
 {
   "id": "b609beef-5d94-4fb8-8211-38f280874983",
-  "name": "msm-historical-audit-engine",
-  "description": "Multi-agent historical audit engine: Agentic Archive Retrieval, MoE debate on predictive accuracy, and ontological mapping of narrative shifts.",
-  "trigger": {
-    "event": "manual_audit_request"
-  },
+  "name": "msm-archive-audit",
+  "description": "Audits mainstream media archives to verify past predictions and core narratives against historical outcomes.",
   "steps": [
     {
-      "name": "agentic-archive-retrieval",
+      "name": "archive-search",
       "timeout_secs": 300,
-      "error_mode": "fail",
-      "mode": "fan_out",
-      "prompt_template": "Query mainstream media archive {{input.archive_source}} for the narrative: {{input.target_narrative}}. Extract core predictions and their confidence levels.",
-      "output_var": "archive_extractions",
-      "agent": "researcher-hand"
-    },
-    {
-      "name": "collect-extractions",
-      "timeout_secs": 60,
-      "error_mode": "fail",
-      "mode": "collect",
-      "prompt_template": "unused",
-      "agent": "system"
-    },
-    {
-      "name": "historical-outcome-alignment",
-      "timeout_secs": 180,
-      "error_mode": "fail",
-      "mode": "sequential",
-      "prompt_template": "Align extracted predictions {{archive_extractions}} with verified current OSINT outcomes. Highlight stark deviations or successful forecasts.",
-      "output_var": "outcome_alignment",
-      "agent": "analyst"
-    },
-    {
-      "name": "moe-debate-audit",
-      "timeout_secs": 600,
       "error_mode": "skip",
-      "mode": "loop",
-      "prompt_template": "Perform multi-turn adversarial debate on the outcome alignment: {{outcome_alignment}}. Defend or critique the media's accountability based on the Prometheus 2 Rubric (Relevance, Correctness, Neutrality, Evidence). Output 'DEBATE_CONCLUDED' when consensus on accountability score is reached.",
-      "output_var": "audit_debate_result",
-      "agent": "arbiter"
+      "mode": "fan_out",
+      "prompt_template": "Search Slovak and international mainstream media archives (SME, Pravda, Denn\u00edk N, NYT, BBC) for predictions and core narratives regarding {{input}} from the specific historical period requested. Retrieve full article texts where available.",
+      "agent_name": "researcher-hand"
     },
     {
-      "name": "ontological-narrative-mapping",
-      "timeout_secs": 180,
-      "error_mode": "fail",
+      "name": "cross-reference-narratives",
       "mode": "sequential",
-      "prompt_template": "Map the consensus audit result {{audit_debate_result}} to the Disinformation Taxonomy Ontology. Output final structured accountability report.",
-      "output_var": "accountability_report",
-      "agent": "archivist"
+      "prompt_template": "Analyze the retrieved media archives for {{input}}. Compare the published predictions against the verified outcomes provided in the current OSINT context. Identify narrative shifts, omissions, and successful forecasts. Focus on the accountability of specific outlets.",
+      "agent_name": "analyst"
     }
   ],
-  "created_at": "2026-06-26T10:00:00Z"
+  "created_at": "2026-05-04T13:45:00Z"
 }

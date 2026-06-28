@@ -1,0 +1,60 @@
+# LibreFang Self-Healing Pipeline Validator
+# This workflow runs when triggered by pipeline errors or via cron,
+# utilizing the self-improving-agent skill to propose and implement fixes.
+
+name        = "self-healing-pipeline"
+version     = "1.0.0"
+description = "Monitors pipeline runs and applies the self-improving-agent skill to automatically propose and implement fixes for failures."
+author      = "librefang"
+tags        = ["infrastructure", "stability", "self-healing", "monitoring"]
+
+[schedule]
+# Runs hourly to check error logs and attempt recovery
+cron        = "30 * * * *"
+timezone    = "Europe/Bratislava"
+
+# ─────────────────────────────────────────────
+# STAGE 1: FETCH LOGS
+# ─────────────────────────────────────────────
+[[steps]]
+name          = "fetch_errors"
+description = "Fetch recent pipeline errors from the last hour."
+prompt_template = "Fetch recent pipeline errors from the last hour."
+action      = "read_error_logs"
+output_var = "recent_errors"
+
+# ─────────────────────────────────────────────
+# STAGE 2: ANALYZE & PROPOSE
+# ─────────────────────────────────────────────
+[[steps]]
+name          = "analyze_failures"
+agent_name = "code-reviewer"  # Using code-reviewer, which can be equipped with self-improving-agent
+depends_on  = ["fetch_errors"]
+input       = "recent_errors"
+description = "Analyze the stack traces and pipeline states to propose a fix."
+prompt_template = "Analyze the stack traces and pipeline states to propose a fix."
+timeout_secs = 120
+output_var = "proposed_fix"
+
+# ─────────────────────────────────────────────
+# STAGE 3: APPLY FIX
+# ─────────────────────────────────────────────
+[[steps]]
+name          = "apply_fix"
+agent_name = "maintainer"
+depends_on  = ["analyze_failures"]
+input       = "proposed_fix"
+description = "Apply the proposed fix and restart the affected agents."
+prompt_template = "Apply the proposed fix and restart the affected agents."
+timeout_secs = 120
+
+# ─────────────────────────────────────────────
+# STAGE 4: ALERT
+# ─────────────────────────────────────────────
+[[steps]]
+name          = "alert_operator"
+agent_name = "orchestrator"
+depends_on  = ["apply_fix"]
+description = "Notify the operator in the command-center that a self-healing action was taken."
+prompt_template = "Notify the operator in the command-center that a self-healing action was taken."
+timeout_secs = 30

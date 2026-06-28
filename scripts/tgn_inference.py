@@ -1,54 +1,34 @@
-import sqlite3
-import json
 import torch
-from torch_geometric.nn.models import TGNMemory
-from torch_geometric.data import TemporalData
+import torch.nn as nn
 
-def fetch_recent_edges(db_path):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
-    # Assuming a schema with a posts table: (actor_id, timestamp, content_hash, target_id)
-    # We mock the query and return dummy data for inference
-    try:
-        cursor.execute("SELECT 1 as source, 2 as target, strftime('%s','now') as timestamp")
-        rows = cursor.fetchall()
-    except Exception:
-        rows = []
-    conn.close()
-    
-    return rows
-
-def compute_anomalies(edges):
-    # Mock TGN Memory structure
-    # In production, this would load pre-trained weights and run the forward pass
-    memory_dim = 100
-    time_dim = 100
-    num_nodes = 10
-    
-    # Initialize without errors by passing required args correctly
-    # Note: TGNMemory is a complex module, so this is a structural skeleton.
-    
-    results = []
-    for edge in edges:
-        # Mock probability score for Coordinated Inauthentic Behavior
-        prob = 0.85 
-        results.append({
-            "source": edge[0],
-            "target": edge[1],
-            "timestamp": edge[2],
-            "anomaly_probability": prob
-        })
+class TGNInferenceDummy:
+    """
+    Mock implementation of a Temporal Graph Network (TGN) for CIB detection.
+    In a real environment, this uses PyTorch Geometric (PyG).
+    """
+    def __init__(self, node_features: int, memory_dim: int):
+        self.node_features = node_features
+        self.memory_dim = memory_dim
+        self.memory = {}
         
-    return results
+    def process_event(self, source_id: str, dest_id: str, timestamp: float, features: torch.Tensor) -> float:
+        """
+        Process a temporal edge event and return an anomaly score.
+        A higher score means higher probability of Coordinated Inauthentic Behavior.
+        """
+        if source_id not in self.memory:
+            self.memory[source_id] = torch.zeros(self.memory_dim)
+        if dest_id not in self.memory:
+            self.memory[dest_id] = torch.zeros(self.memory_dim)
+            
+        score = torch.sigmoid(features.sum()).item()
+        
+        self.memory[source_id] += 0.1
+        self.memory[dest_id] += 0.1
+        
+        return score
 
 if __name__ == "__main__":
-    # Path to the LibreFang sqlite DB
-    db_path = "data/librefang.db"
-    
-    try:
-        edges = fetch_recent_edges(db_path)
-        anomalies = compute_anomalies(edges)
-        print(json.dumps(anomalies))
-    except Exception as e:
-        print(json.dumps({"error": str(e)}))
+    tgn = TGNInferenceDummy(node_features=10, memory_dim=10)
+    score = tgn.process_event("user1", "post1", 100.0, torch.randn(10))
+    print(f"Anomaly score: {score}")

@@ -1,0 +1,62 @@
+{
+  "id": "abd57e3b-8984-4869-b928-744e5fbe529b",
+  "name": "osint-dezinformacia-monitor",
+  "description": "Continuous OSINT monitor that ingests feeds, normalizes text, detects misinformation via regex/ML, enriches with Wikidata, and prepares fact-checked replies.",
+  "steps": [
+    {
+      "name": "ingest-feeds",
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "mode": "fan_out",
+      "prompt_template": "Ingest recent data from the following OSINT sources: {{input}}. Use web_fetch and web_search to gather content, authors, and timestamps.",
+      "output_var": "raw_data",
+      "agent_name": "collector-hand"
+    },
+    {
+      "name": "translate-content",
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "mode": "sequential",
+      "prompt_template": "Translate all non-English content in {{raw_data}} to English. Preserve original text alongside the translation. Source languages include Slovak (SK), Czech (CZ), and Hungarian (HU).",
+      "output_var": "translated_data",
+      "agent_name": "translator"
+    },
+    {
+      "name": "normalize-content",
+      "timeout_secs": 60,
+      "error_mode": "fail",
+      "mode": "sequential",
+      "prompt_template": "Normalize the raw data: {{translated_data}}. Remove HTML tags, clean whitespace, and extract structured claim objects (claim_text, author, source_url, publish_date).",
+      "output_var": "normalized_data",
+      "agent_name": "analyst"
+    },
+    {
+      "name": "detect-misinformation",
+      "timeout_secs": 180,
+      "error_mode": "fail",
+      "mode": "sequential",
+      "prompt_template": "Analyze {{normalized_data}} for misinformation. Use regex patterns for known Slovak/Czech disinformation keywords and cross-reference with the Google Fact Check API. Flag suspicious statements with a confidence score 0-100.",
+      "output_var": "flagged_statements",
+      "agent_name": "analyst"
+    },
+    {
+      "name": "enrich-with-context",
+      "timeout_secs": 300,
+      "error_mode": "skip",
+      "mode": "fan_out",
+      "prompt_template": "For each flagged statement in {{flagged_statements}}, search Wikidata and authoritative news archives to add context and verified entity information. Cross-reference with dennikn.sk fact-check archive.",
+      "output_var": "enriched_graph",
+      "agent_name": "researcher-hand"
+    },
+    {
+      "name": "prepare-responses",
+      "timeout_secs": 120,
+      "error_mode": "fail",
+      "mode": "sequential",
+      "prompt_template": "Based on the enriched context: {{enriched_graph}}, draft polite but factual corrections in both Slovak and English. Prepare as alerts for Slack and drafts for social media platforms.",
+      "output_var": "response_drafts",
+      "agent_name": "social-media"
+    }
+  ],
+  "created_at": "2026-05-03T16:30:10.999842169Z"
+}

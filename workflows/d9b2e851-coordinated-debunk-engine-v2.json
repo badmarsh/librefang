@@ -13,75 +13,75 @@
   },
   "steps": [
     {
-      "agent": "archivist",
-      "prompt_template": "Query the knowledge graph for prior verdicts matching: actor={{input.actor}}, claim_fingerprint={{input.claim_fingerprint}}, narrative_cluster={{input.narrative_cluster}}. Return matched nodes, prior verdicts, and related NarrativeClusters.",
-      "mode": "sequential",
-      "timeout_secs": 60,
       "name": "ontology-lookup",
+      "timeout_secs": 60,
+      "error_mode": "skip",
+      "mode": "sequential",
+      "prompt_template": "Query the knowledge graph for prior verdicts matching: actor={{input.actor}}, claim_fingerprint={{input.claim_fingerprint}}, narrative_cluster={{input.narrative_cluster}}. Return matched nodes, prior verdicts, and related NarrativeClusters.",
       "output_var": "ontology_context",
-      "error_mode": "skip"
+      "agent_name": "archivist"
     },
     {
-      "agent": "inquisitor",
-      "prompt_template": "Perform deep multi-source verification of claim: {{input.claim_text}}. Prior context from ontology: {{ontology_context}}. Use eric-deep-research-agent, multi-search-engine, and browser-use. Minimum 20 sources. Apply CRAAP test to each. thinking_budget=12000.",
-      "mode": "fan_out",
-      "timeout_secs": 600,
       "name": "deep-research",
+      "timeout_secs": 600,
+      "error_mode": "fail",
+      "mode": "fan_out",
+      "prompt_template": "Perform deep multi-source verification of claim: {{input.claim_text}}. Prior context from ontology: {{ontology_context}}. Use eric-deep-research-agent, multi-search-engine, and browser-use. Minimum 20 sources. Apply CRAAP test to each. thinking_budget=12000.",
       "output_var": "deep_research_result",
-      "error_mode": "fail"
+      "agent_name": "inquisitor"
     },
     {
-      "agent": "inquisitor",
-      "prompt_template": "Audit historical statements by actor {{input.actor}} over the past 5 years (1825 days). Use the long-context archive model to process bulk media archive data. Identify contradictions between past statements and the current claim: {{input.claim_text}}. Ontology context: {{ontology_context}}.",
+      "name": "archive-audit",
+      "timeout_secs": 600,
+      "error_mode": "skip",
       "mode": {
         "conditional": {
           "condition": "ontology_context.actor_found == true"
         }
       },
-      "timeout_secs": 600,
-      "name": "archive-audit",
+      "prompt_template": "Audit historical statements by actor {{input.actor}} over the past 5 years (1825 days). Use the long-context archive model to process bulk media archive data. Identify contradictions between past statements and the current claim: {{input.claim_text}}. Ontology context: {{ontology_context}}.",
       "output_var": "archive_audit_result",
-      "error_mode": "skip"
+      "agent_name": "inquisitor"
     },
     {
-      "agent": "inquisitor",
-      "prompt_template": "ADVERSARIAL VERIFICATION: Assume the following claim is TRUE: {{input.claim_text}}. Find the strongest possible supporting evidence. If you cannot find credible support, state that clearly. This is a deliberate adversarial challenge to improve confidence calibration. Deep research result: {{deep_research_result}}.",
+      "name": "adversarial-check",
+      "timeout_secs": 300,
+      "error_mode": "skip",
       "mode": {
         "conditional": {
           "condition": "deep_research_result.confidence >= 0.45 and deep_research_result.confidence <= 0.75"
         }
       },
-      "timeout_secs": 300,
-      "name": "adversarial-check",
+      "prompt_template": "ADVERSARIAL VERIFICATION: Assume the following claim is TRUE: {{input.claim_text}}. Find the strongest possible supporting evidence. If you cannot find credible support, state that clearly. This is a deliberate adversarial challenge to improve confidence calibration. Deep research result: {{deep_research_result}}.",
       "output_var": "adversarial_result",
-      "error_mode": "skip"
+      "agent_name": "inquisitor"
     },
     {
-      "agent": "inquisitor",
-      "prompt_template": "Synthesize final verdict from all available evidence. Deep research: {{deep_research_result}}. Archive audit: {{archive_audit_result}}. Adversarial check: {{adversarial_result}}. Ontology context: {{ontology_context}}. Output complete verdict JSON per schema.",
-      "mode": "sequential",
-      "timeout_secs": 300,
       "name": "synthesize-verdict",
+      "timeout_secs": 300,
+      "error_mode": "fail",
+      "mode": "sequential",
+      "prompt_template": "Synthesize final verdict from all available evidence. Deep research: {{deep_research_result}}. Archive audit: {{archive_audit_result}}. Adversarial check: {{adversarial_result}}. Ontology context: {{ontology_context}}. Output complete verdict JSON per schema.",
       "output_var": "final_verdict",
-      "error_mode": "fail"
+      "agent_name": "inquisitor"
     },
     {
-      "agent": "archivist",
-      "prompt_template": "Update the knowledge graph with verdict: {{final_verdict}}. Upsert Actor, Claim, Source, and NarrativeCluster nodes. Add all edges per schema. Output graph mutation JSON.",
-      "mode": "sequential",
-      "timeout_secs": 120,
       "name": "update-ontology",
+      "timeout_secs": 120,
+      "error_mode": "skip",
+      "mode": "sequential",
+      "prompt_template": "Update the knowledge graph with verdict: {{final_verdict}}. Upsert Actor, Claim, Source, and NarrativeCluster nodes. Add all edges per schema. Output graph mutation JSON.",
       "output_var": "graph_mutations",
-      "error_mode": "skip"
+      "agent_name": "archivist"
     },
     {
-      "agent": "impact-comms",
-      "prompt_template": "Execute appropriate accountability tier for verdict: {{final_verdict}}. Tier 1 (>=0.80): public debunk. Tier 2 (>=0.85): advertiser notice. Tier 3 (>=0.90): regulator alert + phone outreach. Graph context: {{graph_mutations}}.",
-      "mode": "sequential",
-      "timeout_secs": 180,
       "name": "accountability-action",
+      "timeout_secs": 180,
+      "error_mode": "skip",
+      "mode": "sequential",
+      "prompt_template": "Execute appropriate accountability tier for verdict: {{final_verdict}}. Tier 1 (>=0.80): public debunk. Tier 2 (>=0.85): advertiser notice. Tier 3 (>=0.90): regulator alert + phone outreach. Graph context: {{graph_mutations}}.",
       "output_var": "accountability_result",
-      "error_mode": "skip"
+      "agent_name": "impact-comms"
     }
   ],
   "created_at": "2026-05-04T12:50:00.000000000Z"

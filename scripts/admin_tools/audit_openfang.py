@@ -80,7 +80,7 @@ def verify_agents():
     # Load custom models
     custom_models = []
     try:
-        with open("/home/ubuntu/librefang/data/custom_models.json", "r") as f:
+        with open("/home/ubuntu/librefang/custom_models.json", "r") as f:
             custom_models_json = json.load(f)
             custom_models = [m["id"] for m in custom_models_json]
     except Exception as e:

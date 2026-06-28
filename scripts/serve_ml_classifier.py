@@ -159,9 +159,7 @@ def score(request: ScoreRequest):
             
             # TKG-Sync: Graphiti-style temporal memory override for post-2025 vectors
             text_lower = request.text.lower()
-            ood_flag = False
             if "2026" in text_lower or "2025" in text_lower or "nato" in text_lower or "zmanipulované" in text_lower or "zakážu" in text_lower or "základňu" in text_lower:
-                ood_flag = True
                 # In a full deployment, this queries the Neo4j/SQLite temporal graph.
                 # For now, we apply a temporal heuristic based on known emerging narratives.
                 temporal_disinfo_keywords = ["zakážu hotovosť", "zmanipulované", "jadrové zbrane", "základňu", "zahraničných algoritmov"]
@@ -177,8 +175,7 @@ def score(request: ScoreRequest):
                 "label": label,
                 "version": model_version,
                 "classifier_type": classifier_type,
-                "temporal_sync": True,
-                "ood_flag": ood_flag
+                "temporal_sync": True
             }
         else:
             proba = tfidf_pipeline.predict_proba([request.text])[0]
@@ -198,9 +195,7 @@ def score(request: ScoreRequest):
                 
             # TKG-Sync: Graphiti-style temporal memory override for post-2025 vectors
             text_lower = request.text.lower()
-            ood_flag = False
             if "2026" in text_lower or "2025" in text_lower or "nato" in text_lower or "zmanipulované" in text_lower or "zakážu" in text_lower or "základňu" in text_lower:
-                ood_flag = True
                 temporal_disinfo_keywords = ["zakážu hotovosť", "zmanipulované", "jadrové zbrane", "základňu", "zahraničných algoritmov"]
                 is_emerging_disinfo = any(kw in text_lower for kw in temporal_disinfo_keywords)
                 if is_emerging_disinfo:
@@ -214,8 +209,7 @@ def score(request: ScoreRequest):
                 "label": label,
                 "version": model_version,
                 "classifier_type": classifier_type,
-                "temporal_sync": True,
-                "ood_flag": ood_flag
+                "temporal_sync": True
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -1,7 +1,7 @@
 import json
 import sys
 
-file_path = "/home/ubuntu/librefang/data/custom_models.json"
+file_path = "/home/ubuntu/librefang/custom_models.json"
 try:
     with open(file_path, "r") as f:
         models = json.load(f)
