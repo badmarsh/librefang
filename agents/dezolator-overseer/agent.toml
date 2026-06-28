@@ -74,3 +74,8 @@ api_key_env = "OPENROUTER_API_KEY"
 cron         = "0 */6 * * *"   # Run every 6 hours
 task         = "evolution_cycle"
 session_mode = "persistent"    # Maintain evolutionary memory across loops
+
+[[goals]]
+description       = "Achieve F1 > 0.975 on validation corpus"
+max_iterations    = 20
+success_criterion = "pipeline.run_stats.f1_score >= 0.975"

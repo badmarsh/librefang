@@ -1,0 +1,19 @@
+name = "dezolator-pipeline"
+version = "1.0.0"
+description = "Full Medialny Dezolator 5-signal ensemble pipeline for disinformation detection."
+category = "Security"
+
+agents = [
+  "disinfo-orchestrator",
+  "claim-extractor",
+  "ml-classifier",
+  "coherence-checker",
+  "triplet-fact-checker",
+  "wiki-checker",
+  "source-rater",
+  "inquisitor",
+  "arbiter",
+  "writer",
+  "impact-comms",
+  "compliance-officer"
+]

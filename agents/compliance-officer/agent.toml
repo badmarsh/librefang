@@ -36,6 +36,7 @@ Output your review strictly as JSON:
 tools        = ["memory_store", "memory_recall"]
 memory_read  = ["orchestrator.final_verdict"]
 memory_write = ["compliance.audit_log", "hitl.review_queue"]
+requires_approval = ["file_write", "event_publish[impact-comms.*]"]
 
 [[triggers]]
 event   = "disinfo.verdict.ready"

@@ -169,6 +169,35 @@ pub fn describe_observability_metrics() {
          schedule-fallback misses, labeled by agent. Alert on any increase: \
          the job has silently stopped firing until re-enabled."
     );
+    metrics::describe_counter!(
+        "dezolator_claims_processed_total",
+        "Claims processed by the pipeline, labeled by verdict and language"
+    );
+    metrics::describe_histogram!(
+        "dezolator_pipeline_latency_seconds",
+        metrics::Unit::Seconds,
+        "End-to-end latency from claim ingestion to verdict, labeled by routing_case"
+    );
+    metrics::describe_counter!(
+        "dezolator_hitl_triggers_total",
+        "HITL approval triggers, labeled by agent and hitl_reason"
+    );
+    metrics::describe_gauge!(
+        "dezolator_f1_score",
+        "Running F1 score from pipeline.run_stats"
+    );
+    metrics::describe_gauge!(
+        "dezolator_uncertain_verdict_rate",
+        "Fraction of verdicts classified as UNCERTAIN"
+    );
+    metrics::describe_counter!(
+        "dezolator_a2a_claims_total",
+        "External claims received via A2A, labeled by submitting_org"
+    );
+    metrics::describe_counter!(
+        "dezolator_disarm_ttp_tags_total",
+        "DISARM TTP tags applied to verdicts, labeled by ttp_id and phase"
+    );
 }
 
 /// Render an HTTP metrics summary.

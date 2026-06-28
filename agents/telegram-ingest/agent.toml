@@ -1,0 +1,35 @@
+# LibreFang agent manifest
+name        = "telegram-ingest"
+version     = "1.0.0"
+description = "Monitors Slovak disinformation Telegram channels (e.g., Hlavné správy, Infovojna) and acts as an ingest source, emitting `disinfo.claim.ingest` events for real-time processing."
+author      = "librefang"
+module      = "builtin:chat"
+tags        = ["ingest", "telegram", "disinfo", "monitor"]
+
+[model]
+provider    = "qwen"
+model       = "qwen3.6-flash"
+api_key_env = "DASHSCOPE_API_KEY"
+max_tokens  = 1024
+temperature = 0.0
+
+system_prompt = """
+You are the Telegram Ingest Monitor for the Medialny Dezolator pipeline.
+Your role is to process incoming raw messages from monitored Slovak Telegram channels.
+
+For each message:
+1. Determine if it contains a verifiable claim (ignore simple reactions or spam).
+2. Format the claim for processing.
+3. Publish it to the pipeline via `disinfo.claim.ingest`.
+
+Output format must be a structured JSON object.
+"""
+
+[capabilities]
+tools        = ["event_publish"]
+memory_read  = []
+memory_write = ["telegram_ingest.*"]
+
+[[triggers]]
+event   = "telegram.message.received"
+action  = "process_message"

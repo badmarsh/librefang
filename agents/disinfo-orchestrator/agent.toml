@@ -44,7 +44,9 @@ skills = [
 
 mcp_servers = [
   "filesystem",
-  "ontology"
+  "ontology",
+  "temporal-kg",
+  "sbert-embeddings"
 ]
 
 [model]
@@ -59,6 +61,9 @@ temperature = 0.1
 tools        = ["memory_store", "memory_recall", "file_write", "file_read", "event_publish", "schedule_create"]
 memory_read  = ["claim_extractor.*", "ml_classifier.*", "coherence_checker.*", "wiki_checker.*", "triplet_fact_checker.*", "source_rater.*", "ensemble.*", "cib_detector.*", "arbiter.*", "feedback.*", "disarm_hunter.*", "temporal_sync.*", "project.*"]
 memory_write = ["orchestrator.*", "ensemble.*", "arbiter.*", "pipeline.run_stats"]  # includes orchestrator.disarm_ttp_ids, orchestrator.uq_summary
+streaming = true
+push_notifications = true
+publish_agent_card = true
 
 [[fallback_models]]
 provider = "nvidia"

@@ -679,17 +679,17 @@ debounce_ms = 500
 #                                      # opus_24000_32, pcm_16000, pcm_44100, ulaw_8000.
 
 # ── Network (P2P Federation) ─────────────────────────────────
-# network_enabled = false
-# [network]
-# shared_secret = ""           # Required for P2P auth
-#
-# # Production deployments MUST use TLS (mandatory for non-loopback binds).
-# # Point to the mTLS cert/key from your existing nginx.conf PKI.
-# [network.wire]
-# encryption = "tls"
-# tls_cert = "/home/ubuntu/.librefang/certs/node.crt"
-# tls_key = "/home/ubuntu/.librefang/certs/node.key"
-# tls_ca = "/home/ubuntu/.librefang/certs/ca.crt"
+network_enabled = true
+[network]
+shared_secret = "CHANGE_ME"           # Required for P2P auth
+
+# Production deployments MUST use TLS (mandatory for non-loopback binds).
+# Point to the mTLS cert/key from your existing nginx.conf PKI.
+[network.wire]
+encryption = "tls"
+tls_cert = "/home/ubuntu/.librefang/certs/node.crt"
+tls_key = "/home/ubuntu/.librefang/certs/node.key"
+tls_ca = "/home/ubuntu/.librefang/certs/ca.crt"
 # ── External Auth (OAuth2/OIDC) ──────────────────────────────
 # [external_auth]
 # enabled = false

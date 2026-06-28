@@ -128,3 +128,8 @@ trust_decay_halflife_days = 90
 [citations]
 trust_modeling    = "MDPI Information 2020 doi:10.3390/info11110539"
 multi_agent_trust = "Falcone & Castelfranchi 2001 — Social Trust: A Cognitive Approach"
+
+[schedule.cron]
+cron = "5 * * * *"
+task = "recalculate_credibility"
+
