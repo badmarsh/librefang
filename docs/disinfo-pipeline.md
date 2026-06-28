@@ -35,7 +35,10 @@ graph TD
     KG --> Orchestrator
     Temporal --> Orchestrator
     
-    Orchestrator --> Arbiter[arbiter<br/>conditional]
+    Orchestrator --> HallucinationAudit[hallucination-audit<br/>hard block]
+    HallucinationAudit --> Arbiter[arbiter<br/>conditional]
+    HallucinationAudit --> F3StressTest[f3-stress-test<br/>optional]
+    F3StressTest --> Orchestrator
     Arbiter --> Orchestrator
 
     Orchestrator --> RedDebater[red-debater]
@@ -87,6 +90,14 @@ Final fake probability per claim (`P_fake`) is derived by aggregating scores acc
 4. **Stance Detection**: `stance-detector` acts as a pre-filter, bypassing fact-checks for UNRELATED claims (arXiv:2006.03644).
 5. **Graph-Based CIB**: `cib-detector` calculates betweenness centrality on the claim propagation graph (arXiv:2309.13049).
 6. **Narrative Framing**: `coherence-checker` analyzes texts for fear-amplification and us-vs-them framing.
+
+## Wave 5 Security & Resilience Enhancements (Medialny Dezolator)
+
+1. **Hallucination Taxonomy & Audit**: A strict 7-category taxonomy (`ontology/hallucination_types.toml`) applied by `hallucination-audit`. Acts as a Tier 3 hard block preventing automated publishing if hallucination is detected.
+2. **F3 Stress-Testing**: An optional `f3-stress-test` stage using `adversarial-paraphrase` to rewrite claims in neutral, emotional, and formal registers to identify verification bias.
+3. **GART RedDebate**: The `red-debater` agent runs a weekly adversarial sweep using 5 evasion strategies (Laundering, Temporal displacement, Semantic drift, Authority spoofing, Coordinated echo) to stress-test the `inquisitor` verification agent.
+4. **Subprocess Sandboxing**: Landlock V3 and Seccomp BPF mock filters enforce strict isolation for agent subprocesses (`librefang-subprocess`).
+5. **Cryptographic Audit Trail**: BLAKE3-based `anchor_chain_head` generates external cryptographic anchors for the audit log, verified via `verify_audit_chain`.
 
 ## API / MCP Context Keys
 

@@ -142,11 +142,10 @@ librefang-acp               Agent Client Protocol server adapter
 xtask                       Build automation
 ```
 
-> **OFP wire is plaintext-by-design.** HMAC-SHA256 mutual auth + per-message
-> HMAC + nonce replay protection cover *active* attackers, but frame contents
-> are not encrypted. For cross-network federation, run OFP behind a private
-> overlay (WireGuard, Tailscale, SSH tunnel) or a service-mesh mTLS layer.
-> Details: [docs.librefang.ai/architecture/ofp-wire](https://docs.librefang.ai/architecture/ofp-wire)
+> **Security Architecture**:
+> - **OFP Wire Protocol**: Uses `rustls` + `tokio-rustls` for mTLS encryption and Ed25519 TOFU pinning. Production deployments must configure `EncryptionMode::Tls`. 
+> - **Subprocess Sandboxing**: Linux deployments enforce Landlock V3 policies (workspace isolation) and Seccomp BPF mock filters.
+> - **Cryptographic Audit Trail**: Agent state mutations are logged with BLAKE3-based `anchor_chain_head` linking, verified via `verify_audit_chain`.
 
 ## Key Features
 
