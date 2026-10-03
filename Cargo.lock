@@ -2282,7 +2282,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -5723,7 +5723,7 @@ dependencies = [
  "futures",
  "governor",
  "hex",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "http-body-util",
  "include_dir",
  "jsonwebtoken",
@@ -5916,7 +5916,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "dirs 6.0.0",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "keyring",
  "librefang-runtime",
  "librefang-types",
@@ -6234,7 +6234,7 @@ dependencies = [
  "flate2",
  "futures",
  "hex",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "http 1.4.2",
  "landlock 0.4.5",
  "libc",
@@ -6481,7 +6481,7 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "hex",
  "hkdf 0.12.4",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "libp2p",
  "librefang-types",
  "rand_core 0.6.4",
