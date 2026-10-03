@@ -361,6 +361,7 @@ impl Default for PeerConfig {
             max_messages_per_peer_per_minute: 60,
             max_llm_tokens_per_peer_per_hour: None,
             wire_config: crate::WireConfig::default(),
+            frame_encryption: librefang_types::config::FrameEncryptionMode::default(),
         }
     }
 }
@@ -372,7 +373,8 @@ impl PeerConfig {
                 Ok(())
             } else {
                 Err(WireError::HandshakeFailed(
-                    "EncryptionMode::Tls is mandatory for all non-loopback production listeners.".into()
+                    "EncryptionMode::Tls is mandatory for all non-loopback production listeners."
+                        .into(),
                 ))
             }
         } else {

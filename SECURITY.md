@@ -78,7 +78,7 @@ LibreFang implements defense-in-depth with the following security controls:
 
 ### Cryptographic Security
 - **Ed25519 signed manifests**: Agent identity verification
-- **HMAC-SHA256 wire protocol**: Mutual authentication with nonce-based replay protection
+- **HMAC-SHA256 wire protocol**: Mutual authentication with nonce-based replay protection. *Note: TLS (`EncryptionMode::Tls`) is strictly enforced by default for all production, non-loopback connections.*
 - **Secret zeroization** *(scoped to the credential vault)*: the encrypted
   credential vault in `librefang-extensions/src/vault.rs` stores every
   entry as `Zeroizing<String>`, so individual vault reads drop plaintext
