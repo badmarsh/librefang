@@ -38,20 +38,6 @@ yanked = "deny"
 # scoped to the exact crate@version pulling it in, so a fresh occurrence in
 # a different dependency path will still fail the audit.
 ignore = [
-    # ── gtk-rs GTK3 bindings, unmaintained ─────────────────────────────────
-    # Transitive via tauri-runtime-wry on Linux only. Cannot upgrade until
-    # tauri migrates to GTK4 — track upstream: https://github.com/tauri-apps/tauri/issues/9220
-    { id = "RUSTSEC-2024-0411", reason = "gtk unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0411" },
-    { id = "RUSTSEC-2024-0412", reason = "gtk-sys unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0412" },
-    { id = "RUSTSEC-2024-0413", reason = "atk unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0413" },
-    { id = "RUSTSEC-2024-0414", reason = "atk-sys unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0414" },
-    { id = "RUSTSEC-2024-0415", reason = "gdk unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0415" },
-    { id = "RUSTSEC-2024-0416", reason = "gdk-sys unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0416" },
-    { id = "RUSTSEC-2024-0417", reason = "gdkx11 unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0417" },
-    { id = "RUSTSEC-2024-0418", reason = "gdkx11-sys unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0418" },
-    { id = "RUSTSEC-2024-0419", reason = "gdkwayland-sys unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0419" },
-    { id = "RUSTSEC-2024-0420", reason = "gdk-pixbuf unmaintained; transitive via tauri on Linux. https://rustsec.org/advisories/RUSTSEC-2024-0420" },
-
     # ── Other unmaintained transitive crates ───────────────────────────────
     { id = "RUSTSEC-2023-0071", reason = "rsa Marvin attack; transitive, no upstream fix yet. https://rustsec.org/advisories/RUSTSEC-2023-0071" },
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; transitive. https://rustsec.org/advisories/RUSTSEC-2024-0370" },
